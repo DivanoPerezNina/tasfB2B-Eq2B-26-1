@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
+                             https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>pe.edu.pucp.tasf</groupId>
+    <artifactId>planificador-gvns</artifactId>
+    <version>1.0.0</version>
+    <packaging>jar</packaging>
+
+    <name>TASF B2B — Motor de Planificación GVNS</name>
+    <description>
+        Motor de planificación logística de carga aérea basado en GVNS
+        (General Variable Neighborhood Search). Sin dependencias externas,
+        listo para ser importado como módulo Maven en un monolito modular
+        sobre Tomcat.
+    </description>
+
+    <properties>
+        <java.version>17</java.version>
+        <maven.compiler.source>${java.version}</maven.compiler.source>
+        <maven.compiler.target>${java.version}</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    </properties>
+
+    <!-- Sin dependencias externas: el motor usa solo la JDK estándar -->
+    <dependencies/>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.13.0</version>
+            </plugin>
+
+            <!-- Genera un JAR con todas las clases listo para incluir en el WAR -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.4.1</version>
+                <configuration>
+                    <archive>
+                        <manifest>
+                            <mainClass>pe.edu.pucp.tasf.gvns.Main</mainClass>
+                        </manifest>
+                    </archive>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

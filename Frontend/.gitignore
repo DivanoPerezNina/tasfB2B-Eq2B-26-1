@@ -1,0 +1,22 @@
+# ─── Dependencias ─────────────────────────────────────────────────────────────
+node_modules/
+.pnp
+.pnp.js
+
+# ─── Build (se regenera con pnpm build) ───────────────────────────────────────
+dist/
+build/
+
+# ─── Cache de herramientas ────────────────────────────────────────────────────
+.cache/
+.parcel-cache/
+.vite/
+.pnpm-store/
+
+# ─── Variables de entorno locales ─────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+
+# ─── TypeScript ───────────────────────────────────────────────────────────────
+*.tsbuildinfo

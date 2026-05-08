@@ -1,0 +1,37 @@
+@import 'tailwindcss' source(none);
+@source '../**/*.{js,ts,jsx,tsx}';
+
+@import 'tw-animate-css';
+
+/* Custom scrollbar */
+@layer base {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+  }
+  *:hover {
+    scrollbar-color: rgba(148, 163, 184, 0.4) transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: transparent;
+    border-radius: 9999px;
+    transition: background 0.2s;
+  }
+  *:hover::-webkit-scrollbar-thumb {
+    background: rgba(148, 163, 184, 0.4);
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background: rgba(100, 116, 139, 0.6);
+  }
+  *::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+}

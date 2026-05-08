@@ -1,0 +1,8 @@
+package pe.edu.pucp.tasf.alns;
+
+public enum OperadorRepair {
+    EARLIEST_ARRIVAL_INSERTION,
+    LEAST_CONGESTED_INSERTION,
+    BEST_SLACK_INSERTION,
+    MIN_CAPACITY_IMPACT_INSERTION
+}

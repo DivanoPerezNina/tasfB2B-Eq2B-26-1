@@ -1,0 +1,20 @@
+# ─── Java / Maven ─────────────────────────────────────────────────────────────
+target/
+*.class
+*.jar
+*.war
+*.ear
+.mvn/wrapper/maven-wrapper.jar
+
+# ─── Go — binarios compilados (se generan con build-all.sh) ───────────────────
+bin/
+pkg/
+vendor/
+*.exe
+
+# ─── Configuración local (nunca al repo) ──────────────────────────────────────
+.env
+*.env
+application-local.properties
+application-local.yml
+config.local.yaml

@@ -1,0 +1,24 @@
+# ─── Sistema Operativo ────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+ehthumbs.db
+
+# ─── IDEs ─────────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.iml
+*.suo
+*.user
+.vs/
+*.swp
+*.swo
+*.swn
+
+# ─── Datos pesados (compartir por Drive u otro medio) ─────────────────────────
+# Los archivos de envíos suman ~391 MB y superan el límite de GitHub
+backend/planificador/datos/_envios_preliminar_/
+
+# ─── Logs y PIDs generados por los scripts de arranque ────────────────────────
+logs/
+*.pid
