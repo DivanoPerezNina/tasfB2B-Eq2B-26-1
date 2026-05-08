@@ -2,7 +2,8 @@
 
 Sistema de planificación y monitoreo en tiempo real del traslado de maletas extraviadas entre aeropuertos de América, Asia y Europa.
 
-**Proyecto universitario** — PUCP · Ingeniería Informática · 9° ciclo · 2INF54 · 2026-1
+**Proyecto universitario** — PUCP · Ingeniería Informática · 9° ciclo · 2INF54 · 2026-1  
+**Equipo:** 2B · Grupo 26-1
 
 ---
 
@@ -68,13 +69,21 @@ Sistema de planificación y monitoreo en tiempo real del traslado de maletas ext
 
 ---
 
-## Simulación de Periodo
+## Los 3 Escenarios del Curso
 
-- Escenario: **3 ó 5 días simulados**
-- Duración real: **30 – 90 minutos**
-- Velocidad configurable desde el frontend
-- El Planificador usa **GVNS** (General Variable Neighborhood Search) — metaheurístico en Java
+| # | Escenario | Descripción | Estado |
+|---|---|---|---|
+| 1 | **Simulación de Periodo** | 3 ó 5 días simulados en 30–90 min reales | 🔧 En desarrollo |
+| 2 | **Tiempo Real** | Operaciones día a día, 1 día simulado | ⏳ Pendiente |
+| 3 | **Colapso** | Simulación incremental hasta saturar la red | ⏳ Pendiente |
+
+### Escenario 1 — Simulación de Periodo *(foco actual)*
+
+- El Planificador usa **GVNS** (General Variable Neighborhood Search) — metaheurístico en Java  
 - Algoritmo alternativo disponible: **ALNS** (Adaptive Large Neighborhood Search)
+- Criterios de ordenamiento: **EDF** (Earliest Deadline First), **FIFO**, **Aleatorio**
+- Máx. 3 segmentos por ruta: directo / 1 escala / 2 escalas
+- El Ejecutor avanza ticks según la velocidad configurada por el usuario
 
 ---
 
@@ -114,8 +123,52 @@ tasfB2B-Eq2B-26-1/
 └── README.md
 ```
 
-> **Datos de envíos**: los 30 archivos `_envios_*.txt` (~391 MB en total) no están en el repositorio.
-> Compartir por Google Drive del equipo e colocarlos en `backend/planificador/datos/_envios_preliminar_/`.
+> **Datos de envíos**: los 30 archivos `_envios_*.txt` (~391 MB en total) no están en el repositorio.  
+> Compartir por Google Drive del equipo y colocarlos en `backend/planificador/datos/_envios_preliminar_/`.
+
+---
+
+## Formatos de Datos
+
+### Planes de Vuelo — `vuelos.txt`
+
+```
+SKBO-SEQM-19:00-07:00-220
+ORIG-DEST-HH:MM_salida-HH:MM_llegada-CAPACIDAD
+```
+
+- `ORIG` / `DEST`: código IATA de 4 letras del aeropuerto
+- Hora de llegada en formato 24h extendido: `07:00` del día siguiente si `07 < 19`
+- `CAPACIDAD`: número entero (150–250 mismo continente, 150–400 distinto continente)
+
+### Envíos — `_envios_XXXX_.txt` (uno por aeropuerto origen)
+
+```
+00000001-20250102-01-38-EBCI-006-0007729
+idEnvio  -aaaammdd-hh-mm-dest-qty-idCliente
+```
+
+| Campo | Formato | Descripción |
+|---|---|---|
+| `idEnvio` | 8 dígitos | Identificador único del envío |
+| `aaaammdd` | Fecha ISO sin guiones | Fecha de registro |
+| `hh` | 2 dígitos (00–23) | Hora de registro |
+| `mm` | 2 dígitos (00–59) | Minuto de registro |
+| `dest` | IATA 4 letras | Aeropuerto destino |
+| `qty` | 3 dígitos (001–999) | Cantidad de maletas |
+| `idCliente` | 7 dígitos | Identificador del cliente |
+
+### Aeropuertos — `aeropuertos.txt`
+
+30 aeropuertos distribuidos en 3 continentes:
+
+| Continente | Rango ID | Aeropuertos |
+|---|---|---|
+| América del Sur | 01–10 | SKBO, SEQM, SVMI, SBBR, SPIM, SLLP, SCEL, SABE, SGAS, SUAA |
+| Europa | 11–20 | LATI, EDDI, LOWW, EBCI, UMMS, LBSF, LKPR, LDZA, EKCH, EHAM |
+| Asia | 21–30 | VIDP, OSDI, OERK, OMDB, OAKB, OOMS, OYSN, OPKC, UBBB, OJAI |
+
+Campos por aeropuerto: `id · IATA · ciudad · país · alias · GMT · capacidadAlmacén · latitud · longitud`
 
 ---
 
@@ -201,11 +254,22 @@ chmod +x scripts/*.sh
 
 ---
 
+## Requisitos No Funcionales (del enunciado)
+
+- **RNF-a** Dos soluciones algorítmicas metaheurísticas en Java → ✅ GVNS + ALNS implementados
+- **RNF-b** Ambos algoritmos evaluados por experimentación numérica → ⏳ Pendiente documentar
+- **RNF-c** Semaforización verde/ámbar/rojo con umbrales configurables → 🔧 Frontend hardcodeado, parámetros pendientes de conectar
+- **RNF-d** Funcionar en equipamiento del laboratorio de Informática PUCP → 🎯 Target: Ubuntu 24 LTS, 2 GB RAM
+- **RNF-e** Proceso NTP-ISO/IEC 29110-5-1-2 (VSE) → 📋 Gestión del equipo
+- **RNF-f/g** Videos de presentación y avances → 📹 A coordinar con equipo docente
+
+---
+
 ## Equipo
 
-| Integrante | GitHub |
+| Integrante | Correo PUCP |
 |---|---|
-| [Nombre 1] | [@usuario] |
-| [Nombre 2] | [@usuario] |
-| [Nombre 3] | [@usuario] |
-| [Nombre 4] | [@usuario] |
+| Camilo Gustavo Gomez Casalino | a20206401@pucp.edu.pe |
+| Divano Estefano Perez Nina | a20221481@pucp.edu.pe |
+| Christian Joel Quispe Herrera | cquispeh@pucp.edu.pe |
+| David Ruben Cutisaca Gonzales | dcutisaca@pucp.edu.pe |
