@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useSimulation } from '../context/SimulationContext';
-import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
+import { Slider } from '../components/ui/slider';
+import { RadioGroup, RadioGroupItem } from '../components/ui/radio-group';
 import {
   Select,
   SelectContent,
@@ -13,9 +14,60 @@ import {
 } from '../components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { SimulationScenario } from '../types';
-import { Settings, Save, Calendar, Sliders, Play, Pause, RotateCcw, Clock, Upload, FileSpreadsheet, X } from 'lucide-react';
+import {
+  Settings,
+  Save,
+  Calendar,
+  Sliders,
+  Play,
+  Pause,
+  RotateCcw,
+  Clock,
+  Upload,
+  FileSpreadsheet,
+  X,
+  Download,
+  AlertCircle,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
+
+function ThresholdSlider({
+  label,
+  green,
+  yellow,
+  onChange,
+}: {
+  label: string;
+  green: number;
+  yellow: number;
+  onChange: (green: number, yellow: number) => void;
+}) {
+  return (
+    <div className="space-y-3">
+      <h3 className="text-base font-semibold text-panel-text">{label}</h3>
+      <Slider
+        min={0}
+        max={100}
+        step={1}
+        value={[green, yellow]}
+        onValueChange={([g, y]) => onChange(g, y)}
+      />
+      <div className="flex h-3 overflow-hidden rounded-full">
+        <div className="bg-green-500 transition-all" style={{ width: `${green}%` }} />
+        <div className="bg-yellow-500 transition-all" style={{ width: `${yellow - green}%` }} />
+        <div className="flex-1 bg-red-500" />
+      </div>
+      <div className="flex justify-between text-xs">
+        <span className="text-panel-text-faint">0%</span>
+        <span className="text-green-600 dark:text-green-400">Verde ≤ {green}%</span>
+        <span className="text-yellow-600 dark:text-yellow-400">Ámbar ≤ {yellow}%</span>
+        <span className="text-red-600 dark:text-red-400">Rojo &gt; {yellow}%</span>
+        <span className="text-panel-text-faint">100%</span>
+      </div>
+    </div>
+  );
+}
 
 export function SimulationConfig() {
   const {
@@ -25,58 +77,70 @@ export function SimulationConfig() {
     isRunning,
     startSimulation,
     pauseSimulation,
-    simulationTime
   } = useSimulation();
 
   const [localConfig, setLocalConfig] = useState(config);
   const [airportsFile, setAirportsFile] = useState<File | null>(null);
   const [flightsFile, setFlightsFile] = useState<File | null>(null);
   const [shipmentsFile, setShipmentsFile] = useState<File | null>(null);
+  const [dataLoaded, setDataLoaded] = useState(false);
+  const [currentTime, setCurrentTime] = useState(new Date());
+  const [periodDays, setPeriodDays] = useState<3 | 5 | 7>(3);
+  const [periodDurationMin, setPeriodDurationMin] = useState(60);
+
+  useEffect(() => {
+    const interval = setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const allFilesSelected = airportsFile !== null && flightsFile !== null && shipmentsFile !== null;
 
   const handleSave = () => {
     updateConfig(localConfig);
     resetSimulation();
     toast.success('Configuración guardada exitosamente', {
-      description: 'La simulación ha sido reiniciada con los nuevos parámetros'
+      description: 'La simulación ha sido reiniciada con los nuevos parámetros',
     });
   };
 
   const handleFileUpload = (
     event: React.ChangeEvent<HTMLInputElement>,
-    fileType: 'airports' | 'flights' | 'shipments'
+    fileType: 'airports' | 'flights' | 'shipments',
   ) => {
     const file = event.target.files?.[0];
     if (!file) return;
-
-    const validTypes = ['.txt'];
-    const fileExtension = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
-
-    if (!validTypes.some(type => type === fileExtension)) {
+    const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
+    if (ext !== '.txt') {
       toast.error('Formato no válido. Use archivos .txt');
       return;
     }
-
-    const fileLabels = {
-      airports: 'Aeropuertos',
-      flights: 'Vuelos',
-      shipments: 'Envíos'
-    };
-
     if (fileType === 'airports') setAirportsFile(file);
     else if (fileType === 'flights') setFlightsFile(file);
     else setShipmentsFile(file);
+  };
 
-    toast.success(`Archivo de ${fileLabels[fileType]} cargado: ${file.name}`);
+  const handleLoadData = () => {
+    if (!allFilesSelected) return;
+    // TODO: enviar archivos al BFF → /api/carga/upload/*
+    toast.success('Datos cargados correctamente', {
+      description: 'Aeropuertos, vuelos y envíos listos para simular',
+    });
+    setDataLoaded(true);
+  };
+
+  const handleDownloadTemplate = (_tipo: 'aeropuertos' | 'vuelos' | 'envios') => {
+    // TODO: llamar GET /api/carga/plantillas/{tipo} cuando el BFF esté operativo
+    toast.info('Plantillas disponibles cuando el backend esté operativo');
   };
 
   return (
     <div className="flex h-full flex-col bg-background">
-      {/* Header con botones siempre visibles */}
+      {/* Header */}
       <div className="border-b border-panel-border bg-panel-bg px-6 py-4 shadow-sm">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-xl font-bold text-panel-text">Configuración de Simulación</h1>
-            <p className="text-sm text-panel-text-muted">Par��metros operacionales del sistema GVNS</p>
+            <p className="text-sm text-panel-text-muted">Parámetros operacionales del sistema GVNS</p>
           </div>
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => setLocalConfig(config)} size="sm">
@@ -91,15 +155,15 @@ export function SimulationConfig() {
         </div>
       </div>
 
-      {/* Controles de Simulación */}
+      {/* Barra de controles */}
       <div className="border-b border-panel-border bg-panel-bg px-6 py-3">
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
             <Clock className="h-5 w-5 text-panel-text-muted" />
             <div>
-              <p className="text-xs text-panel-text-faint">Tiempo de Simulación</p>
+              <p className="text-xs text-panel-text-faint">Tiempo actual</p>
               <p className="font-mono text-sm font-medium text-panel-text">
-                {format(simulationTime, 'dd/MM/yyyy HH:mm:ss')}
+                {format(currentTime, 'dd/MM/yyyy HH:mm:ss')}
               </p>
             </div>
           </div>
@@ -108,9 +172,12 @@ export function SimulationConfig() {
 
           <div>
             <p className="text-xs text-panel-text-faint">Escenario</p>
-            <p className="text-sm font-medium capitalize text-panel-text">
-              {config.scenario === 'realtime' ? 'Tiempo Real' :
-               config.scenario === 'period' ? 'Periodo' : 'Colapso'}
+            <p className="text-sm font-medium text-panel-text">
+              {config.scenario === 'realtime'
+                ? 'Tiempo Real'
+                : config.scenario === 'period'
+                  ? 'Periodo'
+                  : 'Colapso'}
             </p>
           </div>
 
@@ -128,12 +195,16 @@ export function SimulationConfig() {
                 Pausar
               </Button>
             ) : (
-              <Button onClick={startSimulation} size="sm">
+              <Button
+                onClick={startSimulation}
+                size="sm"
+                disabled={!dataLoaded}
+                title={!dataLoaded ? 'Carga los datos antes de iniciar' : undefined}
+              >
                 <Play className="mr-2 h-4 w-4" />
                 Iniciar
               </Button>
             )}
-
             <Button onClick={resetSimulation} variant="outline" size="sm">
               <RotateCcw className="mr-2 h-4 w-4" />
               Reiniciar
@@ -142,7 +213,7 @@ export function SimulationConfig() {
         </div>
       </div>
 
-      {/* Contenido con Tabs */}
+      {/* Tabs */}
       <div className="flex-1 overflow-hidden p-6">
         <Tabs defaultValue="general" className="h-full">
           <TabsList className="mb-4">
@@ -167,93 +238,152 @@ export function SimulationConfig() {
           <div className="h-[calc(100%-3rem)] overflow-y-auto">
             {/* Tab: General */}
             <TabsContent value="general" className="m-0">
-              <div className="max-w-3xl space-y-6">
-                <div className="grid grid-cols-2 gap-6">
-                  <div>
-                    <Label htmlFor="scenario">Escenario de Simulación</Label>
-                    <Select
-                      value={localConfig.scenario}
-                      onValueChange={(v) => setLocalConfig({ ...localConfig, scenario: v as SimulationScenario })}
-                    >
-                      <SelectTrigger id="scenario" className="mt-1.5">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="realtime">Día a Día (Tiempo Real)</SelectItem>
-                        <SelectItem value="period">Simulación de Periodo (3-7 días)</SelectItem>
-                        <SelectItem value="collapse">Simulación hasta Colapso</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <p className="mt-1.5 text-xs text-panel-text-muted">
-                      {localConfig.scenario === 'realtime' && 'Simulación en tiempo real para monitoreo continuo'}
-                      {localConfig.scenario === 'period' && 'Simula 3-7 días en 30-90 minutos reales'}
-                      {localConfig.scenario === 'collapse' && 'Simula hasta alcanzar colapso operativo'}
-                    </p>
-                  </div>
-
-                  <div>
-                    <Label htmlFor="speed">Velocidad de Simulación</Label>
-                    <div className="mt-1.5 flex items-center gap-2">
-                      <Input
-                        id="speed"
-                        type="number"
-                        min="1"
-                        max="1000"
-                        value={localConfig.speed}
-                        onChange={(e) => setLocalConfig({
-                          ...localConfig,
-                          speed: parseInt(e.target.value) || 1
-                        })}
-                        className="w-28"
-                      />
-                      <span className="text-sm text-panel-text-muted">x veces más rápido</span>
-                    </div>
-                    <p className="mt-1.5 text-xs text-panel-text-muted">
-                      1x = tiempo real, 60x = 1 hora simulada por minuto
-                    </p>
-                  </div>
+              <div className="max-w-2xl space-y-6">
+                {/* Escenario */}
+                <div>
+                  <Label htmlFor="scenario">Escenario de Simulación</Label>
+                  <Select
+                    value={localConfig.scenario}
+                    onValueChange={(v) =>
+                      setLocalConfig({ ...localConfig, scenario: v as SimulationScenario })
+                    }
+                  >
+                    <SelectTrigger id="scenario" className="mt-1.5 max-w-sm">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="realtime">Día a Día (Tiempo Real)</SelectItem>
+                      <SelectItem value="period">Simulación de Periodo (3–7 días)</SelectItem>
+                      <SelectItem value="collapse">Simulación hasta Colapso</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="mt-1.5 text-xs text-panel-text-muted">
+                    {localConfig.scenario === 'realtime' &&
+                      'Simulación en tiempo real para monitoreo continuo'}
+                    {localConfig.scenario === 'period' &&
+                      'Simula 3–7 días en 30–90 minutos reales'}
+                    {localConfig.scenario === 'collapse' &&
+                      'Simula hasta alcanzar colapso operativo'}
+                  </p>
                 </div>
 
-                <div className="grid grid-cols-2 gap-6">
-                  <div>
-                    <Label htmlFor="startDate">Fecha y Hora de Inicio</Label>
-                    <Input
-                      id="startDate"
-                      type="datetime-local"
-                      value={localConfig.startDate.toISOString().slice(0, 16)}
-                      onChange={(e) => setLocalConfig({
-                        ...localConfig,
-                        startDate: new Date(e.target.value)
-                      })}
-                      className="mt-1.5"
-                    />
-                  </div>
-
-                  {localConfig.scenario === 'period' && (
-                    <div>
-                      <Label htmlFor="endDate">Fecha y Hora de Fin</Label>
-                      <Input
-                        id="endDate"
-                        type="datetime-local"
-                        value={localConfig.endDate?.toISOString().slice(0, 16) || ''}
-                        onChange={(e) => setLocalConfig({
-                          ...localConfig,
-                          endDate: new Date(e.target.value)
-                        })}
-                        className="mt-1.5"
-                      />
-                    </div>
+                {/* Fecha de inicio — solo editable en Periodo */}
+                <div className="max-w-xs">
+                  <Label htmlFor="startDate">Fecha de inicio</Label>
+                  <Input
+                    id="startDate"
+                    type="date"
+                    value={localConfig.startDate.toISOString().slice(0, 10)}
+                    onChange={(e) =>
+                      setLocalConfig({ ...localConfig, startDate: new Date(e.target.value) })
+                    }
+                    disabled={localConfig.scenario !== 'period'}
+                    className="mt-1.5"
+                  />
+                  {localConfig.scenario !== 'period' && (
+                    <p className="mt-1 text-xs text-panel-text-faint">
+                      Solo editable en escenario Periodo
+                    </p>
                   )}
                 </div>
+
+                {/* Parámetros exclusivos de Periodo */}
+                {localConfig.scenario === 'period' && (
+                  <div className="space-y-5 rounded-lg border border-panel-border bg-panel-section-bg p-4">
+                    <h3 className="text-sm font-semibold text-panel-text">Parámetros de Periodo</h3>
+
+                    <div>
+                      <div className="mb-2 flex items-center justify-between">
+                        <Label>Duración de simulación</Label>
+                        <span className="text-sm font-medium text-panel-text">
+                          {periodDurationMin} min
+                        </span>
+                      </div>
+                      <Slider
+                        min={30}
+                        max={90}
+                        step={5}
+                        value={[periodDurationMin]}
+                        onValueChange={([v]) => setPeriodDurationMin(v)}
+                      />
+                      <p className="mt-1.5 text-xs text-panel-text-muted">
+                        Tiempo real que tomará la simulación (30–90 minutos)
+                      </p>
+                    </div>
+
+                    <div>
+                      <Label className="mb-2 block">Días a simular</Label>
+                      <RadioGroup
+                        value={String(periodDays)}
+                        onValueChange={(v) => setPeriodDays(Number(v) as 3 | 5 | 7)}
+                        className="flex gap-6"
+                      >
+                        {([3, 5, 7] as const).map((d) => (
+                          <div key={d} className="flex items-center gap-2">
+                            <RadioGroupItem value={String(d)} id={`days-${d}`} />
+                            <Label htmlFor={`days-${d}`} className="cursor-pointer font-normal">
+                              {d} días
+                            </Label>
+                          </div>
+                        ))}
+                      </RadioGroup>
+                    </div>
+                  </div>
+                )}
+
+                {/* Velocidad — solo en Colapso */}
+                {localConfig.scenario === 'collapse' && (
+                  <div className="space-y-3 rounded-lg border border-panel-border bg-panel-section-bg p-4">
+                    <h3 className="text-sm font-semibold text-panel-text">Velocidad de Simulación</h3>
+                    <div className="flex items-center justify-between">
+                      <Label>Velocidad</Label>
+                      <span className="text-sm font-medium text-panel-text">
+                        {localConfig.speed}x
+                      </span>
+                    </div>
+                    <Slider
+                      min={1}
+                      max={200}
+                      step={1}
+                      value={[localConfig.speed]}
+                      onValueChange={([v]) => setLocalConfig({ ...localConfig, speed: v })}
+                    />
+                    <p className="text-xs text-panel-text-muted">
+                      1x = tiempo real · 60x = 1 hora/minuto · 200x = máximo
+                    </p>
+                  </div>
+                )}
               </div>
             </TabsContent>
 
             {/* Tab: Planes de Vuelo */}
             <TabsContent value="files" className="m-0">
-              <div className="max-w-4xl">
+              <div className="max-w-4xl space-y-6">
+                {!dataLoaded && (
+                  <div className="flex items-start gap-3 rounded-lg border border-yellow-400/40 bg-yellow-500/10 p-4">
+                    <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-yellow-600 dark:text-yellow-400" />
+                    <p className="text-sm text-yellow-700 dark:text-yellow-300">
+                      Debes cargar los datos antes de iniciar la simulación. Selecciona los tres
+                      archivos y haz clic en <strong>Cargar datos</strong>.
+                    </p>
+                  </div>
+                )}
+
                 <div className="grid grid-cols-3 gap-4">
+                  {/* Aeropuertos */}
                   <div>
-                    <Label htmlFor="airports-upload">Archivo de Aeropuertos</Label>
+                    <div className="mb-1.5 flex items-center justify-between">
+                      <Label htmlFor="airports-upload">Aeropuertos</Label>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 px-2 text-xs"
+                        onClick={() => handleDownloadTemplate('aeropuertos')}
+                      >
+                        <Download className="mr-1 h-3 w-3" />
+                        Plantilla
+                      </Button>
+                    </div>
                     <input
                       id="airports-upload"
                       type="file"
@@ -262,18 +392,38 @@ export function SimulationConfig() {
                       className="hidden"
                     />
                     <label htmlFor="airports-upload">
-                      <div className="mt-1.5 flex h-32 cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-panel-border bg-panel-section-bg transition-colors hover:border-green-400 hover:bg-green-500/10">
-                        <FileSpreadsheet className="h-8 w-8 text-panel-text-faint" />
-                        <p className="mt-2 text-center text-xs text-panel-text-muted px-2">
+                      <div
+                        className={`flex h-32 cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed transition-colors ${
+                          airportsFile
+                            ? 'border-green-400 bg-green-500/10'
+                            : 'border-panel-border bg-panel-section-bg hover:border-green-400 hover:bg-green-500/10'
+                        }`}
+                      >
+                        <FileSpreadsheet
+                          className={`h-8 w-8 ${airportsFile ? 'text-green-500' : 'text-panel-text-faint'}`}
+                        />
+                        <p className="mt-2 px-2 text-center text-xs text-panel-text-muted">
                           {airportsFile ? airportsFile.name : 'Seleccionar archivo'}
                         </p>
-                        <p className="text-xs text-panel-text-faint">.txt</p>
+                        <p className="text-xs text-panel-text-faint">aeropuertos.txt</p>
                       </div>
                     </label>
                   </div>
 
+                  {/* Vuelos */}
                   <div>
-                    <Label htmlFor="flights-upload">Archivo de Vuelos</Label>
+                    <div className="mb-1.5 flex items-center justify-between">
+                      <Label htmlFor="flights-upload">Vuelos</Label>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 px-2 text-xs"
+                        onClick={() => handleDownloadTemplate('vuelos')}
+                      >
+                        <Download className="mr-1 h-3 w-3" />
+                        Plantilla
+                      </Button>
+                    </div>
                     <input
                       id="flights-upload"
                       type="file"
@@ -282,18 +432,38 @@ export function SimulationConfig() {
                       className="hidden"
                     />
                     <label htmlFor="flights-upload">
-                      <div className="mt-1.5 flex h-32 cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-panel-border bg-panel-section-bg transition-colors hover:border-green-400 hover:bg-green-500/10">
-                        <FileSpreadsheet className="h-8 w-8 text-panel-text-faint" />
-                        <p className="mt-2 text-center text-xs text-panel-text-muted px-2">
+                      <div
+                        className={`flex h-32 cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed transition-colors ${
+                          flightsFile
+                            ? 'border-green-400 bg-green-500/10'
+                            : 'border-panel-border bg-panel-section-bg hover:border-green-400 hover:bg-green-500/10'
+                        }`}
+                      >
+                        <FileSpreadsheet
+                          className={`h-8 w-8 ${flightsFile ? 'text-green-500' : 'text-panel-text-faint'}`}
+                        />
+                        <p className="mt-2 px-2 text-center text-xs text-panel-text-muted">
                           {flightsFile ? flightsFile.name : 'Seleccionar archivo'}
                         </p>
-                        <p className="text-xs text-panel-text-faint">.txt</p>
+                        <p className="text-xs text-panel-text-faint">vuelos.txt</p>
                       </div>
                     </label>
                   </div>
 
+                  {/* Envíos */}
                   <div>
-                    <Label htmlFor="shipments-upload">Archivo de Envíos</Label>
+                    <div className="mb-1.5 flex items-center justify-between">
+                      <Label htmlFor="shipments-upload">Envíos</Label>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 px-2 text-xs"
+                        onClick={() => handleDownloadTemplate('envios')}
+                      >
+                        <Download className="mr-1 h-3 w-3" />
+                        Plantilla
+                      </Button>
+                    </div>
                     <input
                       id="shipments-upload"
                       type="file"
@@ -302,184 +472,76 @@ export function SimulationConfig() {
                       className="hidden"
                     />
                     <label htmlFor="shipments-upload">
-                      <div className="mt-1.5 flex h-32 cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-panel-border bg-panel-section-bg transition-colors hover:border-green-400 hover:bg-green-500/10">
-                        <FileSpreadsheet className="h-8 w-8 text-panel-text-faint" />
-                        <p className="mt-2 text-center text-xs text-panel-text-muted px-2">
+                      <div
+                        className={`flex h-32 cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed transition-colors ${
+                          shipmentsFile
+                            ? 'border-green-400 bg-green-500/10'
+                            : 'border-panel-border bg-panel-section-bg hover:border-green-400 hover:bg-green-500/10'
+                        }`}
+                      >
+                        <FileSpreadsheet
+                          className={`h-8 w-8 ${shipmentsFile ? 'text-green-500' : 'text-panel-text-faint'}`}
+                        />
+                        <p className="mt-2 px-2 text-center text-xs text-panel-text-muted">
                           {shipmentsFile ? shipmentsFile.name : 'Seleccionar archivo'}
                         </p>
-                        <p className="text-xs text-panel-text-faint">.txt</p>
+                        <p className="text-xs text-panel-text-faint">_envios_XXXX_.txt</p>
                       </div>
                     </label>
                   </div>
                 </div>
 
-                <div className="mt-6 rounded-lg bg-blue-500/10 p-4">
-                  <p className="text-sm text-blue-700 dark:text-blue-300">
-                    <strong>Nota:</strong> Los archivos deben estar en formato .txt con la estructura especificada.
-                    Una vez cargados, haz clic en "Guardar y Aplicar" para procesar los datos.
-                  </p>
+                <div className="flex items-center gap-4">
+                  <Button onClick={handleLoadData} disabled={!allFilesSelected} className="gap-2">
+                    <Upload className="h-4 w-4" />
+                    Cargar datos
+                  </Button>
+                  {dataLoaded ? (
+                    <span className="text-sm text-green-600 dark:text-green-400">
+                      ✓ Datos cargados correctamente
+                    </span>
+                  ) : (
+                    !allFilesSelected && (
+                      <span className="text-xs text-panel-text-muted">
+                        Selecciona los 3 archivos para habilitar la carga
+                      </span>
+                    )
+                  )}
                 </div>
               </div>
             </TabsContent>
 
             {/* Tab: Umbrales */}
             <TabsContent value="thresholds" className="m-0">
-              <div className="max-w-4xl">
-                <div className="grid grid-cols-2 gap-8">
-                  <div>
-                    <h3 className="mb-4 text-base font-semibold">Almacenes</h3>
-                    <div className="space-y-4">
-                      <div className="flex items-center gap-3">
-                        <div className="w-32">
-                          <Label className="text-sm">Verde (OK)</Label>
-                        </div>
-                        <Input
-                          type="number"
-                          min="0"
-                          max="100"
-                          value={localConfig.thresholds.warehouse.green}
-                          onChange={(e) => setLocalConfig({
-                            ...localConfig,
-                            thresholds: {
-                              ...localConfig.thresholds,
-                              warehouse: {
-                                ...localConfig.thresholds.warehouse,
-                                green: parseInt(e.target.value) || 0
-                              }
-                            }
-                          })}
-                          className="w-24"
-                        />
-                        <span className="text-sm text-panel-text-muted">% o menos</span>
-                      </div>
-
-                      <div className="flex items-center gap-3">
-                        <div className="w-32">
-                          <Label className="text-sm">Ámbar (Media)</Label>
-                        </div>
-                        <Input
-                          type="number"
-                          min="0"
-                          max="100"
-                          value={localConfig.thresholds.warehouse.yellow}
-                          onChange={(e) => setLocalConfig({
-                            ...localConfig,
-                            thresholds: {
-                              ...localConfig.thresholds,
-                              warehouse: {
-                                ...localConfig.thresholds.warehouse,
-                                yellow: parseInt(e.target.value) || 0
-                              }
-                            }
-                          })}
-                          className="w-24"
-                        />
-                        <span className="text-sm text-panel-text-muted">% o menos</span>
-                      </div>
-
-                      <div className="flex items-center gap-3">
-                        <div className="w-32">
-                          <Label className="text-sm">Rojo (Alta)</Label>
-                        </div>
-                        <Input
-                          type="number"
-                          min="0"
-                          max="100"
-                          value={localConfig.thresholds.warehouse.red}
-                          onChange={(e) => setLocalConfig({
-                            ...localConfig,
-                            thresholds: {
-                              ...localConfig.thresholds,
-                              warehouse: {
-                                ...localConfig.thresholds.warehouse,
-                                red: parseInt(e.target.value) || 0
-                              }
-                            }
-                          })}
-                          className="w-24"
-                        />
-                        <span className="text-sm text-panel-text-muted">% o más</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div>
-                    <h3 className="mb-4 text-base font-semibold">Vuelos</h3>
-                    <div className="space-y-4">
-                      <div className="flex items-center gap-3">
-                        <div className="w-32">
-                          <Label className="text-sm">Verde (OK)</Label>
-                        </div>
-                        <Input
-                          type="number"
-                          min="0"
-                          max="100"
-                          value={localConfig.thresholds.flight.green}
-                          onChange={(e) => setLocalConfig({
-                            ...localConfig,
-                            thresholds: {
-                              ...localConfig.thresholds,
-                              flight: {
-                                ...localConfig.thresholds.flight,
-                                green: parseInt(e.target.value) || 0
-                              }
-                            }
-                          })}
-                          className="w-24"
-                        />
-                        <span className="text-sm text-panel-text-muted">% o menos</span>
-                      </div>
-
-                      <div className="flex items-center gap-3">
-                        <div className="w-32">
-                          <Label className="text-sm">Ámbar (Media)</Label>
-                        </div>
-                        <Input
-                          type="number"
-                          min="0"
-                          max="100"
-                          value={localConfig.thresholds.flight.yellow}
-                          onChange={(e) => setLocalConfig({
-                            ...localConfig,
-                            thresholds: {
-                              ...localConfig.thresholds,
-                              flight: {
-                                ...localConfig.thresholds.flight,
-                                yellow: parseInt(e.target.value) || 0
-                              }
-                            }
-                          })}
-                          className="w-24"
-                        />
-                        <span className="text-sm text-panel-text-muted">% o menos</span>
-                      </div>
-
-                      <div className="flex items-center gap-3">
-                        <div className="w-32">
-                          <Label className="text-sm">Rojo (Alta)</Label>
-                        </div>
-                        <Input
-                          type="number"
-                          min="0"
-                          max="100"
-                          value={localConfig.thresholds.flight.red}
-                          onChange={(e) => setLocalConfig({
-                            ...localConfig,
-                            thresholds: {
-                              ...localConfig.thresholds,
-                              flight: {
-                                ...localConfig.thresholds.flight,
-                                red: parseInt(e.target.value) || 0
-                              }
-                            }
-                          })}
-                          className="w-24"
-                        />
-                        <span className="text-sm text-panel-text-muted">% o más</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+              <div className="max-w-2xl space-y-10">
+                <ThresholdSlider
+                  label="Almacenes"
+                  green={localConfig.thresholds.warehouse.green}
+                  yellow={localConfig.thresholds.warehouse.yellow}
+                  onChange={(g, y) =>
+                    setLocalConfig({
+                      ...localConfig,
+                      thresholds: {
+                        ...localConfig.thresholds,
+                        warehouse: { green: g, yellow: y, red: y },
+                      },
+                    })
+                  }
+                />
+                <ThresholdSlider
+                  label="Vuelos"
+                  green={localConfig.thresholds.flight.green}
+                  yellow={localConfig.thresholds.flight.yellow}
+                  onChange={(g, y) =>
+                    setLocalConfig({
+                      ...localConfig,
+                      thresholds: {
+                        ...localConfig.thresholds,
+                        flight: { green: g, yellow: y, red: y },
+                      },
+                    })
+                  }
+                />
               </div>
             </TabsContent>
 
