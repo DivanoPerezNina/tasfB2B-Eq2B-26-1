@@ -14,7 +14,7 @@ Recibe los archivos `.txt` del dataset TASF.B2B desde el frontend, los valida, l
 
 ## 2. Estrategia de Procesamiento
 
-El dataset completo puede llegar a ~391 MB y 9.5 M registros. Para no saturar los 2 GB de RAM de la VM:
+El dataset completo puede llegar a ~391 MB y 9.5 M registros. Para no saturar los 4 GB de RAM de la VM:
 
 ```
 Frontend

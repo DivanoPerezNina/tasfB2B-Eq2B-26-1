@@ -259,7 +259,7 @@ chmod +x scripts/*.sh
 - **RNF-a** Dos soluciones algorítmicas metaheurísticas en Java → ✅ GVNS + ALNS implementados
 - **RNF-b** Ambos algoritmos evaluados por experimentación numérica → ⏳ Pendiente documentar
 - **RNF-c** Semaforización verde/ámbar/rojo con umbrales configurables → 🔧 Frontend hardcodeado, parámetros pendientes de conectar
-- **RNF-d** Funcionar en equipamiento del laboratorio de Informática PUCP → 🎯 Target: Ubuntu 24 LTS, 2 GB RAM
+- **RNF-d** Funcionar en equipamiento del laboratorio de Informática PUCP → 🎯 Target: Ubuntu 24 LTS, 4 GB RAM
 - **RNF-e** Proceso NTP-ISO/IEC 29110-5-1-2 (VSE) → 📋 Gestión del equipo
 - **RNF-f/g** Videos de presentación y avances → 📹 A coordinar con equipo docente
 
