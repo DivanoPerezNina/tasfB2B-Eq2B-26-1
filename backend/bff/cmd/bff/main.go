@@ -27,6 +27,10 @@ func main() {
 		PlanificadorURL: cfg.PlanificadorURL,
 		EjecutorURL:     cfg.EjecutorURL,
 	}
+	per := &handler.PeriodoHandler{
+		PlanificadorURL: cfg.PlanificadorURL,
+		EjecutorURL:     cfg.EjecutorURL,
+	}
 
 	mux := http.NewServeMux()
 
@@ -35,6 +39,12 @@ func main() {
 	mux.HandleFunc("GET /api/vuelos",      dom.Vuelos)
 	mux.HandleFunc("GET /api/dataset",     dom.Dataset)
 	mux.HandleFunc("GET /api/health",      hlth.Health)
+
+	// ── Simulación de Periodo (orquestación BFF) ──────────────────────────────
+	// Único punto de entrada: recibe fechaInicio+dias+criterio+duracion_real_min
+	mux.HandleFunc("POST /api/periodo/iniciar",            per.Iniciar)
+	mux.HandleFunc("GET /api/periodo/status/{jobId}",      per.Status)
+	mux.HandleFunc("POST /api/periodo/ejecutar/{jobId}",   per.Ejecutar)
 
 	// ── Proxy → Carga Masiva (:8082) ─────────────────────────────────────────
 	// /api/carga/upload/aeropuertos → /upload/aeropuertos
