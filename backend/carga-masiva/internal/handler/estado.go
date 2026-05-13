@@ -12,7 +12,7 @@ type EstadoHandler struct {
 	DB *sql.DB
 }
 
-// GET /estado — totales actuales en BD
+// GET /estado — totales actuales en BD + rango de fechas del dataset
 func (h *EstadoHandler) Estado(w http.ResponseWriter, r *http.Request) {
 	aero, vuelos, envios, err := dbpkg.ContarRegistros(h.DB)
 	if err != nil {
@@ -20,7 +20,6 @@ func (h *EstadoHandler) Estado(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Conteo de envíos por aeropuerto origen
 	porAeropuerto, err := h.enviosPorAeropuerto()
 	if err != nil {
 		errResp(w, 500, "DB_ERROR", err.Error())
@@ -28,6 +27,17 @@ func (h *EstadoHandler) Estado(w http.ResponseWriter, r *http.Request) {
 	}
 
 	listo := aero >= 30 && vuelos > 0 && envios > 0
+
+	// Rango de fechas del dataset (desde caché, sin forzar recálculo)
+	var dataset interface{}
+	if info, infoErr := dbpkg.ObtenerDatasetInfo(h.DB, false); infoErr == nil {
+		dataset = map[string]interface{}{
+			"fecha_min":    info.FechaMin,
+			"fecha_max":    info.FechaMax,
+			"total_envios": info.TotalEnvios,
+			"calculado_en": info.Calculado,
+		}
+	}
 
 	respond(w, 200, map[string]interface{}{
 		"aeropuertos": aero,
@@ -37,6 +47,22 @@ func (h *EstadoHandler) Estado(w http.ResponseWriter, r *http.Request) {
 			"por_aeropuerto": porAeropuerto,
 		},
 		"listo_para_simular": listo,
+		"dataset":            dataset,
+	})
+}
+
+// POST /dataset/recalcular — fuerza recálculo del rango de fechas desde envios
+func (h *EstadoHandler) RecalcularDataset(w http.ResponseWriter, r *http.Request) {
+	info, err := dbpkg.RecalcularDatasetInfo(h.DB)
+	if err != nil {
+		errResp(w, 500, "CALCULO_ERROR", err.Error())
+		return
+	}
+	respond(w, 200, map[string]interface{}{
+		"fecha_min":    info.FechaMin,
+		"fecha_max":    info.FechaMax,
+		"total_envios": info.TotalEnvios,
+		"calculado_en": info.Calculado,
 	})
 }
 

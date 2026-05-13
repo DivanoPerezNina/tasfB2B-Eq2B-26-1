@@ -40,6 +40,9 @@ func main() {
 	mux.HandleFunc("GET /estado", estado.Estado)
 	mux.HandleFunc("GET /plantillas/", estado.Plantilla)
 
+	// Dataset meta
+	mux.HandleFunc("POST /dataset/recalcular", estado.RecalcularDataset)
+
 	// Borrado
 	mux.HandleFunc("DELETE /datos", upload.EliminarDatos)
 

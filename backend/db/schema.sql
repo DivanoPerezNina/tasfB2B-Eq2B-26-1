@@ -55,6 +55,17 @@ CREATE TABLE IF NOT EXISTS envios (
   KEY idx_fecha         (fecha_registro)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- ── Metadatos del dataset ────────────────────────────────────
+-- Almacena valores calculados (rango de fechas, totales) para
+-- no recalcular en cada petición.
+CREATE TABLE IF NOT EXISTS dataset_meta (
+  clave        VARCHAR(50)   NOT NULL,
+  valor        VARCHAR(50)   NOT NULL,
+  calculado_en DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (clave)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- ── Sesiones de carga ────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS carga_sesiones (
   token            CHAR(36)          NOT NULL,
