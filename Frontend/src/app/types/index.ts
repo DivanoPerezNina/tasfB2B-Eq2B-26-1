@@ -56,16 +56,59 @@ export interface FlightCancellation {
 
 export type SimulationScenario = 'realtime' | 'period' | 'collapse';
 
+export type CriterioOrden = 'EDF' | 'FIFO' | 'ALEATORIO';
+
 export interface SimulationConfig {
   scenario: SimulationScenario;
   startDate: Date;
   endDate?: Date;
-  speed: number; // velocidad de simulación (1 = tiempo real)
+  /** Días a simular: 3, 5 ó 7 */
+  dias: number;
+  /** Duración real de la simulación en minutos (30–90) */
+  duracionRealMin: number;
+  /** Criterio de ordenamiento para GVNS */
+  criterio: CriterioOrden;
+  /** @deprecated Derivado de duracionRealMin — sólo para compatibilidad con componentes legacy */
+  speed: number;
   thresholds: {
     warehouse: { green: number; yellow: number; red: number };
     flight: { green: number; yellow: number; red: number };
   };
   algorithmParams: Record<string, any>;
+}
+
+// ─── Tipos del backend (simulación en vivo) ───────────────────────────────────
+
+export type FaseSimulacion =
+  | 'idle'
+  | 'planificando'
+  | 'listo'
+  | 'ejecutando'
+  | 'pausado'
+  | 'completado'
+  | 'error';
+
+export interface Contadores {
+  total:     number;
+  pendiente: number;
+  en_vuelo:  number;
+  en_escala: number;
+  entregado: number;
+  rechazado: number;
+}
+
+export interface AeropuertoEstado {
+  iata:              string;
+  maletas_almacen:   number;
+  capacidad_almacen: number;
+  ocupacion:         string; // "0.450"
+  semaforo:          'verde' | 'ambar' | 'rojo';
+}
+
+export interface DatasetInfo {
+  fecha_min:    string;
+  fecha_max:    string;
+  total_envios: string;
 }
 
 export interface SimulationStats {

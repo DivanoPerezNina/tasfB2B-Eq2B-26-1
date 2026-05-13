@@ -130,7 +130,7 @@ export function SimulationConfig() {
 
   const allFilesSelected = !!airportsFile && !!flightsFile && !!shipmentsFile;
 
-  const handleSave = () => {
+  const handleGuardar = () => {
     updateConfig(localConfig);
     resetSimulation();
     toast.success('Configuración guardada', {
@@ -270,19 +270,15 @@ export function SimulationConfig() {
         <Tabs defaultValue="general" className="h-full">
           <TabsList className="mb-5">
             <TabsTrigger value="general">
-              <Settings className="h-4 w-4" />
+              <Settings className="mr-1 h-4 w-4" />
               General
             </TabsTrigger>
-            <TabsTrigger value="files">
-              <Upload className="h-4 w-4" />
-              Planes de Vuelo
-            </TabsTrigger>
             <TabsTrigger value="thresholds">
-              <Sliders className="h-4 w-4" />
+              <Sliders className="mr-1 h-4 w-4" />
               Umbrales
             </TabsTrigger>
             <TabsTrigger value="history">
-              <Calendar className="h-4 w-4" />
+              <Calendar className="mr-1 h-4 w-4" />
               Historial
             </TabsTrigger>
           </TabsList>
@@ -552,6 +548,26 @@ export function SimulationConfig() {
                     )
                   )}
                 </div>
+
+                {/* Botón iniciar planificación */}
+                {(fase === 'idle' || fase === 'error' || fase === 'completado') && (
+                  <div className="pt-2">
+                    <Button
+                      onClick={handleIniciarPlanificacion}
+                      className="w-full sm:w-auto"
+                      size="lg"
+                    >
+                      <Play className="mr-2 h-5 w-5" />
+                      Iniciar Planificación GVNS
+                    </Button>
+                    <p className="mt-2 text-xs text-panel-text-muted">
+                      Ejecutará warm-up + GVNS para {localConfig.dias} días desde{' '}
+                      <span className="font-medium">
+                        {localConfig.startDate.toISOString().slice(0, 10)}
+                      </span>
+                    </p>
+                  </div>
+                )}
               </div>
             </TabsContent>
 

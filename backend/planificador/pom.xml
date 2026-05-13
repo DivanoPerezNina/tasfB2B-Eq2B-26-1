@@ -5,6 +5,14 @@
                              https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
+    <!-- ── Spring Boot 3 parent ─────────────────────────────────────────── -->
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.3.4</version>
+        <relativePath/>
+    </parent>
+
     <groupId>pe.edu.pucp.tasf</groupId>
     <artifactId>planificador-gvns</artifactId>
     <version>1.0.0</version>
@@ -13,41 +21,56 @@
     <name>TASF B2B — Motor de Planificación GVNS</name>
     <description>
         Motor de planificación logística de carga aérea basado en GVNS
-        (General Variable Neighborhood Search). Sin dependencias externas,
-        listo para ser importado como módulo Maven en un monolito modular
-        sobre Tomcat.
+        (General Variable Neighborhood Search). Expuesto como API REST
+        mediante Spring Boot 3.
     </description>
 
     <properties>
         <java.version>17</java.version>
-        <maven.compiler.source>${java.version}</maven.compiler.source>
-        <maven.compiler.target>${java.version}</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
 
-    <!-- Sin dependencias externas: el motor usa solo la JDK estándar -->
-    <dependencies/>
+    <dependencies>
+        <!-- REST API -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <!-- Tests -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
 
     <build>
+        <!-- Fuentes Java en src/ (layout plano heredado del motor GVNS) -->
+        <sourceDirectory>src</sourceDirectory>
+
+        <!-- Recursos en resources/ (application.properties, etc.) -->
+        <resources>
+            <resource>
+                <directory>resources</directory>
+            </resource>
+        </resources>
+
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.13.0</version>
+                <configuration>
+                    <source>${java.version}</source>
+                    <target>${java.version}</target>
+                    <encoding>UTF-8</encoding>
+                </configuration>
             </plugin>
 
-            <!-- Genera un JAR con todas las clases listo para incluir en el WAR -->
+            <!-- Fat JAR ejecutable con Spring Boot -->
             <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-jar-plugin</artifactId>
-                <version>3.4.1</version>
-                <configuration>
-                    <archive>
-                        <manifest>
-                            <mainClass>pe.edu.pucp.tasf.gvns.Main</mainClass>
-                        </manifest>
-                    </archive>
-                </configuration>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
             </plugin>
         </plugins>
     </build>

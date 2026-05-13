@@ -32,8 +32,8 @@ export function SimulationControls() {
       <div className="h-10 w-px bg-slate-200" />
 
       <div>
-        <p className="text-xs text-slate-500">Velocidad</p>
-        <p className="font-medium">{config.speed}x</p>
+        <p className="text-xs text-slate-500">Duración real</p>
+        <p className="font-medium">{config.duracionRealMin ?? config.speed ?? 60} min</p>
       </div>
 
       <div className="ml-auto flex gap-2">
