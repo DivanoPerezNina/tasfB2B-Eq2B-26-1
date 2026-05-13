@@ -1,9 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import * as SliderPrimitive from '@radix-ui/react-slider';
 import { useSimulation } from '../context/SimulationContext';
-import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Button } from '../components/ui/button';
-import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
+import { RadioGroup, RadioGroupItem } from '../components/ui/radio-group';
 import {
   Select,
   SelectContent,
@@ -12,235 +12,263 @@ import {
   SelectValue,
 } from '../components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
-import { Progress } from '../components/ui/progress';
-import { CriterioOrden, SimulationScenario } from '../types';
+import { SimulationScenario } from '../types';
 import {
-  Settings, Save, Calendar, Sliders, Play, Pause,
-  RotateCcw, Clock, X, Loader2, CheckCircle2, AlertCircle,
-  StopCircle, RefreshCw,
+  Settings,
+  Save,
+  Calendar,
+  Sliders,
+  Play,
+  Pause,
+  RotateCcw,
+  Clock,
+  Upload,
+  FileSpreadsheet,
+  X,
+  Download,
+  AlertCircle,
+  CheckCircle2,
+  TrendingUp,
+  Timer,
+  Zap,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 
+// ─── Slider de umbrales con pista tricolor ────────────────────────────────────
+
+function ThresholdSlider({
+  label,
+  green,
+  yellow,
+  onChange,
+}: {
+  label: string;
+  green: number;
+  yellow: number;
+  onChange: (green: number, yellow: number) => void;
+}) {
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <span className="text-sm font-semibold text-panel-text">{label}</span>
+        <div className="flex gap-3 text-xs font-medium">
+          <span className="flex items-center gap-1 text-green-600 dark:text-green-400">
+            <span className="inline-block h-2 w-2 rounded-full bg-green-500" />
+            Verde ≤ {green}%
+          </span>
+          <span className="flex items-center gap-1 text-yellow-600 dark:text-yellow-400">
+            <span className="inline-block h-2 w-2 rounded-full bg-yellow-500" />
+            Ámbar ≤ {yellow}%
+          </span>
+          <span className="flex items-center gap-1 text-red-600 dark:text-red-400">
+            <span className="inline-block h-2 w-2 rounded-full bg-red-500" />
+            Rojo &gt; {yellow}%
+          </span>
+        </div>
+      </div>
+      <SliderPrimitive.Root
+        min={0}
+        max={100}
+        step={1}
+        value={[green, yellow]}
+        onValueChange={([g, y]) => onChange(g, y)}
+        className="relative flex w-full touch-none select-none items-center"
+      >
+        <SliderPrimitive.Track
+          className="relative h-4 w-full grow overflow-hidden rounded-full"
+          style={{
+            background: `linear-gradient(to right,
+              #22c55e 0% ${green}%,
+              #eab308 ${green}% ${yellow}%,
+              #ef4444 ${yellow}% 100%)`,
+          }}
+        >
+          <SliderPrimitive.Range className="absolute h-full opacity-0" />
+        </SliderPrimitive.Track>
+        {[0, 1].map((i) => (
+          <SliderPrimitive.Thumb
+            key={i}
+            className="block h-5 w-5 rounded-full border-2 border-white bg-white shadow-md ring-black/10 transition-shadow hover:ring-4 focus-visible:ring-4 focus-visible:outline-none dark:border-neutral-800 dark:bg-neutral-100"
+          />
+        ))}
+      </SliderPrimitive.Root>
+      <div className="flex text-xs text-panel-text-faint">
+        <span>0%</span>
+        <span className="flex-1" />
+        <span>100%</span>
+      </div>
+    </div>
+  );
+}
+
+// ─── Componente principal ─────────────────────────────────────────────────────
+
+const SCENARIO_LABELS: Record<SimulationScenario, string> = {
+  realtime: 'Tiempo Real',
+  period: 'Periodo',
+  collapse: 'Colapso',
+};
+
 export function SimulationConfig() {
-  const {
-    config,
-    updateConfig,
-    fase,
-    errorMsg,
-    planProgreso,
-    planMensaje,
-    isRunning,
-    simulationTime,
-    progresoPct,
-    contadores,
-    datasetInfo,
-    iniciarPlanificacion,
-    iniciarSimulacion,
-    pausarSimulacion,
-    reanudarSimulacion,
-    detenerSimulacion,
-    resetear,
-  } = useSimulation();
+  const { config, updateConfig, resetSimulation, isRunning, startSimulation, pauseSimulation } =
+    useSimulation();
 
   const [localConfig, setLocalConfig] = useState(config);
+  const [airportsFile, setAirportsFile] = useState<File | null>(null);
+  const [flightsFile, setFlightsFile] = useState<File | null>(null);
+  const [shipmentsFile, setShipmentsFile] = useState<File | null>(null);
+  const [dataLoaded, setDataLoaded] = useState(false);
+  const [currentTime, setCurrentTime] = useState(new Date());
+  const [periodDays, setPeriodDays] = useState<3 | 5 | 7>(3);
+  const [periodDurationMin, setPeriodDurationMin] = useState(60);
+
+  useEffect(() => {
+    const id = setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const allFilesSelected = !!airportsFile && !!flightsFile && !!shipmentsFile;
 
   const handleGuardar = () => {
     updateConfig(localConfig);
+    resetSimulation();
     toast.success('Configuración guardada', {
-      description: 'Se aplicará en la próxima planificación',
+      description: 'La simulación ha sido reiniciada con los nuevos parámetros',
     });
   };
 
-  const handleIniciarPlanificacion = async () => {
-    updateConfig(localConfig);
-    await iniciarPlanificacion();
+  const handleFileUpload = (
+    e: React.ChangeEvent<HTMLInputElement>,
+    type: 'airports' | 'flights' | 'shipments',
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith('.txt')) {
+      toast.error('Formato no válido — use archivos .txt');
+      return;
+    }
+    if (type === 'airports') setAirportsFile(file);
+    else if (type === 'flights') setFlightsFile(file);
+    else setShipmentsFile(file);
   };
 
-  const handleIniciarSimulacion = async () => {
-    await iniciarSimulacion();
+  const handleLoadData = () => {
+    if (!allFilesSelected) return;
+    // TODO: POST /api/carga/upload/* via BFF
+    toast.success('Datos cargados', {
+      description: 'Aeropuertos, vuelos y envíos listos para simular',
+    });
+    setDataLoaded(true);
   };
 
-  // ─── Barra de estado superior ─────────────────────────────────────────────
-
-  const renderEstadoBadge = () => {
-    const badges: Record<string, { label: string; cls: string }> = {
-      idle:         { label: 'Sin iniciar',    cls: 'bg-slate-100 text-slate-600' },
-      planificando: { label: 'Planificando…',  cls: 'bg-yellow-100 text-yellow-700' },
-      listo:        { label: 'Plan listo ✓',   cls: 'bg-blue-100 text-blue-700' },
-      ejecutando:   { label: 'Ejecutando',     cls: 'bg-green-100 text-green-700' },
-      pausado:      { label: 'Pausado',        cls: 'bg-orange-100 text-orange-700' },
-      completado:   { label: 'Completado ✓',   cls: 'bg-green-100 text-green-800' },
-      error:        { label: 'Error',          cls: 'bg-red-100 text-red-700' },
-    };
-    const b = badges[fase] ?? badges.idle;
-    return (
-      <span className={`rounded-full px-3 py-1 text-xs font-semibold ${b.cls}`}>
-        {b.label}
-      </span>
-    );
+  const handleDownloadTemplate = (_tipo: 'aeropuertos' | 'vuelos' | 'envios') => {
+    // TODO: GET /api/carga/plantillas/{tipo}
+    toast.info('Disponible cuando el backend esté operativo');
   };
+
+  const showSpeed = localConfig.scenario === 'collapse';
 
   return (
     <div className="flex h-full flex-col bg-background">
-      {/* ── Header ── */}
-      <div className="border-b border-panel-border bg-panel-bg px-6 py-4 shadow-sm">
-        <div className="flex items-center justify-between">
+      {/* ── Encabezado unificado ───────────────────────────────────────────── */}
+      <div className="border-b border-panel-border bg-panel-bg px-6 pt-4 pb-3 shadow-sm">
+        {/* Fila 1: título + acciones */}
+        <div className="flex items-start justify-between">
           <div>
-            <h1 className="text-xl font-bold text-panel-text">Simulación de Periodo</h1>
+            <h1 className="text-xl font-bold text-panel-text">Configuración de Simulación</h1>
             <p className="text-sm text-panel-text-muted">
-              Planificación GVNS + simulación acelerada (3 / 5 / 7 días)
+              Parámetros operacionales del sistema GVNS
             </p>
           </div>
-          <div className="flex items-center gap-3">
-            {renderEstadoBadge()}
-            <Button variant="outline" onClick={() => setLocalConfig(config)} size="sm">
-              <X className="mr-2 h-4 w-4" />
+          <div className="flex items-center gap-2">
+            {/* Controles de simulación */}
+            {isRunning ? (
+              <Button onClick={pauseSimulation} variant="outline" size="sm">
+                <Pause className="mr-2 h-4 w-4" />
+                Pausar
+              </Button>
+            ) : (
+              <Button
+                onClick={startSimulation}
+                size="sm"
+                disabled={!dataLoaded}
+                title={!dataLoaded ? 'Carga los datos primero' : undefined}
+                className="bg-green-600 hover:bg-green-700 disabled:bg-muted"
+              >
+                <Play className="mr-2 h-4 w-4" />
+                Iniciar
+              </Button>
+            )}
+            <Button onClick={resetSimulation} variant="outline" size="sm">
+              <RotateCcw className="h-4 w-4" />
+            </Button>
+
+            <div className="mx-1 h-6 w-px bg-panel-border" />
+
+            {/* Guardar / Descartar */}
+            <Button variant="ghost" size="sm" onClick={() => setLocalConfig(config)}>
+              <X className="mr-1.5 h-4 w-4" />
               Descartar
             </Button>
-            <Button onClick={handleGuardar} size="sm" disabled={fase !== 'idle' && fase !== 'error' && fase !== 'completado'}>
+            <Button size="sm" onClick={handleSave}>
               <Save className="mr-2 h-4 w-4" />
               Guardar
             </Button>
           </div>
         </div>
+
+        {/* Fila 2: información de estado */}
+        <div className="mt-3 flex items-center gap-5 text-sm">
+          <div className="flex items-center gap-1.5 text-panel-text-muted">
+            <Clock className="h-4 w-4" />
+            <span className="font-mono font-medium text-panel-text">
+              {format(currentTime, 'dd/MM/yyyy HH:mm:ss')}
+            </span>
+          </div>
+          <span className="text-panel-border">·</span>
+          <div className="flex items-center gap-1.5 text-panel-text-muted">
+            <span>Escenario:</span>
+            <span className="font-medium text-panel-text">
+              {SCENARIO_LABELS[localConfig.scenario]}
+            </span>
+          </div>
+          {showSpeed && (
+            <>
+              <span className="text-panel-border">·</span>
+              <div className="flex items-center gap-1.5 text-panel-text-muted">
+                <Zap className="h-4 w-4" />
+                <span className="font-medium text-panel-text">{localConfig.speed}x</span>
+              </div>
+            </>
+          )}
+          {localConfig.scenario === 'period' && (
+            <>
+              <span className="text-panel-border">·</span>
+              <div className="flex items-center gap-1.5 text-panel-text-muted">
+                <Timer className="h-4 w-4" />
+                <span className="font-medium text-panel-text">
+                  {periodDays} días · {periodDurationMin} min
+                </span>
+              </div>
+            </>
+          )}
+          {!dataLoaded && (
+            <>
+              <span className="text-panel-border">·</span>
+              <span className="flex items-center gap-1 text-xs text-yellow-600 dark:text-yellow-400">
+                <AlertCircle className="h-3.5 w-3.5" />
+                Sin datos cargados
+              </span>
+            </>
+          )}
+        </div>
       </div>
 
-      {/* ── Barra de progreso de planificación ── */}
-      {(fase === 'planificando') && (
-        <div className="border-b border-panel-border bg-yellow-50 px-6 py-3 dark:bg-yellow-900/20">
-          <div className="flex items-center gap-3">
-            <Loader2 className="h-4 w-4 animate-spin text-yellow-600" />
-            <div className="flex-1">
-              <div className="mb-1 flex justify-between text-xs">
-                <span className="text-yellow-700 dark:text-yellow-300">{planMensaje}</span>
-                <span className="font-medium text-yellow-700 dark:text-yellow-300">{planProgreso}%</span>
-              </div>
-              <Progress value={planProgreso} className="h-2" />
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Listo para simular ── */}
-      {fase === 'listo' && (
-        <div className="border-b border-panel-border bg-blue-50 px-6 py-3 dark:bg-blue-900/20">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <CheckCircle2 className="h-4 w-4 text-blue-600" />
-              <span className="text-sm font-medium text-blue-700 dark:text-blue-300">
-                Plan generado — {localConfig.dias} días desde {localConfig.startDate?.toISOString().slice(0,10)}
-              </span>
-            </div>
-            <Button onClick={handleIniciarSimulacion} size="sm" className="bg-blue-600 hover:bg-blue-700 text-white">
-              <Play className="mr-2 h-4 w-4" />
-              Iniciar Simulación
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {/* ── Controles en vivo (ejecutando / pausado / completado) ── */}
-      {(fase === 'ejecutando' || fase === 'pausado' || fase === 'completado') && (
-        <div className="border-b border-panel-border bg-panel-bg px-6 py-3">
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2">
-              <Clock className="h-5 w-5 text-panel-text-muted" />
-              <div>
-                <p className="text-xs text-panel-text-faint">Tiempo simulado</p>
-                <p className="font-mono text-sm font-medium text-panel-text">
-                  {format(simulationTime, 'dd/MM/yyyy HH:mm')}
-                </p>
-              </div>
-            </div>
-
-            <div className="h-10 w-px bg-panel-border" />
-
-            {/* Progreso */}
-            <div className="flex-1">
-              <div className="mb-1 flex justify-between text-xs text-panel-text-muted">
-                <span>Progreso</span>
-                <span className="font-medium">{progresoPct.toFixed(1)}%</span>
-              </div>
-              <Progress value={progresoPct} className="h-2" />
-            </div>
-
-            <div className="h-10 w-px bg-panel-border" />
-
-            {/* Contadores */}
-            <div className="flex gap-4 text-xs">
-              <div className="text-center">
-                <p className="font-bold text-blue-600">{contadores.en_vuelo + contadores.en_escala}</p>
-                <p className="text-panel-text-faint">En tránsito</p>
-              </div>
-              <div className="text-center">
-                <p className="font-bold text-green-600">{contadores.entregado}</p>
-                <p className="text-panel-text-faint">Entregado</p>
-              </div>
-              <div className="text-center">
-                <p className="font-bold text-red-500">{contadores.rechazado}</p>
-                <p className="text-panel-text-faint">Rechazado</p>
-              </div>
-              <div className="text-center">
-                <p className="font-bold text-panel-text">{contadores.total}</p>
-                <p className="text-panel-text-faint">Total</p>
-              </div>
-            </div>
-
-            <div className="ml-auto flex gap-2">
-              {fase === 'ejecutando' ? (
-                <Button onClick={() => pausarSimulacion()} variant="outline" size="sm">
-                  <Pause className="mr-2 h-4 w-4" />
-                  Pausar
-                </Button>
-              ) : fase === 'pausado' ? (
-                <Button onClick={() => reanudarSimulacion()} size="sm">
-                  <Play className="mr-2 h-4 w-4" />
-                  Reanudar
-                </Button>
-              ) : null}
-              {(fase === 'ejecutando' || fase === 'pausado') && (
-                <Button
-                  onClick={() => { detenerSimulacion(); toast.info('Simulación detenida'); }}
-                  variant="outline"
-                  size="sm"
-                  className="text-red-600 hover:text-red-700"
-                >
-                  <StopCircle className="mr-2 h-4 w-4" />
-                  Detener
-                </Button>
-              )}
-              {fase === 'completado' && (
-                <Button onClick={() => resetear()} variant="outline" size="sm">
-                  <RefreshCw className="mr-2 h-4 w-4" />
-                  Nueva simulación
-                </Button>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── Error ── */}
-      {fase === 'error' && (
-        <div className="border-b border-red-200 bg-red-50 px-6 py-3 dark:bg-red-900/20">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <AlertCircle className="h-4 w-4 text-red-600" />
-              <span className="text-sm text-red-700 dark:text-red-300">{errorMsg}</span>
-            </div>
-            <Button onClick={() => resetear()} variant="outline" size="sm">
-              <RotateCcw className="mr-2 h-4 w-4" />
-              Reintentar
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {/* ── Tabs de configuración ── */}
+      {/* ── Tabs ──────────────────────────────────────────────────────────── */}
       <div className="flex-1 overflow-hidden p-6">
         <Tabs defaultValue="general" className="h-full">
-          <TabsList className="mb-4">
+          <TabsList className="mb-5">
             <TabsTrigger value="general">
               <Settings className="mr-1 h-4 w-4" />
               General
@@ -255,145 +283,270 @@ export function SimulationConfig() {
             </TabsTrigger>
           </TabsList>
 
-          <div className="h-[calc(100%-3rem)] overflow-y-auto">
-            {/* ── Tab: General ── */}
+          <div className="h-[calc(100%-3rem)] overflow-y-auto pr-1">
+            {/* ── Tab: General ────────────────────────────────────────────── */}
             <TabsContent value="general" className="m-0">
-              <div className="max-w-3xl space-y-6">
-
-                {/* Dataset info */}
-                {datasetInfo && (
-                  <Card>
-                    <CardHeader className="py-3">
-                      <CardTitle className="text-sm font-semibold">Rango del dataset disponible</CardTitle>
-                    </CardHeader>
-                    <CardContent className="pb-3">
-                      <div className="flex gap-8 text-sm">
-                        <div>
-                          <p className="text-xs text-panel-text-faint">Desde</p>
-                          <p className="font-mono font-medium">{datasetInfo.fecha_min}</p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-panel-text-faint">Hasta</p>
-                          <p className="font-mono font-medium">{datasetInfo.fecha_max}</p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-panel-text-faint">Total envíos</p>
-                          <p className="font-mono font-medium">
-                            {parseInt(datasetInfo.total_envios).toLocaleString()}
-                          </p>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                )}
-
-                {/* Scenario */}
-                <div className="grid grid-cols-2 gap-6">
-                  <div>
-                    <Label>Escenario</Label>
-                    <Select
-                      value={localConfig.scenario}
-                      onValueChange={v => setLocalConfig({ ...localConfig, scenario: v as SimulationScenario })}
-                    >
-                      <SelectTrigger className="mt-1.5">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="period">Simulación de Periodo (3–7 días)</SelectItem>
-                        <SelectItem value="realtime">Tiempo Real (día a día)</SelectItem>
-                        <SelectItem value="collapse">Hasta Colapso</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div>
-                    <Label>Criterio GVNS</Label>
-                    <Select
-                      value={localConfig.criterio}
-                      onValueChange={v => setLocalConfig({ ...localConfig, criterio: v as CriterioOrden })}
-                    >
-                      <SelectTrigger className="mt-1.5">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="EDF">EDF — Earliest Deadline First</SelectItem>
-                        <SelectItem value="FIFO">FIFO — First In First Out</SelectItem>
-                        <SelectItem value="ALEATORIO">Aleatorio</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
-                {/* Fecha inicio + Días */}
-                <div className="grid grid-cols-2 gap-6">
-                  <div>
-                    <Label htmlFor="startDate">Fecha de inicio</Label>
-                    <Input
-                      id="startDate"
-                      type="date"
-                      min={datasetInfo?.fecha_min}
-                      max={datasetInfo?.fecha_max}
-                      value={localConfig.startDate.toISOString().slice(0, 10)}
-                      onChange={e => setLocalConfig({
-                        ...localConfig,
-                        startDate: new Date(e.target.value + 'T00:00:00'),
-                      })}
-                      className="mt-1.5"
-                    />
-                    <p className="mt-1 text-xs text-panel-text-muted">
-                      Dentro del rango del dataset
-                    </p>
-                  </div>
-
-                  <div>
-                    <Label>Días a simular</Label>
-                    <Select
-                      value={String(localConfig.dias)}
-                      onValueChange={v => setLocalConfig({ ...localConfig, dias: parseInt(v) })}
-                    >
-                      <SelectTrigger className="mt-1.5">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="3">3 días</SelectItem>
-                        <SelectItem value="5">5 días</SelectItem>
-                        <SelectItem value="7">7 días</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <p className="mt-1 text-xs text-panel-text-muted">
-                      Ventana temporal que planifica y simula GVNS
-                    </p>
-                  </div>
-                </div>
-
-                {/* Duración real */}
-                <div className="max-w-sm">
-                  <Label>Duración real de la simulación</Label>
+              <div className="grid max-w-4xl grid-cols-2 gap-6">
+                {/* Escenario */}
+                <div className="col-span-2">
+                  <Label htmlFor="scenario" className="text-sm font-medium">
+                    Escenario de Simulación
+                  </Label>
                   <Select
-                    value={String(localConfig.duracionRealMin)}
-                    onValueChange={v => setLocalConfig({
-                      ...localConfig,
-                      duracionRealMin: parseInt(v),
-                      speed: Math.round((localConfig.dias * 1440) / (parseInt(v) * 60)),
-                    })}
+                    value={localConfig.scenario}
+                    onValueChange={(v) =>
+                      setLocalConfig({ ...localConfig, scenario: v as SimulationScenario })
+                    }
                   >
-                    <SelectTrigger className="mt-1.5">
+                    <SelectTrigger id="scenario" className="mt-1.5">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="30">30 minutos</SelectItem>
-                      <SelectItem value="45">45 minutos</SelectItem>
-                      <SelectItem value="60">60 minutos (1 hora)</SelectItem>
-                      <SelectItem value="90">90 minutos (1.5 horas)</SelectItem>
+                      <SelectItem value="realtime">Día a Día (Tiempo Real)</SelectItem>
+                      <SelectItem value="period">Simulación de Periodo (3–7 días)</SelectItem>
+                      <SelectItem value="collapse">Simulación hasta Colapso</SelectItem>
                     </SelectContent>
                   </Select>
                   <p className="mt-1 text-xs text-panel-text-muted">
-                    Velocidad efectiva:{' '}
-                    <span className="font-semibold text-panel-text">
-                      {((localConfig.dias * 1440) / (localConfig.duracionRealMin * 60)).toFixed(1)}×
-                    </span>{' '}
-                    ({localConfig.dias} días simulados en {localConfig.duracionRealMin} min reales)
+                    {localConfig.scenario === 'realtime' &&
+                      'Simulación continua para monitoreo día a día'}
+                    {localConfig.scenario === 'period' &&
+                      'Simula 3–7 días en 30–90 minutos reales usando GVNS'}
+                    {localConfig.scenario === 'collapse' &&
+                      'Incrementa la carga hasta alcanzar colapso operativo'}
                   </p>
+                </div>
+
+                {/* Fecha de inicio */}
+                <div>
+                  <Label htmlFor="startDate" className="text-sm font-medium">
+                    Fecha de inicio
+                  </Label>
+                  <input
+                    id="startDate"
+                    type="date"
+                    value={localConfig.startDate.toISOString().slice(0, 10)}
+                    onChange={(e) =>
+                      setLocalConfig({ ...localConfig, startDate: new Date(e.target.value) })
+                    }
+                    disabled={localConfig.scenario !== 'period'}
+                    className="mt-1.5 flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                  />
+                  {localConfig.scenario !== 'period' && (
+                    <p className="mt-1 text-xs text-panel-text-faint">
+                      Solo editable en escenario Periodo
+                    </p>
+                  )}
+                </div>
+
+                {/* Parámetros de Periodo */}
+                {localConfig.scenario === 'period' && (
+                  <div className="col-span-2 rounded-xl border border-panel-border bg-panel-section-bg p-5">
+                    <p className="mb-4 text-sm font-semibold text-panel-text">
+                      Parámetros de Periodo
+                    </p>
+
+                    <div className="grid grid-cols-2 gap-8">
+                      {/* Duración en minutos reales */}
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-sm">Duración real</Label>
+                          <span className="rounded-md bg-panel-bg px-2 py-0.5 text-sm font-semibold tabular-nums text-panel-text">
+                            {periodDurationMin} min
+                          </span>
+                        </div>
+                        <SliderPrimitive.Root
+                          min={30}
+                          max={90}
+                          step={5}
+                          value={[periodDurationMin]}
+                          onValueChange={([v]) => setPeriodDurationMin(v)}
+                          className="relative flex w-full touch-none select-none items-center"
+                        >
+                          <SliderPrimitive.Track className="bg-muted relative h-2 w-full grow overflow-hidden rounded-full">
+                            <SliderPrimitive.Range className="bg-primary absolute h-full" />
+                          </SliderPrimitive.Track>
+                          <SliderPrimitive.Thumb className="border-primary bg-background ring-ring/50 block h-4 w-4 rounded-full border shadow-sm transition-shadow hover:ring-4 focus-visible:ring-4 focus-visible:outline-none" />
+                        </SliderPrimitive.Root>
+                        <div className="flex justify-between text-xs text-panel-text-faint">
+                          <span>30 min</span>
+                          <span>90 min</span>
+                        </div>
+                      </div>
+
+                      {/* Días a simular — cards */}
+                      <div className="space-y-2">
+                        <Label className="text-sm">Días a simular</Label>
+                        <RadioGroup
+                          value={String(periodDays)}
+                          onValueChange={(v) => setPeriodDays(Number(v) as 3 | 5 | 7)}
+                          className="grid grid-cols-3 gap-3"
+                        >
+                          {([3, 5, 7] as const).map((d) => (
+                            <label
+                              key={d}
+                              htmlFor={`days-${d}`}
+                              className={`flex cursor-pointer flex-col items-center rounded-lg border-2 px-3 py-3 transition-all ${
+                                periodDays === d
+                                  ? 'border-primary bg-primary/5 shadow-sm'
+                                  : 'border-panel-border bg-panel-bg hover:border-primary/40'
+                              }`}
+                            >
+                              <RadioGroupItem
+                                value={String(d)}
+                                id={`days-${d}`}
+                                className="sr-only"
+                              />
+                              <span
+                                className={`text-2xl font-bold ${periodDays === d ? 'text-primary' : 'text-panel-text'}`}
+                              >
+                                {d}
+                              </span>
+                              <span className="text-xs text-panel-text-muted">días</span>
+                            </label>
+                          ))}
+                        </RadioGroup>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Velocidad — solo en Colapso */}
+                {localConfig.scenario === 'collapse' && (
+                  <div className="col-span-2 rounded-xl border border-panel-border bg-panel-section-bg p-5">
+                    <p className="mb-4 text-sm font-semibold text-panel-text">
+                      Velocidad de Simulación
+                    </p>
+                    <div className="max-w-sm space-y-3">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-sm">Velocidad</Label>
+                        <span className="rounded-md bg-panel-bg px-2 py-0.5 text-sm font-semibold tabular-nums text-panel-text">
+                          {localConfig.speed}x
+                        </span>
+                      </div>
+                      <SliderPrimitive.Root
+                        min={1}
+                        max={200}
+                        step={1}
+                        value={[localConfig.speed]}
+                        onValueChange={([v]) => setLocalConfig({ ...localConfig, speed: v })}
+                        className="relative flex w-full touch-none select-none items-center"
+                      >
+                        <SliderPrimitive.Track className="bg-muted relative h-2 w-full grow overflow-hidden rounded-full">
+                          <SliderPrimitive.Range className="bg-primary absolute h-full" />
+                        </SliderPrimitive.Track>
+                        <SliderPrimitive.Thumb className="border-primary bg-background ring-ring/50 block h-4 w-4 rounded-full border shadow-sm transition-shadow hover:ring-4 focus-visible:ring-4 focus-visible:outline-none" />
+                      </SliderPrimitive.Root>
+                      <div className="flex justify-between text-xs text-panel-text-faint">
+                        <span>1x (real)</span>
+                        <span>200x (máximo)</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </TabsContent>
+
+            {/* ── Tab: Planes de Vuelo ─────────────────────────────────────── */}
+            <TabsContent value="files" className="m-0">
+              <div className="max-w-4xl space-y-6">
+                {!dataLoaded && (
+                  <div className="flex items-start gap-3 rounded-lg border border-yellow-400/40 bg-yellow-500/10 p-4">
+                    <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-yellow-600 dark:text-yellow-400" />
+                    <p className="text-sm text-yellow-700 dark:text-yellow-300">
+                      Selecciona los tres archivos y haz clic en{' '}
+                      <strong>Cargar datos</strong> antes de iniciar la simulación.
+                    </p>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-3 gap-4">
+                  {(
+                    [
+                      {
+                        id: 'airports-upload',
+                        type: 'airports' as const,
+                        label: 'Aeropuertos',
+                        hint: 'aeropuertos.txt',
+                        tpl: 'aeropuertos' as const,
+                        file: airportsFile,
+                      },
+                      {
+                        id: 'flights-upload',
+                        type: 'flights' as const,
+                        label: 'Vuelos',
+                        hint: 'vuelos.txt',
+                        tpl: 'vuelos' as const,
+                        file: flightsFile,
+                      },
+                      {
+                        id: 'shipments-upload',
+                        type: 'shipments' as const,
+                        label: 'Envíos',
+                        hint: '_envios_XXXX_.txt',
+                        tpl: 'envios' as const,
+                        file: shipmentsFile,
+                      },
+                    ] as const
+                  ).map(({ id, type, label, hint, tpl, file }) => (
+                    <div key={id}>
+                      <div className="mb-1.5 flex items-center justify-between">
+                        <Label>{label}</Label>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 px-2 text-xs"
+                          onClick={() => handleDownloadTemplate(tpl)}
+                        >
+                          <Download className="mr-1 h-3 w-3" />
+                          Plantilla
+                        </Button>
+                      </div>
+                      <input
+                        id={id}
+                        type="file"
+                        accept=".txt"
+                        onChange={(e) => handleFileUpload(e, type)}
+                        className="hidden"
+                      />
+                      <label htmlFor={id}>
+                        <div
+                          className={`flex h-32 cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed transition-colors ${
+                            file
+                              ? 'border-green-400 bg-green-500/10'
+                              : 'border-panel-border bg-panel-section-bg hover:border-green-400 hover:bg-green-500/10'
+                          }`}
+                        >
+                          <FileSpreadsheet
+                            className={`h-8 w-8 ${file ? 'text-green-500' : 'text-panel-text-faint'}`}
+                          />
+                          <p className="mt-2 px-2 text-center text-xs text-panel-text-muted">
+                            {file ? file.name : 'Seleccionar archivo'}
+                          </p>
+                          <p className="text-xs text-panel-text-faint">{hint}</p>
+                        </div>
+                      </label>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-4">
+                  <Button onClick={handleLoadData} disabled={!allFilesSelected} className="gap-2">
+                    <Upload className="h-4 w-4" />
+                    Cargar datos
+                  </Button>
+                  {dataLoaded ? (
+                    <span className="flex items-center gap-1.5 text-sm text-green-600 dark:text-green-400">
+                      <CheckCircle2 className="h-4 w-4" />
+                      Datos cargados correctamente
+                    </span>
+                  ) : (
+                    !allFilesSelected && (
+                      <span className="text-xs text-panel-text-muted">
+                        Selecciona los 3 archivos para habilitar la carga
+                      </span>
+                    )
+                  )}
                 </div>
 
                 {/* Botón iniciar planificación */}
@@ -418,113 +571,155 @@ export function SimulationConfig() {
               </div>
             </TabsContent>
 
-            {/* ── Tab: Umbrales ── */}
+            {/* ── Tab: Umbrales ────────────────────────────────────────────── */}
             <TabsContent value="thresholds" className="m-0">
-              <div className="max-w-4xl">
-                <div className="grid grid-cols-2 gap-8">
-                  {/* Almacenes */}
-                  <div>
-                    <h3 className="mb-4 text-base font-semibold">Almacenes</h3>
-                    <div className="space-y-4">
-                      {(['green', 'yellow', 'red'] as const).map(color => (
-                        <div key={color} className="flex items-center gap-3">
-                          <div className="w-32">
-                            <Label className="text-sm capitalize">
-                              {color === 'green' ? '🟢 Verde (OK)' : color === 'yellow' ? '🟡 Ámbar' : '🔴 Rojo'}
-                            </Label>
-                          </div>
-                          <Input
-                            type="number" min="0" max="100"
-                            value={localConfig.thresholds.warehouse[color]}
-                            onChange={e => setLocalConfig({
-                              ...localConfig,
-                              thresholds: {
-                                ...localConfig.thresholds,
-                                warehouse: {
-                                  ...localConfig.thresholds.warehouse,
-                                  [color]: parseInt(e.target.value) || 0,
-                                },
-                              },
-                            })}
-                            className="w-24"
-                          />
-                          <span className="text-sm text-panel-text-muted">%</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
+              <div className="max-w-2xl space-y-8">
+                <p className="text-sm text-panel-text-muted">
+                  Arrastra los controles para definir los límites de semaforización. El color del
+                  mapa se actualiza en tiempo real según estos umbrales.
+                </p>
 
-                  {/* Vuelos */}
-                  <div>
-                    <h3 className="mb-4 text-base font-semibold">Vuelos</h3>
-                    <div className="space-y-4">
-                      {(['green', 'yellow', 'red'] as const).map(color => (
-                        <div key={color} className="flex items-center gap-3">
-                          <div className="w-32">
-                            <Label className="text-sm">
-                              {color === 'green' ? '🟢 Verde' : color === 'yellow' ? '🟡 Ámbar' : '🔴 Rojo'}
-                            </Label>
-                          </div>
-                          <Input
-                            type="number" min="0" max="100"
-                            value={localConfig.thresholds.flight[color]}
-                            onChange={e => setLocalConfig({
-                              ...localConfig,
-                              thresholds: {
-                                ...localConfig.thresholds,
-                                flight: {
-                                  ...localConfig.thresholds.flight,
-                                  [color]: parseInt(e.target.value) || 0,
-                                },
-                              },
-                            })}
-                            className="w-24"
-                          />
-                          <span className="text-sm text-panel-text-muted">%</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
+                <div className="rounded-xl border border-panel-border bg-panel-section-bg p-5">
+                  <ThresholdSlider
+                    label="Ocupación de Almacenes"
+                    green={localConfig.thresholds.warehouse.green}
+                    yellow={localConfig.thresholds.warehouse.yellow}
+                    onChange={(g, y) =>
+                      setLocalConfig({
+                        ...localConfig,
+                        thresholds: {
+                          ...localConfig.thresholds,
+                          warehouse: { green: g, yellow: y, red: y },
+                        },
+                      })
+                    }
+                  />
+                </div>
+
+                <div className="rounded-xl border border-panel-border bg-panel-section-bg p-5">
+                  <ThresholdSlider
+                    label="Ocupación de Vuelos"
+                    green={localConfig.thresholds.flight.green}
+                    yellow={localConfig.thresholds.flight.yellow}
+                    onChange={(g, y) =>
+                      setLocalConfig({
+                        ...localConfig,
+                        thresholds: {
+                          ...localConfig.thresholds,
+                          flight: { green: g, yellow: y, red: y },
+                        },
+                      })
+                    }
+                  />
                 </div>
               </div>
             </TabsContent>
 
-            {/* ── Tab: Historial ── */}
+            {/* ── Tab: Historial ───────────────────────────────────────────── */}
             <TabsContent value="history" className="m-0">
-              <div className="max-w-5xl">
-                <div className="rounded-lg border border-panel-border bg-panel-bg">
-                  <table className="w-full">
-                    <thead className="bg-panel-section-bg">
-                      <tr>
-                        <th className="p-3 text-left text-sm font-medium">Fecha</th>
-                        <th className="p-3 text-left text-sm font-medium">Inicio</th>
-                        <th className="p-3 text-left text-sm font-medium">Días</th>
-                        <th className="p-3 text-left text-sm font-medium">Duración</th>
-                        <th className="p-3 text-left text-sm font-medium">Total</th>
-                        <th className="p-3 text-left text-sm font-medium">Entregados</th>
-                        <th className="p-3 text-left text-sm font-medium">Rechazados</th>
+              <div className="max-w-5xl space-y-4">
+                <p className="text-sm text-panel-text-muted">
+                  Comparativa de simulaciones anteriores bajo diferentes configuraciones.
+                </p>
+
+                <div className="overflow-hidden rounded-xl border border-panel-border">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-panel-border bg-panel-section-bg">
+                        <th className="px-4 py-3 text-left font-medium text-panel-text">Fecha</th>
+                        <th className="px-4 py-3 text-left font-medium text-panel-text">
+                          Escenario
+                        </th>
+                        <th className="px-4 py-3 text-right font-medium text-panel-text">
+                          Maletas
+                        </th>
+                        <th className="px-4 py-3 text-right font-medium text-panel-text">
+                          Tasa Éxito
+                        </th>
+                        <th className="px-4 py-3 text-right font-medium text-panel-text">
+                          Retrasadas
+                        </th>
+                        <th className="px-4 py-3 text-right font-medium text-panel-text">
+                          Duración
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
-                      {/* Completado actual si hay */}
-                      {fase === 'completado' && (
-                        <tr className="border-t bg-green-50 dark:bg-green-900/10">
-                          <td className="p-3 text-sm">{new Date().toLocaleString('es-PE')}</td>
-                          <td className="p-3 font-mono text-sm">{localConfig.startDate.toISOString().slice(0,10)}</td>
-                          <td className="p-3 text-sm">{localConfig.dias}</td>
-                          <td className="p-3 text-sm">{localConfig.duracionRealMin} min</td>
-                          <td className="p-3 text-sm">{contadores.total}</td>
-                          <td className="p-3 text-sm text-green-600">{contadores.entregado}</td>
-                          <td className="p-3 text-sm text-red-600">{contadores.rechazado}</td>
-                        </tr>
-                      )}
-                      {fase !== 'completado' && (
-                        <tr>
-                          <td colSpan={7} className="p-6 text-center text-sm text-panel-text-muted">
-                            No hay simulaciones completadas en esta sesión.
+                      {[
+                        {
+                          date: '01/04/2026 15:45',
+                          scenario: 'Periodo',
+                          bags: '2,890',
+                          rate: 91.2,
+                          delayed: 254,
+                          duration: '45 min',
+                        },
+                        {
+                          date: '31/03/2026 09:00',
+                          scenario: 'Colapso',
+                          bags: '4,567',
+                          rate: 78.3,
+                          delayed: 991,
+                          duration: '1h 20min',
+                        },
+                        {
+                          date: '28/03/2026 11:20',
+                          scenario: 'Tiempo Real',
+                          bags: '1,203',
+                          rate: 95.8,
+                          delayed: 51,
+                          duration: '30 min',
+                        },
+                      ].map((row, i) => (
+                        <tr
+                          key={i}
+                          className="border-t border-panel-border transition-colors hover:bg-panel-section-bg"
+                        >
+                          <td className="px-4 py-3 text-panel-text-muted">{row.date}</td>
+                          <td className="px-4 py-3">
+                            <span
+                              className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                                row.scenario === 'Colapso'
+                                  ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+                                  : row.scenario === 'Periodo'
+                                    ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
+                                    : 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                              }`}
+                            >
+                              {row.scenario === 'Colapso' ? (
+                                <TrendingUp className="h-3 w-3" />
+                              ) : row.scenario === 'Periodo' ? (
+                                <Timer className="h-3 w-3" />
+                              ) : (
+                                <Clock className="h-3 w-3" />
+                              )}
+                              {row.scenario}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-right font-medium text-panel-text">
+                            {row.bags}
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <span
+                              className={`font-semibold ${
+                                row.rate >= 90
+                                  ? 'text-green-600 dark:text-green-400'
+                                  : row.rate >= 80
+                                    ? 'text-yellow-600 dark:text-yellow-400'
+                                    : 'text-red-600 dark:text-red-400'
+                              }`}
+                            >
+                              {row.rate}%
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-right text-red-600 dark:text-red-400">
+                            {row.delayed.toLocaleString()}
+                          </td>
+                          <td className="px-4 py-3 text-right text-panel-text-muted">
+                            {row.duration}
                           </td>
                         </tr>
-                      )}
+                      ))}
                     </tbody>
                   </table>
                 </div>
