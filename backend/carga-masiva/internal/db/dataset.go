@@ -73,7 +73,9 @@ func calcularYGuardar(db *sql.DB) (*DatasetInfo, error) {
 	var total int64
 
 	err := db.QueryRow(
-		`SELECT MIN(fecha_registro), MAX(fecha_registro), COUNT(*)
+		`SELECT DATE_FORMAT(MIN(fecha_registro), '%Y-%m-%d'),
+		        DATE_FORMAT(MAX(fecha_registro), '%Y-%m-%d'),
+		        COUNT(*)
 		 FROM envios`).Scan(&minFecha, &maxFecha, &total)
 	if err != nil {
 		return nil, fmt.Errorf("calcular rango: %w", err)
