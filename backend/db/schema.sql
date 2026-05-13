@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS vuelos (
 
 -- ── Envíos ───────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS envios (
-  id_envio         CHAR(8)           NOT NULL,
+  id_envio         VARCHAR(12)       NOT NULL,
   origen_iata      CHAR(4)           NOT NULL,
   fecha_registro   DATE              NOT NULL,
   hora             TINYINT UNSIGNED  NOT NULL,

@@ -84,7 +84,7 @@ func parseLineaEnvio(line, origenIATA string) (Envio, error) {
 	destIATA := strings.TrimSpace(parts[4])
 	maletasStr := strings.TrimSpace(parts[5])
 
-	if len(idEnvio) != 8 || len(fechaStr) != 8 || len(destIATA) != 4 {
+	if len(idEnvio) == 0 || len(fechaStr) != 8 || len(destIATA) != 4 {
 		return Envio{}, fmt.Errorf("formato inválido")
 	}
 

@@ -4,29 +4,23 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 
-	"golang.org/x/text/encoding/unicode"
+	textunicode "golang.org/x/text/encoding/unicode"
 	"golang.org/x/text/transform"
 )
 
-// rexIATA detecta un código IATA de 4 letras mayúsculas.
-var rexIATA = regexp.MustCompile(`\b([A-Z]{4})\b`)
-
-// ParseAeropuertos lee aeropuertos.txt (UTF-16 LE o UTF-8) y devuelve los 30 registros.
+// ParseAeropuertos lee aeropuertos.txt (UTF-16 BE/LE con BOM) y devuelve los registros.
 //
-// Formato esperado por línea (campos separados por espacios):
+// Formato real de cada línea de aeropuerto:
 //
-//	01 SKBO Bogota Colombia BOG -5 430 Latitude 4.701389 Longitude -74.146944
-//	   ↑ID  ↑IATA ↑ciudad  ↑país ↑alias ↑GMT ↑cap  ↑kw  ↑lat       ↑kw    ↑lng
-//
-// Encabezados de continente: líneas que contienen "america", "europa" o "asia" (case-insensitive).
+//	01   SKBO   Bogota   Colombia   bogo   -5   430   Latitude: 04° 42' 05" N   Longitude:  74° 08' 49" W
 func ParseAeropuertos(r io.Reader) ([]Aeropuerto, error) {
-	// Intentar decodificar UTF-16 LE (con BOM), si falla leer como UTF-8.
-	utf16r := transform.NewReader(r, unicode.UTF16(unicode.LittleEndian, unicode.UseBOM).NewDecoder())
-	return parseAeropuertosReader(utf16r)
+	// El archivo viene con BOM; UseBOM detecta automáticamente BE o LE.
+	dec := textunicode.UTF16(textunicode.LittleEndian, textunicode.UseBOM).NewDecoder()
+	return parseAeropuertosReader(transform.NewReader(r, dec))
 }
 
 func parseAeropuertosReader(r io.Reader) ([]Aeropuerto, error) {
@@ -34,17 +28,27 @@ func parseAeropuertosReader(r io.Reader) ([]Aeropuerto, error) {
 	scanner.Buffer(make([]byte, 256*1024), 256*1024)
 
 	var result []Aeropuerto
-	continente := 1 // 1=América por defecto
+	continente := 1 // 1=América, 2=Europa, 3=Asia
 	idActual := 1
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "*") || strings.HasPrefix(line, "PDDS") {
+		if line == "" {
 			continue
 		}
 
 		lower := strings.ToLower(line)
-		if strings.Contains(lower, "america") || strings.Contains(lower, "améric") {
+
+		// Saltar encabezados y comentarios
+		if strings.HasPrefix(lower, "*") ||
+			strings.HasPrefix(lower, "pdds") ||
+			strings.HasPrefix(lower, "#") {
+			continue
+		}
+
+		// Detectar sección de continente
+		if strings.Contains(lower, "america") || strings.Contains(lower, "améric") ||
+			strings.Contains(lower, "sur") && strings.Contains(lower, "norte") {
 			continente = 1
 			continue
 		}
@@ -52,22 +56,22 @@ func parseAeropuertosReader(r io.Reader) ([]Aeropuerto, error) {
 			continente = 2
 			continue
 		}
-		if strings.Contains(lower, "asia") {
+		if strings.Contains(lower, "asia") && !strings.Contains(lower, "latitude") {
 			continente = 3
 			continue
 		}
 
-		// Solo procesamos líneas con "Latitude" o "latitude"
-		latIdx := strings.Index(lower, "latitude")
-		if latIdx < 0 {
+		// Solo líneas que contengan "latitude" (con o sin dos puntos)
+		if !strings.Contains(lower, "latitude") {
 			continue
 		}
 
 		parts := strings.Fields(line)
-		// Buscar el índice de "Latitude" dentro del slice
+
+		// Buscar el índice de "Latitude" (puede ser "Latitude:" con colon)
 		kwIdx := -1
 		for i, p := range parts {
-			if strings.EqualFold(p, "latitude") {
+			if strings.EqualFold(strings.TrimRight(p, ":"), "latitude") {
 				kwIdx = i
 				break
 			}
@@ -76,32 +80,21 @@ func parseAeropuertosReader(r io.Reader) ([]Aeropuerto, error) {
 			continue
 		}
 
-		// GMT y capacidad están justo antes de "Latitude"
-		gmt, err1 := parseGMT(parts[kwIdx-2])
-		cap, err2 := strconv.Atoi(parts[kwIdx-1])
-		if err1 != nil || err2 != nil {
+		// GMT: 2 posiciones antes de Latitude
+		gmt, err := parseGMT(parts[kwIdx-2])
+		if err != nil {
 			continue
 		}
-
-		// Latitud: siguiente token después de "Latitude"
-		if kwIdx+1 >= len(parts) {
-			continue
-		}
-		lat, err := strconv.ParseFloat(parts[kwIdx+1], 64)
+		// Capacidad: 1 posición antes de Latitude
+		cap, err := strconv.Atoi(parts[kwIdx-1])
 		if err != nil {
 			continue
 		}
 
-		// Longitud: 2 tokens después (kwIdx+2 = "Longitude", kwIdx+3 = valor)
-		var lng float64
-		if kwIdx+3 < len(parts) {
-			lng, _ = strconv.ParseFloat(parts[kwIdx+3], 64)
-		}
-
-		// IATA: primera palabra de 4 letras mayúsculas en la línea
+		// IATA: primera palabra de exactamente 4 letras mayúsculas en la línea
 		iata := ""
 		for _, p := range parts {
-			if rexIATA.MatchString(p) && p == strings.ToUpper(p) {
+			if len(p) == 4 && isAllUpper(p) {
 				iata = p
 				break
 			}
@@ -110,9 +103,20 @@ func parseAeropuertosReader(r io.Reader) ([]Aeropuerto, error) {
 			continue
 		}
 
-		// Ciudad y país: tokens entre IATA y la zona de GMT/cap
-		// Búscamos la posición del IATA en parts para extraer ciudad y país
+		// Ciudad, país, alias: tokens entre IATA y kwIdx-2
 		ciudad, pais, alias := extractCiudadPaisAlias(parts, iata, kwIdx)
+
+		// Latitud: DMS en las 4 posiciones tras "Latitude:" → "04°" "42'" "05\"" "N"
+		lat := parseDMS(parts, kwIdx+1)
+
+		// Longitud: buscar "Longitude:" y tomar las 4 posiciones siguientes
+		var lng float64
+		for j := kwIdx + 1; j < len(parts); j++ {
+			if strings.EqualFold(strings.TrimRight(parts[j], ":"), "longitude") {
+				lng = parseDMS(parts, j+1)
+				break
+			}
+		}
 
 		result = append(result, Aeropuerto{
 			ID:               idActual,
@@ -138,8 +142,49 @@ func parseAeropuertosReader(r io.Reader) ([]Aeropuerto, error) {
 	return result, nil
 }
 
+// parseDMS convierte coordenadas DMS a decimal.
+// Espera 4 tokens consecutivos a partir de startIdx: "04°" "42'" "05\"" "N|S|E|W"
+// Si el formato es inválido devuelve 0.0 sin error (latitud/longitud opcionales).
+func parseDMS(parts []string, startIdx int) float64 {
+	if startIdx+3 >= len(parts) {
+		return 0
+	}
+	deg, err1 := strconv.ParseFloat(stripNonDigits(parts[startIdx]), 64)
+	min, err2 := strconv.ParseFloat(stripNonDigits(parts[startIdx+1]), 64)
+	sec, err3 := strconv.ParseFloat(stripNonDigits(parts[startIdx+2]), 64)
+	if err1 != nil || err2 != nil || err3 != nil {
+		return 0
+	}
+	dir := strings.ToUpper(parts[startIdx+3])
+	decimal := deg + min/60.0 + sec/3600.0
+	if dir == "S" || dir == "W" {
+		decimal = -decimal
+	}
+	return decimal
+}
+
+// stripNonDigits elimina todo carácter que no sea dígito ni punto decimal.
+func stripNonDigits(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if unicode.IsDigit(r) || r == '.' {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// isAllUpper devuelve true si todos los runes de s son letras mayúsculas ASCII.
+func isAllUpper(s string) bool {
+	for _, r := range s {
+		if r < 'A' || r > 'Z' {
+			return false
+		}
+	}
+	return true
+}
+
 // extractCiudadPaisAlias extrae ciudad, país y alias desde los tokens entre IATA y kwIdx.
-// Layout aproximado: [id] [IATA] [ciudad] [pais] [alias] [gmt] [cap] Latitude ...
 func extractCiudadPaisAlias(parts []string, iata string, kwIdx int) (ciudad, pais, alias string) {
 	iataPos := -1
 	for i, p := range parts {
@@ -148,10 +193,10 @@ func extractCiudadPaisAlias(parts []string, iata string, kwIdx int) (ciudad, pai
 			break
 		}
 	}
-	if iataPos < 0 {
+	if iataPos < 0 || kwIdx-2 <= iataPos+1 {
 		return "Desconocido", "Desconocido", ""
 	}
-	// Entre IATA+1 y kwIdx-2 (GMT y cap) hay ciudad, pais y alias
+	// Tokens entre IATA+1 y kwIdx-3 (exclusive): ciudad, pais, alias
 	middle := parts[iataPos+1 : kwIdx-2]
 	switch len(middle) {
 	case 0:
@@ -163,7 +208,7 @@ func extractCiudadPaisAlias(parts []string, iata string, kwIdx int) (ciudad, pai
 	case 3:
 		return middle[0], middle[1], middle[2]
 	default:
-		// Ciudad puede ser multipalabra; último token es alias, penúltimo es país
+		// Último token = alias, penúltimo = país, resto = ciudad (puede ser multipalabra)
 		alias = middle[len(middle)-1]
 		pais = middle[len(middle)-2]
 		ciudad = strings.Join(middle[:len(middle)-2], " ")
