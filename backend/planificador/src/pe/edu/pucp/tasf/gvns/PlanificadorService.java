@@ -1,5 +1,8 @@
 package pe.edu.pucp.tasf.gvns;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /**
  * Fachada del motor de planificación GVNS para uso en aplicaciones web.
  *
@@ -136,6 +139,108 @@ public class PlanificadorService {
                 directas, una, dos,
                 tFase2, tFase3, iterMejoras,
                 valida);
+    }
+
+    // ── API extendida: rutas completas para el Ejecutor ──────────────────────
+
+    /**
+     * Planifica una ventana y devuelve la lista completa de envíos con sus
+     * rutas asignadas. A diferencia de {@link #planificarVentana}, este método
+     * retorna los detalles por envío que el Ejecutor necesita para simular
+     * el movimiento tick a tick.
+     *
+     * @param ventanaIniUTC minuto UTC de inicio (inclusivo)
+     * @param ventanaFinUTC minuto UTC de fin (exclusivo)
+     * @param criterio      estrategia de ordenamiento
+     * @param semilla       semilla aleatoria (solo aplica a ALEATORIO)
+     * @return lista de envíos con estado y tramos; nunca null
+     */
+    public List<EnvioAsignado> planificarConRutas(long ventanaIniUTC,
+                                                   long ventanaFinUTC,
+                                                   CriterioOrden criterio,
+                                                   long semilla) {
+        GestorDatos datos = new GestorDatos();
+        datos.cargarAeropuertos(rutaAeropuertos);
+        datos.cargarVuelos(rutaVuelos);
+        datos.cargarTodosLosEnvios(rutaEnvios, ventanaIniUTC, ventanaFinUTC);
+
+        int total = datos.numEnvios;
+        List<EnvioAsignado> resultado = new ArrayList<>(total);
+
+        if (total == 0) return resultado;
+
+        PlanificadorGVNSConcurrente plan =
+                new PlanificadorGVNSConcurrente(datos, semilla, criterio);
+        plan.construirSolucionInicial();
+        if (plan.enviosExitosos.get() < total) {
+            plan.ejecutarMejoraGVNS();
+        }
+
+        for (int e = 0; e < total; e++) {
+            String origen  = datos.iataAeropuerto[datos.envioOrigen[e]];
+            String destino = datos.iataAeropuerto[datos.envioDestino[e]];
+            long   regUTC  = datos.envioRegistroUTC[e];
+            long   dlUTC   = datos.envioDeadlineUTC[e];
+
+            if (plan.solucionVuelos[e][0] == -1) {
+                resultado.add(new EnvioAsignado(
+                        e, origen, destino, datos.envioMaletas[e],
+                        regUTC, dlUTC, "Rechazado", new ArrayList<>()));
+                continue;
+            }
+
+            List<EnvioAsignado.Tramo> tramos = new ArrayList<>(3);
+            for (int s = 0; s < plan.MAX_SALTOS; s++) {
+                int v = plan.solucionVuelos[e][s];
+                if (v == -1) break;
+
+                long salida  = plan.solucionDias[e][s];
+                long durMin  = datos.vueloLlegadaUTC[v] - datos.vueloSalidaUTC[v];
+                if (durMin < 0) durMin += 1440;
+                long llegada = salida + durMin;
+
+                tramos.add(new EnvioAsignado.Tramo(
+                        v,
+                        datos.iataAeropuerto[datos.vueloOrigen[v]],
+                        datos.iataAeropuerto[datos.vueloDestino[v]],
+                        salida, llegada));
+            }
+            resultado.add(new EnvioAsignado(
+                    e, origen, destino, datos.envioMaletas[e],
+                    regUTC, dlUTC, "Exitoso", tramos));
+        }
+        return resultado;
+    }
+
+    /**
+     * Serializa la lista de EnvioAsignado a JSON sin dependencias externas.
+     * Útil para devolver el plan completo como respuesta HTTP desde el
+     * Spring Boot wrapper.
+     *
+     * @param envios lista devuelta por {@link #planificarConRutas}
+     * @param meta   ResultadoPlanificacion para el bloque "resumen"
+     * @return cadena JSON
+     */
+    public static String serializarPlanJSON(List<EnvioAsignado> envios,
+                                             ResultadoPlanificacion meta) {
+        StringBuilder sb = new StringBuilder(envios.size() * 200);
+        sb.append("{\"resumen\":{");
+        sb.append("\"totalEnvios\":").append(meta.totalEnvios).append(',');
+        sb.append("\"exitosos\":").append(meta.exitosos).append(',');
+        sb.append("\"rechazados\":").append(meta.rechazados).append(',');
+        sb.append("\"salvadosPorGVNS\":").append(meta.salvadosPorGVNS).append(',');
+        sb.append("\"tasaExito\":").append(String.format("%.4f", meta.tasaExito)).append(',');
+        sb.append("\"tiempoFase2Seg\":").append(String.format("%.3f", meta.tiempoFase2Seg)).append(',');
+        sb.append("\"tiempoFase3Seg\":").append(String.format("%.3f", meta.tiempoFase3Seg)).append(',');
+        sb.append("\"ventanaIniUTC\":").append(meta.ventanaIniUTC).append(',');
+        sb.append("\"ventanaFinUTC\":").append(meta.ventanaFinUTC);
+        sb.append("},\"envios\":[");
+        for (int i = 0; i < envios.size(); i++) {
+            if (i > 0) sb.append(',');
+            envios.get(i).appendJSON(sb);
+        }
+        sb.append("]}");
+        return sb.toString();
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
