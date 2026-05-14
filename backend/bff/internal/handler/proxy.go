@@ -10,6 +10,18 @@ import (
 	"strings"
 )
 
+// corsHopHeaders son los headers CORS que el upstream puede devolver y que el BFF
+// ya gestiona con su propio middleware. Deben eliminarse antes de reenviar al browser
+// para evitar el error "multiple values" que bloquea la petición por CORS policy.
+var corsHopHeaders = []string{
+	"Access-Control-Allow-Origin",
+	"Access-Control-Allow-Methods",
+	"Access-Control-Allow-Headers",
+	"Access-Control-Allow-Credentials",
+	"Access-Control-Expose-Headers",
+	"Access-Control-Max-Age",
+}
+
 // NuevoProxy crea un reverse proxy hacia baseURL, opcionalmente quitando un prefijo del path.
 func NuevoProxy(baseURL, stripPrefix string) http.HandlerFunc {
 	target, _ := url.Parse(baseURL)
@@ -25,6 +37,15 @@ func NuevoProxy(baseURL, stripPrefix string) http.HandlerFunc {
 			}
 		}
 		req.Host = target.Host
+	}
+
+	// Eliminar headers CORS del upstream antes de copiarlos al cliente;
+	// el middleware CORS del BFF ya pone los valores correctos.
+	proxy.ModifyResponse = func(resp *http.Response) error {
+		for _, h := range corsHopHeaders {
+			resp.Header.Del(h)
+		}
+		return nil
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -67,7 +88,7 @@ func NuevoProxySSE(baseURL, stripPrefix string) http.HandlerFunc {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		// Access-Control-Allow-Origin lo pone el middleware CORS del BFF; no duplicar aquí.
 		w.WriteHeader(http.StatusOK)
 
 		scanner := bufio.NewScanner(resp.Body)

@@ -118,6 +118,10 @@ export interface SimulationStats {
   delayed: number;
   notBoarded: number;
   onTimeDeliveryRate: number;
+  /** SLA cumplimiento continental (0-100). Populated by backend when available. */
+  slaContinental?: number;
+  /** SLA cumplimiento intercontinental (0-100). Populated by backend when available. */
+  slaIntercontinental?: number;
 }
 
 // ─── Modelo de datos del backend GVNS ───

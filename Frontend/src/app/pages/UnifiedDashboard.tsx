@@ -1,18 +1,13 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useSimulation } from '../context/SimulationContext';
-import { airports } from '../data/airports';
+import { useDomain } from '../context/DomainContext';
 import {
-  aeropuertosBackend,
-  vuelosBackend,
-  envios,
-  getAeropuertoById,
-  getVuelosByAeropuerto,
-  getEnviosByAeropuerto,
   formatMinutesUTC,
   getContinentLabel,
 } from '../data/envios';
 import { Map } from '../components/Map';
-import { Envio, Vuelo } from '../types';
+import { Vuelo } from '../types';
+import { format } from 'date-fns';
 import {
   Search,
   X,
@@ -28,8 +23,12 @@ import {
   ChevronDown,
   ChevronUp,
   ArrowRight,
-  Sparkles,
   XCircle,
+  Pause,
+  Play,
+  Square,
+  RotateCcw,
+  Trophy,
 } from 'lucide-react';
 
 // ─── Collapsible Section ───
@@ -72,7 +71,7 @@ function Section({
 }
 
 // ─── Search result types ───
-type SearchResultType = 'aeropuerto' | 'vuelo' | 'envio';
+type SearchResultType = 'aeropuerto' | 'vuelo';
 interface SearchResult {
   type: SearchResultType;
   label: string;
@@ -80,32 +79,49 @@ interface SearchResult {
   data: any;
 }
 
-// ─── Estado badge ───
-function EstadoBadge({ estado }: { estado: Envio['estado'] }) {
-  const styles = {
-    Exitoso: 'bg-green-500/15 text-green-600 dark:text-green-400',
-    Rechazado: 'bg-red-500/15 text-red-600 dark:text-red-400',
-    SalvadoGVNS: 'bg-purple-500/15 text-purple-600 dark:text-purple-400',
-  };
-  const icons = {
-    Exitoso: <CheckCircle className="h-3 w-3" />,
-    Rechazado: <XCircle className="h-3 w-3" />,
-    SalvadoGVNS: <Sparkles className="h-3 w-3" />,
-  };
-  return (
-    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${styles[estado]}`}>
-      {icons[estado]}
-      {estado === 'SalvadoGVNS' ? 'GVNS' : estado}
-    </span>
-  );
-}
 
 export function UnifiedDashboard() {
-  const { stats, baggages, getAirportStats } = useSimulation();
+  const {
+    stats, getAirportStats,
+    fase, contadores, progresoPct, simulationTime,
+    pausarSimulacion, reanudarSimulacion, detenerSimulacion, resetear,
+  } = useSimulation();
+  const {
+    airports,
+    aeropuertosBackend,
+    vuelosBackend: vuelosBD,
+    aeropuertosBFF,
+    isLoading: domainLoading,
+  } = useDomain();
+
+  // Helper: busca aeropuerto por ID numérico usando los datos live
+  const getAeropuertoById = (id: number) => aeropuertosBackend.find(a => a.id === id);
+  // Helper: vuelos que salen o llegan a un aeropuerto (por ID numérico)
+  const getVuelosByAeropuerto = (id: number) => vuelosBD.filter(v => v.idOrigen === id || v.idDestino === id);
   const [selectedAirportId, setSelectedAirportId] = useState<string | undefined>();
   const [selectedVuelo, setSelectedVuelo] = useState<Vuelo | null>(null);
-  const [selectedEnvio, setSelectedEnvio] = useState<Envio | null>(null);
   const [panelOpen, setPanelOpen] = useState(true);
+  const [showCompletion, setShowCompletion] = useState(false);
+
+  // Show completion overlay when simulation finishes
+  useEffect(() => {
+    if (fase === 'completado') setShowCompletion(true);
+  }, [fase]);
+
+  // Track selected flight key for Map highlight
+  const selectedFlightKey = selectedVuelo
+    ? `${selectedVuelo.idOrigen}-${selectedVuelo.idDestino}-${selectedVuelo.salidaUTC}`
+    : undefined;
+
+  const handleFlightSelect = (vuelo: Vuelo) => {
+    setSelectedVuelo(vuelo);
+    const orig = getAeropuertoById(vuelo.idOrigen);
+    if (orig) {
+      const fa = airports.find(a => a.code === orig.iata);
+      if (fa) setSelectedAirportId(fa.id);
+    }
+    setPanelOpen(true);
+  };
 
   const [query, setQuery] = useState('');
   const [showResults, setShowResults] = useState(false);
@@ -123,32 +139,46 @@ export function UnifiedDashboard() {
     const q = query.trim().toUpperCase();
     if (q.length < 2) return [];
     const results: SearchResult[] = [];
-    for (const ap of aeropuertosBackend) {
-      if (ap.iata.includes(q)) {
-        results.push({ type: 'aeropuerto', label: ap.iata, sublabel: `Aeropuerto · ${getContinentLabel(ap.continente)} · Cap: ${ap.capacidadAlmacen}`, data: ap });
+
+    // Aeropuertos desde BD (via aeropuertosBFF que tiene ciudad y país)
+    for (const ap of aeropuertosBFF) {
+      if (ap.iata.includes(q) || ap.ciudad.toUpperCase().includes(q)) {
+        results.push({
+          type: 'aeropuerto',
+          label: ap.iata,
+          sublabel: `${ap.ciudad} · ${getContinentLabel(ap.continente)} · Cap: ${ap.capacidad_almacen}`,
+          data: aeropuertosBackend.find(a => a.id === ap.id) ?? ap,
+        });
       }
     }
-    for (const v of vuelosBackend) {
+
+    // Vuelos desde BD (usa vuelosBD con IDs numéricos)
+    const seenRoutes = new Set<string>();
+    for (const v of vuelosBD) {
       const orig = getAeropuertoById(v.idOrigen);
       const dest = getAeropuertoById(v.idDestino);
       if (!orig || !dest) continue;
-      const routeStr = `${orig.iata}-${dest.iata}`;
+      const routeKey = `${orig.iata}-${dest.iata}`;
       const routeStr2 = `${orig.iata} ${dest.iata}`;
-      if (routeStr.includes(q) || routeStr2.includes(q) || orig.iata.includes(q) || dest.iata.includes(q)) {
-        if (!(orig.iata === q || dest.iata === q)) {
-          results.push({ type: 'vuelo', label: `${orig.iata} → ${dest.iata}`, sublabel: `Vuelo · ${formatMinutesUTC(v.salidaUTC)} - ${formatMinutesUTC(v.llegadaUTC)} · Cap: ${v.capacidadMaxima}`, data: v });
-        }
+      if (
+        (routeKey.includes(q) || routeStr2.includes(q) || orig.iata.includes(q) || dest.iata.includes(q))
+        && !(orig.iata === q || dest.iata === q)
+        && !seenRoutes.has(routeKey)
+      ) {
+        seenRoutes.add(routeKey);
+        results.push({
+          type: 'vuelo',
+          label: `${orig.iata} → ${dest.iata}`,
+          sublabel: `Vuelo · ${formatMinutesUTC(v.salidaUTC)} - ${formatMinutesUTC(v.llegadaUTC)} · Cap: ${v.capacidadMaxima}`,
+          data: v,
+        });
       }
     }
-    for (const e of envios) {
-      if (e.id.toUpperCase().includes(q)) {
-        const orig = getAeropuertoById(e.idOrigen);
-        const dest = getAeropuertoById(e.idDestino);
-        results.push({ type: 'envio', label: e.id, sublabel: `Envío · ${orig?.iata || '?'} → ${dest?.iata || '?'} · ${e.cantidadMaletas} maleta(s) · ${e.estado}`, data: e });
-      }
-    }
+
+    // Nota: búsqueda de envíos individuales pendiente de endpoint backend
+    // TODO: fetch /api/envios?q=... cuando el BFF lo implemente
     return results.slice(0, 15);
-  }, [query]);
+  }, [query, aeropuertosBFF, vuelosBD, aeropuertosBackend]);
 
   const handleSelectResult = (result: SearchResult) => {
     setShowResults(false);
@@ -156,22 +186,12 @@ export function UnifiedDashboard() {
     if (result.type === 'aeropuerto') {
       const ap = result.data as typeof aeropuertosBackend[0];
       const frontAirport = airports.find(a => a.code === ap.iata);
-      if (frontAirport) { setSelectedAirportId(frontAirport.id); setSelectedVuelo(null); setSelectedEnvio(null); }
+      if (frontAirport) { setSelectedAirportId(frontAirport.id); setSelectedVuelo(null); }
     } else if (result.type === 'vuelo') {
       const v = result.data as Vuelo;
       setSelectedVuelo(v);
       const orig = getAeropuertoById(v.idOrigen);
       if (orig) { const fa = airports.find(a => a.code === orig.iata); if (fa) setSelectedAirportId(fa.id); }
-      setSelectedEnvio(null);
-    } else if (result.type === 'envio') {
-      const e = result.data as Envio;
-      setSelectedEnvio(e);
-      const orig = getAeropuertoById(e.idOrigen);
-      if (orig) { const fa = airports.find(a => a.code === orig.iata); if (fa) setSelectedAirportId(fa.id); }
-      if (e.rutaAsignada && e.rutaAsignada.length >= 2) {
-        const firstFlight = vuelosBackend.find(v => v.idOrigen === e.rutaAsignada![0] && v.idDestino === e.rutaAsignada![1]);
-        if (firstFlight) setSelectedVuelo(firstFlight);
-      }
     }
   };
 
@@ -179,6 +199,7 @@ export function UnifiedDashboard() {
   const airportStats = selectedAirportId ? getAirportStats(selectedAirportId) : null;
   const selectedBackendAirport = selectedAirport ? aeropuertosBackend.find(a => a.iata === selectedAirport.code) : null;
   const airportVuelos = selectedBackendAirport ? getVuelosByAeropuerto(selectedBackendAirport.id) : [];
+  const selectedBFF = selectedAirport ? aeropuertosBFF.find(a => a.iata === selectedAirport.code) : null;
 
   const statusData = [
     { name: 'Entregadas', value: stats.delivered, color: '#10b981' },
@@ -190,14 +211,173 @@ export function UnifiedDashboard() {
   const typeIcons: Record<SearchResultType, React.ReactNode> = {
     aeropuerto: <MapPin className="h-3.5 w-3.5 text-blue-500" />,
     vuelo: <Plane className="h-3.5 w-3.5 text-indigo-500" />,
-    envio: <Package className="h-3.5 w-3.5 text-amber-500" />,
   };
 
+  // ─── Fase label ───
+  const faseLabel: Record<string, { text: string; color: string }> = {
+    ejecutando: { text: 'Ejecutando', color: 'text-green-500' },
+    pausado:    { text: 'Pausado',    color: 'text-yellow-500' },
+    completado: { text: 'Completado', color: 'text-blue-500' },
+    planificando:{ text: 'Planificando', color: 'text-purple-500' },
+    listo:      { text: 'Listo',      color: 'text-cyan-500' },
+    error:      { text: 'Error',      color: 'text-red-500' },
+    idle:       { text: 'Inactivo',   color: 'text-panel-text-faint' },
+  };
+  const fl = faseLabel[fase] ?? faseLabel.idle;
+
   return (
-    <div className="flex h-full bg-background">
+    <div className="relative flex h-full flex-col bg-background">
+
+      {/* ── Top control bar ── */}
+      <div className="flex items-center gap-4 border-b border-panel-border bg-panel-bg px-4 py-2 flex-shrink-0">
+        {/* Fase badge */}
+        <div className="flex items-center gap-1.5">
+          <span className={`h-2 w-2 rounded-full ${fase === 'ejecutando' ? 'animate-pulse bg-green-500' : fase === 'pausado' ? 'bg-yellow-500' : fase === 'completado' ? 'bg-blue-500' : 'bg-panel-text-faint'}`} />
+          <span className={`text-xs font-semibold ${fl.color}`}>{fl.text}</span>
+        </div>
+        <div className="h-4 w-px bg-panel-border" />
+        {/* Sim time */}
+        <div className="flex items-center gap-1.5">
+          <Clock className="h-3.5 w-3.5 text-panel-text-faint" />
+          <span className="font-mono text-xs text-panel-text">
+            {contadores.total > 0 ? format(simulationTime, 'dd/MM/yyyy HH:mm') : '—'}
+          </span>
+        </div>
+        {/* Progress bar */}
+        {contadores.total > 0 && (
+          <>
+            <div className="h-4 w-px bg-panel-border" />
+            <div className="flex items-center gap-2 min-w-[120px]">
+              <div className="flex-1 h-1.5 overflow-hidden rounded-full bg-panel-section-bg">
+                <div
+                  className="h-full rounded-full bg-blue-500 transition-all duration-500"
+                  style={{ width: `${progresoPct}%` }}
+                />
+              </div>
+              <span className="text-xs font-medium text-panel-text tabular-nums w-9 text-right">{progresoPct.toFixed(0)}%</span>
+            </div>
+          </>
+        )}
+        {/* Quick counters */}
+        {contadores.total > 0 && (
+          <>
+            <div className="h-4 w-px bg-panel-border" />
+            <div className="flex items-center gap-3">
+              <span className="text-[11px] text-panel-text-muted">
+                <span className="font-semibold text-green-500">{contadores.entregado}</span> entregados
+              </span>
+              <span className="text-[11px] text-panel-text-muted">
+                <span className="font-semibold text-blue-500">{contadores.en_vuelo}</span> en vuelo
+              </span>
+              {contadores.en_escala > 0 && (
+                <span className="text-[11px] text-panel-text-muted">
+                  <span className="font-semibold text-indigo-500">{contadores.en_escala}</span> en escala
+                </span>
+              )}
+              {contadores.rechazado > 0 && (
+                <span className="text-[11px] text-panel-text-muted">
+                  <span className="font-semibold text-red-500">{contadores.rechazado}</span> rechazados
+                </span>
+              )}
+            </div>
+          </>
+        )}
+        {/* Controls */}
+        <div className="ml-auto flex items-center gap-1.5">
+          {fase === 'ejecutando' && (
+            <button
+              disabled
+              title="Pausar no disponible aún"
+              className="flex items-center gap-1.5 rounded-md bg-yellow-500/10 px-2.5 py-1.5 text-xs font-medium text-yellow-600/40 dark:text-yellow-400/40 cursor-not-allowed opacity-50"
+            >
+              <Pause className="h-3.5 w-3.5" /> Pausar
+            </button>
+          )}
+          {fase === 'pausado' && (
+            <button
+              disabled
+              title="Reanudar no disponible aún"
+              className="flex items-center gap-1.5 rounded-md bg-green-500/10 px-2.5 py-1.5 text-xs font-medium text-green-600/40 dark:text-green-400/40 cursor-not-allowed opacity-50"
+            >
+              <Play className="h-3.5 w-3.5" /> Reanudar
+            </button>
+          )}
+          {(fase === 'ejecutando' || fase === 'pausado') && (
+            <button
+              disabled
+              title="Detener no disponible aún"
+              className="flex items-center gap-1.5 rounded-md bg-red-500/10 px-2.5 py-1.5 text-xs font-medium text-red-600/40 dark:text-red-400/40 cursor-not-allowed opacity-50"
+            >
+              <Square className="h-3.5 w-3.5" /> Detener
+            </button>
+          )}
+          {(fase === 'completado' || fase === 'error' || fase === 'idle') && (
+            <button
+              onClick={resetear}
+              className="flex items-center gap-1.5 rounded-md bg-panel-section-bg px-2.5 py-1.5 text-xs font-medium text-panel-text-muted hover:bg-panel-hover transition-colors"
+            >
+              <RotateCcw className="h-3.5 w-3.5" /> Nueva simulación
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* ── Completion overlay ── */}
+      {showCompletion && fase === 'completado' && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="relative mx-4 w-full max-w-md rounded-2xl border border-panel-border bg-panel-bg p-8 shadow-2xl">
+            <button
+              onClick={() => setShowCompletion(false)}
+              className="absolute right-4 top-4 text-panel-text-faint hover:text-panel-text transition-colors"
+            >
+              <X className="h-4 w-4" />
+            </button>
+            <div className="flex flex-col items-center text-center gap-4">
+              <div className="flex h-16 w-16 items-center justify-center rounded-full bg-green-500/15">
+                <Trophy className="h-8 w-8 text-green-500" />
+              </div>
+              <div>
+                <h2 className="text-lg font-bold text-panel-text">Simulación completada</h2>
+                <p className="mt-1 text-sm text-panel-text-muted">Resultados finales del período</p>
+              </div>
+              <div className="grid w-full grid-cols-2 gap-3">
+                {[
+                  { label: 'Total envíos',  value: contadores.total,     color: 'text-panel-text' },
+                  { label: 'Entregados',    value: contadores.entregado, color: 'text-green-500' },
+                  { label: 'En tránsito',   value: contadores.en_vuelo + contadores.en_escala, color: 'text-blue-500' },
+                  { label: 'Pendientes',    value: contadores.pendiente, color: 'text-panel-text-muted' },
+                  { label: 'Rechazados',    value: contadores.rechazado, color: contadores.rechazado > 0 ? 'text-red-500' : 'text-panel-text-muted' },
+                  { label: 'Tasa éxito',    value: `${stats.onTimeDeliveryRate.toFixed(1)}%`, color: 'text-green-500' },
+                ].map(d => (
+                  <div key={d.label} className="rounded-xl bg-panel-section-bg p-3">
+                    <p className="text-[10px] text-panel-text-faint">{d.label}</p>
+                    <p className={`mt-0.5 text-xl font-bold ${d.color}`}>{d.value}</p>
+                  </div>
+                ))}
+              </div>
+              <button
+                onClick={() => setShowCompletion(false)}
+                className="w-full rounded-xl bg-blue-500 py-2.5 text-sm font-semibold text-white hover:bg-blue-600 transition-colors"
+              >
+                Ver mapa
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="relative flex flex-1 overflow-hidden">
       {/* Left panel */}
       <div className={`relative flex-shrink-0 border-r border-panel-border bg-panel-bg transition-all duration-300 ${panelOpen ? 'w-80' : 'w-0'} overflow-hidden`}>
         <div className="flex h-full w-80 flex-col overflow-y-auto">
+          {/* BD status pill */}
+          {domainLoading && (
+            <div className="flex items-center gap-1.5 border-b border-panel-border px-4 py-1.5">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-yellow-400" />
+              <span className="text-[10px] text-panel-text-faint">Cargando datos de BD…</span>
+            </div>
+          )}
+
           {/* Search */}
           <div className="border-b border-panel-border p-3" ref={searchRef}>
             <div className="relative">
@@ -241,7 +421,6 @@ export function UnifiedDashboard() {
             <div className="flex gap-1 mt-2">
               <span className="rounded bg-blue-500/10 px-1.5 py-0.5 text-[9px] text-blue-600 dark:text-blue-400">IATA: SKBO</span>
               <span className="rounded bg-indigo-500/10 px-1.5 py-0.5 text-[9px] text-indigo-600 dark:text-indigo-400">Ruta: SKBO-EDDI</span>
-              <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[9px] text-amber-600 dark:text-amber-400">Envío: ENV-0001</span>
             </div>
           </div>
 
@@ -254,7 +433,10 @@ export function UnifiedDashboard() {
           >
             {selectedAirport && airportStats && selectedBackendAirport ? (
               <div className="space-y-2">
-                <p className="text-[11px] text-panel-text-faint">{selectedAirport.name}</p>
+                <p className="text-[11px] text-panel-text-faint">
+                  {selectedAirport.name}
+                  {selectedBFF?.pais ? ` · ${selectedBFF.pais}` : ''}
+                </p>
                 <div className="grid grid-cols-3 gap-1.5">
                   {[
                     { label: 'Continente', value: getContinentLabel(selectedBackendAirport.continente) },
@@ -381,61 +563,6 @@ export function UnifiedDashboard() {
             )}
           </Section>
 
-          {/* Envio info */}
-          {selectedEnvio && (
-            <Section
-              title={`Envío ${selectedEnvio.id}`}
-              icon={<Package className="h-3.5 w-3.5" />}
-              accentColor="text-amber-500"
-            >
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <EstadoBadge estado={selectedEnvio.estado} />
-                  <span className="text-[10px] text-panel-text-faint">{selectedEnvio.cantidadMaletas} maleta(s)</span>
-                </div>
-                <div className="flex items-center justify-between text-xs">
-                  <div className="text-center">
-                    <p className="font-bold text-panel-text">{getAeropuertoById(selectedEnvio.idOrigen)?.iata}</p>
-                    <p className="text-[9px] text-panel-text-faint">Origen</p>
-                  </div>
-                  <ArrowRight className="h-3 w-3 text-panel-text-faint" />
-                  <div className="text-center">
-                    <p className="font-bold text-panel-text">{getAeropuertoById(selectedEnvio.idDestino)?.iata}</p>
-                    <p className="text-[9px] text-panel-text-faint">Destino</p>
-                  </div>
-                </div>
-                {selectedEnvio.rutaAsignada && (
-                  <div>
-                    <p className="text-[10px] text-panel-text-faint mb-1">Ruta asignada</p>
-                    <div className="flex items-center gap-1 flex-wrap">
-                      {selectedEnvio.rutaAsignada.map((apId, i) => (
-                        <React.Fragment key={i}>
-                          {i > 0 && <ArrowRight className="h-2.5 w-2.5 text-panel-text-faint" />}
-                          <span className="rounded bg-blue-500/10 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 dark:text-blue-400">
-                            {getAeropuertoById(apId)?.iata || apId}
-                          </span>
-                        </React.Fragment>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                <div className="grid grid-cols-2 gap-1.5">
-                  <div className="rounded bg-panel-section-bg px-2 py-1.5">
-                    <p className="text-[9px] text-panel-text-faint">Registro</p>
-                    <p className="text-[10px] font-medium text-panel-text">Min {selectedEnvio.registroUTC}</p>
-                  </div>
-                  <div className="rounded bg-panel-section-bg px-2 py-1.5">
-                    <p className="text-[9px] text-panel-text-faint">Deadline</p>
-                    <p className="text-[10px] font-medium text-panel-text">Min {selectedEnvio.deadlineUTC}</p>
-                  </div>
-                </div>
-                <button onClick={() => setSelectedEnvio(null)} className="w-full rounded bg-panel-section-bg px-2 py-1 text-[10px] text-panel-text-muted hover:bg-panel-hover transition-colors">
-                  Cerrar envío
-                </button>
-              </div>
-            </Section>
-          )}
-
           {/* Cumplimiento */}
           <Section title="Cumplimiento de Plazos" icon={<Clock className="h-3.5 w-3.5" />}>
             <div className="flex items-center gap-4">
@@ -451,28 +578,31 @@ export function UnifiedDashboard() {
               </div>
               <div className="space-y-1 flex-1">
                 <div className="flex items-center justify-between">
-                  <span className="text-[10px] text-panel-text-muted">Continental (24h)</span>
-                  <span className="text-[10px] font-medium text-green-600 dark:text-green-400">96%</span>
+                  <span className="text-[10px] text-panel-text-muted">Entregados</span>
+                  <span className="text-[10px] font-medium text-green-600 dark:text-green-400">{contadores.entregado}</span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-[10px] text-panel-text-muted">Intercontinental (48h)</span>
-                  <span className="text-[10px] font-medium text-yellow-600 dark:text-yellow-400">88%</span>
+                  <span className="text-[10px] text-panel-text-muted">En tránsito</span>
+                  <span className="text-[10px] font-medium text-blue-600 dark:text-blue-400">{contadores.en_vuelo + contadores.en_escala}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] text-panel-text-muted">Pendientes</span>
+                  <span className="text-[10px] font-medium text-panel-text">{contadores.pendiente}</span>
                 </div>
                 <div className="h-px bg-panel-border my-1" />
                 <div className="flex items-center justify-between">
-                  <span className="text-[10px] text-panel-text-muted">Envíos totales</span>
-                  <span className="text-[10px] font-medium text-panel-text">{envios.length}</span>
+                  <span className="text-[10px] text-panel-text-muted">Total envíos</span>
+                  <span className="text-[10px] font-medium text-panel-text">{contadores.total}</span>
                 </div>
-                <div className="flex gap-1.5 mt-1">
+                <div className="flex gap-1.5 mt-1 flex-wrap">
                   <span className="rounded bg-green-500/10 px-1.5 py-0.5 text-[9px] text-green-600 dark:text-green-400">
-                    {envios.filter(e => e.estado === 'Exitoso').length} exitosos
+                    {contadores.entregado} entregados
                   </span>
-                  <span className="rounded bg-purple-500/10 px-1.5 py-0.5 text-[9px] text-purple-600 dark:text-purple-400">
-                    {envios.filter(e => e.estado === 'SalvadoGVNS').length} GVNS
-                  </span>
-                  <span className="rounded bg-red-500/10 px-1.5 py-0.5 text-[9px] text-red-600 dark:text-red-400">
-                    {envios.filter(e => e.estado === 'Rechazado').length} rech.
-                  </span>
+                  {contadores.rechazado > 0 && (
+                    <span className="rounded bg-red-500/10 px-1.5 py-0.5 text-[9px] text-red-600 dark:text-red-400">
+                      {contadores.rechazado} rech.
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
@@ -529,8 +659,14 @@ export function UnifiedDashboard() {
 
       {/* Map */}
       <div className="flex-1 min-w-0">
-        <Map selectedAirportId={selectedAirportId} onAirportSelect={(id) => { setSelectedAirportId(id); setSelectedVuelo(null); setSelectedEnvio(null); }} />
+        <Map
+          selectedAirportId={selectedAirportId}
+          onAirportSelect={(id) => { setSelectedAirportId(id); setSelectedVuelo(null); }}
+          onFlightSelect={handleFlightSelect}
+          selectedFlightKey={selectedFlightKey}
+        />
       </div>
+      </div>{/* end flex-1 overflow-hidden */}
     </div>
   );
 }
