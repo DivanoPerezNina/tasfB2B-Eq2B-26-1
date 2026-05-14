@@ -12,14 +12,17 @@ import {
   Contadores,
   AeropuertoEstado,
   DatasetInfo,
+  SimulationStats,
+  Baggage,
 } from '../types';
+import { airports } from '../data/airports';
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
 const BFF = 'http://localhost:8081';
 
 const CONFIG_DEFAULT: SimulationConfig = {
-  scenario:       'period',
+  scenario:       'realtime',
   startDate:      new Date('2026-01-15'),
   dias:           7,
   duracionRealMin: 60,
@@ -56,9 +59,14 @@ interface SimulationContextType {
   config: SimulationConfig;
   datasetInfo: DatasetInfo | null;
 
+  // ── Stats derivados (compatibilidad UnifiedDashboard) ──
+  stats: SimulationStats;
+  baggages: Baggage[];
+  getAirportStats: (airportId: string) => { occupancy: number; capacity: number; percentage: number } | null;
+
   // ── Acciones ──
   updateConfig: (patch: Partial<SimulationConfig>) => void;
-  iniciarPlanificacion: () => Promise<void>;
+  iniciarPlanificacion: (overrides?: Partial<Pick<SimulationConfig, 'startDate' | 'dias' | 'criterio' | 'duracionRealMin'>>) => Promise<void>;
   iniciarSimulacion: () => Promise<void>;
   pausarSimulacion: () => Promise<void>;
   reanudarSimulacion: () => Promise<void>;
@@ -138,45 +146,60 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   }, []);
 
   // ─── Iniciar planificación ────────────────────────────────────────────────
-  const iniciarPlanificacion = useCallback(async () => {
+  const iniciarPlanificacion = useCallback(async (
+    overrides?: Partial<Pick<SimulationConfig, 'startDate' | 'dias' | 'criterio' | 'duracionRealMin'>>
+  ) => {
+    const efectivo = { ...config, ...overrides };
     setFase('planificando');
     setErrorMsg(null);
     setPlanProgreso(0);
     setPlanMensaje('Iniciando planificación...');
 
-    const fechaISO = config.startDate.toISOString().slice(0, 10);
+    const fechaISO = efectivo.startDate.toISOString().slice(0, 10);
 
     try {
-      const res = await fetch(`${BFF}/api/planificacion/iniciar`, {
+      // Usa el endpoint unificado del BFF que recibe todos los parámetros a la vez
+      const res = await fetch(`${BFF}/api/periodo/iniciar`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          fechaInicio: fechaISO,
-          dias:        config.dias,
-          criterio:    config.criterio,
-          semilla:     42,
+          fechaInicio:      fechaISO,
+          dias:             efectivo.dias,
+          criterio:         efectivo.criterio ?? 'EDF',
+          semilla:          42,
+          duracion_real_min: efectivo.duracionRealMin,
+          umbrales: {
+            verde_hasta: config.thresholds.warehouse.green  / 100,
+            ambar_hasta: config.thresholds.warehouse.yellow / 100,
+          },
         }),
       });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.mensaje ?? data.error ?? `HTTP ${res.status}`);
+        // BFF error envelope: { success, data, message, error }
+        throw new Error(data.message ?? (typeof data.error === 'string' ? data.error : `HTTP ${res.status}`));
       }
 
-      const jid = data.jobId;
+      // BFF ok() envelope: { success: true, data: { job_id, ... }, message }
+      const payload = data.data ?? data;
+      const jid = payload.job_id;   // BFF periodo devuelve job_id (snake_case)
       setJobId(jid);
+      console.log(`[Plan] iniciada job=${jid} | ${efectivo.dias} días desde ${fechaISO} | ${efectivo.duracionRealMin} min`);
 
       // Polling cada 2 segundos
       pollRef.current = setInterval(async () => {
         try {
-          const sr = await fetch(`${BFF}/api/planificacion/status/${jid}`);
+          const sr = await fetch(`${BFF}/api/periodo/status/${jid}`);
           const sd = await sr.json();
           setPlanProgreso(sd.progreso ?? 0);
           setPlanMensaje(sd.mensaje ?? '');
+          console.log(`[Plan] ${sd.estado} ${sd.progreso ?? 0}% — ${sd.mensaje ?? ''}`);
 
           if (sd.estado === 'COMPLETADO') {
             clearInterval(pollRef.current!);
             pollRef.current = null;
             setFase('listo');
+            console.log('[Plan] ✓ Planificación completada — listo para ejecutar');
           } else if (sd.estado === 'ERROR') {
             clearInterval(pollRef.current!);
             pollRef.current = null;
@@ -199,17 +222,9 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     if (!jobId) return;
 
     try {
-      const res = await fetch(`${BFF}/api/simulacion/iniciar`, {
+      // BFF almacenó duracion_real_min y umbrales al llamar /periodo/iniciar
+      const res = await fetch(`${BFF}/api/periodo/ejecutar/${jobId}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          job_id:           jobId,
-          duracion_real_min: config.duracionRealMin,
-          umbrales: {
-            verde_hasta: config.thresholds.warehouse.green / 100,
-            ambar_hasta: config.thresholds.warehouse.yellow / 100,
-          },
-        }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -217,6 +232,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
 
       setFase('ejecutando');
+      console.log(`[Sim] iniciada simulacion_id=${data.simulacion_id ?? jobId} | total_envios=${data.total_envios ?? '?'}`);
 
       // Suscribir SSE
       if (esRef.current) esRef.current.close();
@@ -228,6 +244,10 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         setTiempoSimUTC(d.tiempo_sim_utc);
         setProgresoPct(parseFloat(d.progreso_pct ?? '0'));
         if (d.contadores) setContadores(d.contadores);
+        console.log(
+          `[Sim] tick=${d.tick} | ${new Date(d.tiempo_sim_utc * 60 * 1000).toISOString().slice(0,16).replace('T',' ')} | ${d.progreso_pct}%`,
+          d.contadores,
+        );
       });
 
       es.addEventListener('aeropuertos', (e: MessageEvent) => {
@@ -241,6 +261,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         setFase('completado');
         es.close();
         esRef.current = null;
+        console.log('[Sim] ✓ Simulación completada', d.contadores);
       });
 
       es.onerror = () => {
@@ -251,7 +272,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       setFase('error');
       setErrorMsg(e.message ?? 'Error al iniciar simulación');
     }
-  }, [jobId, config]);
+  }, [jobId]);
 
   // ─── Pausar ───────────────────────────────────────────────────────────────
   const pausarSimulacion = useCallback(async () => {
@@ -301,6 +322,35 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     ? new Date(tiempoSimUTC * 60 * 1000)
     : config.startDate;
 
+  // Stats derivados de contadores (usados por UnifiedDashboard y otros)
+  const stats: SimulationStats = {
+    totalBaggage:       contadores.total,
+    delivered:          contadores.entregado,
+    inTransit:          contadores.en_vuelo + contadores.en_escala,
+    delayed:            0,
+    notBoarded:         contadores.rechazado,
+    onTimeDeliveryRate: contadores.total > 0
+      ? (contadores.entregado / contadores.total) * 100
+      : 0,
+  };
+
+  const baggages: Baggage[] = []; // sin detalle por envío en este contexto
+
+  const getAirportStats = useCallback(
+    (airportId: string) => {
+      const frontAirport = airports.find(a => a.id === airportId);
+      if (!frontAirport) return null;
+      const liveAp = aeropuertosState.find(a => a.iata === frontAirport.code);
+      if (!liveAp) return null;
+      return {
+        occupancy:  liveAp.maletas_almacen,
+        capacity:   liveAp.capacidad_almacen,
+        percentage: parseFloat(liveAp.ocupacion) * 100,
+      };
+    },
+    [aeropuertosState],
+  );
+
   // ─── Compatibilidad legacy ────────────────────────────────────────────────
   const startSimulation = useCallback(() => {
     if (fase === 'listo')   iniciarSimulacion();
@@ -331,6 +381,9 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       aeropuertosState,
       config,
       datasetInfo,
+      stats,
+      baggages,
+      getAirportStats,
       updateConfig,
       iniciarPlanificacion,
       iniciarSimulacion,
