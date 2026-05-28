@@ -105,6 +105,25 @@ export interface AeropuertoEstado {
   semaforo:          'verde' | 'ambar' | 'rojo';
 }
 
+
+export interface PlanTramoVisual {
+  envioIndice: number;
+  tramoIndex: number;
+  desde: string;
+  hasta: string;
+  salidaUTC: number;
+  llegadaUTC: number;
+  maletas: number;
+}
+
+export interface PlanResumenVisual {
+  totalEnvios?: number;
+  exitosos?: number;
+  rechazados?: number;
+  ventanaIniUTC?: number;
+  ventanaFinUTC?: number;
+}
+
 export interface DatasetInfo {
   fecha_min:    string;
   fecha_max:    string;

@@ -9,7 +9,7 @@ import {
 } from 'react-simple-maps';
 import { useSimulation } from '../context/SimulationContext';
 import { useDomain } from '../context/DomainContext';
-import { Airport, Continent, Vuelo } from '../types';
+import { Airport, Continent, Vuelo, PlanTramoVisual, Aeropuerto } from '../types';
 import { ZoomIn, ZoomOut, Filter, Maximize2 } from 'lucide-react';
 import { Button } from './ui/button';
 import {
@@ -19,7 +19,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from './ui/select';
-import { getFlightDuration } from '../data/envios';
 
 const GEO_URL = 'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json';
 
@@ -45,83 +44,155 @@ function cssVar(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
-// ─── Active flights calculation ───
+const MAX_VISIBLE_ACTIVE_FLIGHTS = 180;
+
+function clamp(value: number, min = 0, max = 1): number {
+  return Math.min(Math.max(value, min), max);
+}
+
+function lerp(start: number, end: number, progress: number): number {
+  return start + (end - start) * progress;
+}
+
+function normalizeLngDelta(delta: number): number {
+  // Escoge la ruta visual más corta cuando un vuelo cruza el meridiano 180°.
+  if (delta > 180) return delta - 360;
+  if (delta < -180) return delta + 360;
+  return delta;
+}
+
+function normalizeLng(lng: number): number {
+  if (lng > 180) return lng - 360;
+  if (lng < -180) return lng + 360;
+  return lng;
+}
+
+function lerpLng(start: number, end: number, progress: number): number {
+  return normalizeLng(start + normalizeLngDelta(end - start) * progress);
+}
+
+function mercatorY(lat: number): number {
+  const maxLat = 85.05112878;
+  const safeLat = clamp(lat, -maxLat, maxLat);
+  const rad = (safeLat * Math.PI) / 180;
+  return Math.log(Math.tan(Math.PI / 4 + rad / 2));
+}
+
+function getPlaneRotationToDestination(
+  fromLat: number,
+  fromLng: number,
+  toLat: number,
+  toLng: number
+): number {
+  const dx = normalizeLngDelta(toLng - fromLng) * (Math.PI / 180);
+  const dy = -(mercatorY(toLat) - mercatorY(fromLat));
+
+  if (Math.abs(dx) < 0.000001 && Math.abs(dy) < 0.000001) {
+    return 0;
+  }
+
+  return Math.atan2(dy, dx) * (180 / Math.PI);
+}
+
+// ─── Active flights calculation from the real plan ───
 interface ActiveFlight {
   vuelo: Vuelo;
+  envioIndice: number;
+  tramoIndex: number;
   progress: number; // 0..1
   fromLat: number;
   fromLng: number;
   toLat: number;
   toLng: number;
+  trailLat: number;
+  trailLng: number;
   lat: number;
   lng: number;
   angle: number;
   isSameCont: boolean;
 }
 
-function getActiveFlights(
-  simMinuteOfDay: number,
-  vuelosBackend: import('../types').Vuelo[],
-  aeropuertosBackend: import('../types').Aeropuerto[],
-  airports: import('../types').Airport[],
-): ActiveFlight[] {
-  const active: ActiveFlight[] = [];
+interface ActiveFlightResult {
+  flights: ActiveFlight[];
+  totalActive: number;
+}
 
-  for (const vuelo of vuelosBackend) {
-    const origAp = aeropuertosBackend.find(a => a.id === vuelo.idOrigen);
-    const destAp = aeropuertosBackend.find(a => a.id === vuelo.idDestino);
-    if (!origAp || !destAp) continue;
+function airportContinentFromBackend(a?: Aeropuerto): Continent | undefined {
+  if (!a) return undefined;
+  if (a.continente === 1) return 'America';
+  if (a.continente === 2) return 'Europe';
+  if (a.continente === 3) return 'Asia';
+  return undefined;
+}
 
-    const origFront = airports.find(a => a.code === origAp.iata);
-    const destFront = airports.find(a => a.code === destAp.iata);
+function getActiveFlightsFromPlan(
+  simMinuteUTC: number,
+  planTramos: PlanTramoVisual[],
+  airports: Airport[],
+  aeropuertosBackend: Aeropuerto[],
+  filter: Continent | 'all',
+): ActiveFlightResult {
+  const flights: ActiveFlight[] = [];
+  let totalActive = 0;
+  const currentMinute = simMinuteUTC;
+
+  for (const tramo of planTramos) {
+    if (currentMinute < tramo.salidaUTC || currentMinute >= tramo.llegadaUTC) continue;
+
+    const origFront = airports.find(a => a.code === tramo.desde);
+    const destFront = airports.find(a => a.code === tramo.hasta);
     if (!origFront || !destFront) continue;
 
-    const duration = getFlightDuration(vuelo);
-    if (duration <= 0) continue;
+    const origBack = aeropuertosBackend.find(a => a.iata === tramo.desde);
+    const destBack = aeropuertosBackend.find(a => a.iata === tramo.hasta);
+    const origCont = airportContinentFromBackend(origBack) ?? origFront.continent;
+    const destCont = airportContinentFromBackend(destBack) ?? destFront.continent;
 
-    // Check if flight is active at current minute
-    let elapsed: number;
-    if (vuelo.llegadaUTC >= vuelo.salidaUTC) {
-      // Same day flight
-      if (simMinuteOfDay < vuelo.salidaUTC || simMinuteOfDay > vuelo.llegadaUTC) continue;
-      elapsed = simMinuteOfDay - vuelo.salidaUTC;
-    } else {
-      // Crosses midnight
-      if (simMinuteOfDay >= vuelo.salidaUTC) {
-        elapsed = simMinuteOfDay - vuelo.salidaUTC;
-      } else if (simMinuteOfDay <= vuelo.llegadaUTC) {
-        elapsed = (1440 - vuelo.salidaUTC) + simMinuteOfDay;
-      } else {
-        continue;
-      }
-    }
+    if (filter !== 'all' && origCont !== filter && destCont !== filter) continue;
 
-    const progress = Math.min(Math.max(elapsed / duration, 0), 1);
+    totalActive++;
+    if (flights.length >= MAX_VISIBLE_ACTIVE_FLIGHTS) continue;
 
-    // Interpolate position using great circle approximation (linear lerp for simplicity)
-    const lat = origFront.lat + (destFront.lat - origFront.lat) * progress;
-    const lng = origFront.lng + (destFront.lng - origFront.lng) * progress;
+    const duration = tramo.llegadaUTC - tramo.salidaUTC;
+    const progress = clamp((currentMinute - tramo.salidaUTC) / duration);
 
-    // Angle for rotation
-    const dLng = destFront.lng - origFront.lng;
-    const dLat = destFront.lat - origFront.lat;
-    const angle = Math.atan2(dLng, dLat) * (180 / Math.PI);
+    const lat = lerp(origFront.lat, destFront.lat, progress);
+    const lng = lerpLng(origFront.lng, destFront.lng, progress);
 
-    active.push({
-      vuelo,
+    // Línea del vuelo activo: debe quedar anclada en el aeropuerto de origen
+    // y crecer hasta la posición actual del avión. Se elimina sola al llegar.
+    const trailLat = origFront.lat;
+    const trailLng = origFront.lng;
+
+    // La nariz del avión siempre apunta hacia el destino del tramo, no hacia
+    // el rastro ni hacia una posición anterior.
+    const angle = getPlaneRotationToDestination(lat, lng, destFront.lat, destFront.lng);
+
+    flights.push({
+      vuelo: {
+        idOrigen: origBack?.id ?? 0,
+        idDestino: destBack?.id ?? 0,
+        salidaUTC: tramo.salidaUTC,
+        llegadaUTC: tramo.llegadaUTC,
+        capacidadMaxima: tramo.maletas,
+      },
+      envioIndice: tramo.envioIndice,
+      tramoIndex: tramo.tramoIndex,
       progress,
       fromLat: origFront.lat,
       fromLng: origFront.lng,
       toLat: destFront.lat,
       toLng: destFront.lng,
+      trailLat,
+      trailLng,
       lat,
       lng,
       angle,
-      isSameCont: origAp.continente === destAp.continente,
+      isSameCont: origCont === destCont,
     });
   }
 
-  return active;
+  return { flights, totalActive };
 }
 
 interface MapProps {
@@ -132,8 +203,8 @@ interface MapProps {
 }
 
 export const Map = memo(function Map({ selectedAirportId, onAirportSelect, onFlightSelect, selectedFlightKey }: MapProps) {
-  const { baggages, isRunning, simulationTime, aeropuertosState, tiempoSimUTC } = useSimulation();
-  const { airports, flights, aeropuertosBackend, vuelosBackend } = useDomain();
+  const { isRunning, aeropuertosState, tiempoSimUTC, contadores, planTramos, planVisualCargado } = useSimulation();
+  const { airports, aeropuertosBackend } = useDomain();
 
   // Solo hay aviones reales cuando la simulación ha avanzado al menos un tick
   const simHasStarted = tiempoSimUTC > 0;
@@ -168,7 +239,7 @@ export const Map = memo(function Map({ selectedAirportId, onAirportSelect, onFli
     }
     lastTickRef.current.utcMin  = newUtcMin;
     lastTickRef.current.wallMs  = now;
-    setSmoothMinute(Math.floor(newUtcMin) % 1440);
+    setSmoothMinute(newUtcMin);
   }, [tiempoSimUTC, simHasStarted]);
 
   // Loop a 10fps: extrapola posición entre ticks
@@ -179,7 +250,7 @@ export const Map = memo(function Map({ selectedAirportId, onAirportSelect, onFli
       const ref = lastTickRef.current;
       if (ref.advancePerMs <= 0) return;
       const extrapolated = ref.utcMin + (now - ref.wallMs) * ref.advancePerMs;
-      setSmoothMinute(Math.floor(extrapolated) % 1440);
+      setSmoothMinute(extrapolated);
     }, 100);
     return () => clearInterval(id);
   }, [isRunning, showPlanes, simHasStarted]);
@@ -196,7 +267,7 @@ export const Map = memo(function Map({ selectedAirportId, onAirportSelect, onFli
 
   const filteredByContinent = useMemo(() =>
     airports.filter(a => filter === 'all' || a.continent === filter),
-    [filter]
+    [airports, filter]
   );
 
   const visibleAirports = useMemo(() => {
@@ -208,28 +279,15 @@ export const Map = memo(function Map({ selectedAirportId, onAirportSelect, onFli
     return decluttered;
   }, [filteredByContinent, zoom, selectedAirportId]);
 
-  const filteredFlights = useMemo(() =>
-    flights.filter(f => {
-      if (filter === 'all') return true;
-      const from = airports.find(a => a.id === f.fromAirportId);
-      const to = airports.find(a => a.id === f.toAirportId);
-      return from?.continent === filter || to?.continent === filter;
-    }),
-    [filter]
-  );
+  const activeFlightResult = useMemo(() => {
+    if (!showPlanes || !simHasStarted || !planVisualCargado || planTramos.length === 0) {
+      return { flights: [], totalActive: 0 };
+    }
+    return getActiveFlightsFromPlan(smoothMinute, planTramos, airports, aeropuertosBackend, filter);
+  }, [smoothMinute, showPlanes, simHasStarted, planVisualCargado, planTramos, airports, aeropuertosBackend, filter]);
 
-  const activeFlights = useMemo(() => {
-    if (!showPlanes || !simHasStarted) return [];
-    const all = getActiveFlights(smoothMinute, vuelosBackend, aeropuertosBackend, airports);
-    // Filter by continent if needed
-    if (filter === 'all') return all;
-    return all.filter(af => {
-      const origAp = aeropuertosBackend.find(a => a.id === af.vuelo.idOrigen);
-      const destAp = aeropuertosBackend.find(a => a.id === af.vuelo.idDestino);
-      const contMap: Record<number, Continent> = { 1: 'America', 2: 'Europe', 3: 'Asia' };
-      return contMap[origAp?.continente ?? 0] === filter || contMap[destAp?.continente ?? 0] === filter;
-    });
-  }, [smoothMinute, showPlanes, simHasStarted, filter, vuelosBackend, aeropuertosBackend, airports]);
+  const activeFlights = activeFlightResult.flights;
+  const activeFlightTotal = activeFlightResult.totalActive;
 
   const handleZoomIn = useCallback(() => setZoom(z => Math.min(z * 1.5, 8)), []);
   const handleZoomOut = useCallback(() => setZoom(z => Math.max(z / 1.5, 1)), []);
@@ -268,13 +326,6 @@ export const Map = memo(function Map({ selectedAirportId, onAirportSelect, onFli
     return { occ: fallback.occ, cap: fallback.cap, pct };
   }, [aeropuertosState]);
 
-  // ─── Set of origin→dest pairs with active planes (for route filtering) ───
-  const activeRoutePairs = useMemo(() => {
-    const s = new Set<string>();
-    activeFlights.forEach(af => s.add(`${af.vuelo.idOrigen}-${af.vuelo.idDestino}`));
-    return s;
-  }, [activeFlights]);
-
   return (
     <div className="relative h-full w-full overflow-hidden rounded-lg border border-panel-border" style={{ backgroundColor: mc.bg }}>
       {/* Controls */}
@@ -310,13 +361,13 @@ export const Map = memo(function Map({ selectedAirportId, onAirportSelect, onFli
           <button
             onClick={() => setShowPlanes(!showPlanes)}
             className="flex items-center gap-1.5 rounded-lg backdrop-blur px-3 py-1.5 shadow-md transition-colors"
-            style={{ backgroundColor: 'var(--map-overlay-bg)', color: showPlanes ? '#3b82f6' : 'var(--map-overlay-text-muted)' }}
+            style={{ backgroundColor: 'var(--map-overlay-bg)', color: showPlanes ? '#fbbf24' : 'var(--map-overlay-text-muted)' }}
             title={showPlanes ? 'Ocultar aviones' : 'Mostrar aviones'}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
               <path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/>
             </svg>
-            <span className="text-xs hidden sm:inline">{activeFlights.length}</span>
+            <span className="text-xs hidden sm:inline">{activeFlightTotal || contadores.en_vuelo}</span>
           </button>
         )}
       </div>
@@ -328,9 +379,10 @@ export const Map = memo(function Map({ selectedAirportId, onAirportSelect, onFli
         <p className="text-xs mt-0.5" style={{ color: 'var(--panel-text-faint)' }}>
           {visibleCount}/{totalInFilter} aeropuertos
         </p>
-        {showPlanes && simHasStarted && activeFlights.length > 0 && (
-          <p className="text-xs mt-0.5" style={{ color: '#3b82f6' }}>
-            {activeFlights.length} vuelos activos
+        {showPlanes && simHasStarted && (activeFlightTotal > 0 || contadores.en_vuelo > 0) && (
+          <p className="text-xs mt-0.5" style={{ color: '#fbbf24' }}>
+            {activeFlightTotal || contadores.en_vuelo} vuelos activos
+            {activeFlightTotal > activeFlights.length ? ` · ${activeFlights.length} visibles` : ''}
           </p>
         )}
         {!simHasStarted && (
@@ -404,59 +456,96 @@ export const Map = memo(function Map({ selectedAirportId, onAirportSelect, onFli
             }
           </Geographies>
 
-          {/* Flight routes — only draw routes that have at least one active plane */}
-          {filteredFlights.map(flight => {
-            const from = airports.find(a => a.id === flight.fromAirportId);
-            const to = airports.find(a => a.id === flight.toAirportId);
-            if (!from || !to) return null;
-            const fromBk = aeropuertosBackend.find(a => a.iata === from.code);
-            const toBk   = aeropuertosBackend.find(a => a.iata === to.code);
-            if (!fromBk || !toBk) return null;
-            const hasPlane = activeRoutePairs.has(`${fromBk.id}-${toBk.id}`)
-                          || activeRoutePairs.has(`${toBk.id}-${fromBk.id}`);
-            if (!hasPlane) return null;
-            const fromVisible = visibleAirports.some(a => a.id === from.id);
-            const toVisible   = visibleAirports.some(a => a.id === to.id);
-            if (!fromVisible || !toVisible) return null;
+          {/* Rutas activas — no se dibujan rutas globales ni rutas programadas.
+              La línea se mantiene anclada en el origen y llega hasta el avión. */}
+          {showPlanes && activeFlights.map((af, index) => {
+            const flightKey = `${af.vuelo.idOrigen}-${af.vuelo.idDestino}-${af.vuelo.salidaUTC}-${af.vuelo.llegadaUTC}-${index}`;
+            const activeColor = af.isSameCont ? '#38bdf8' : '#fbbf24';
+            const baseWidth = (af.isSameCont ? 0.75 : 1.05) * markerScale;
+
             return (
               <Line
-                key={flight.id}
-                from={[from.lng, from.lat]}
-                to={[to.lng, to.lat]}
-                stroke={flight.sameContinentRoute ? mc.route : '#3b82f6'}
-                strokeWidth={(flight.sameContinentRoute ? 0.6 : 1.2) * markerScale}
+                key={`active-route-${flightKey}`}
+                from={[af.trailLng, af.trailLat]}
+                to={[af.lng, af.lat]}
+                stroke={activeColor}
+                strokeWidth={baseWidth}
                 strokeLinecap="round"
-                strokeDasharray={flight.sameContinentRoute ? `${3 * markerScale} ${2 * markerScale}` : '0'}
-                strokeOpacity={0.55}
+                strokeOpacity={0.72}
               />
             );
           })}
 
           {/* Animated airplanes — clickable */}
-          {showPlanes && activeFlights.map((af) => {
+          {showPlanes && activeFlights.map((af, index) => {
             const flightKey = `${af.vuelo.idOrigen}-${af.vuelo.idDestino}-${af.vuelo.salidaUTC}`;
             const isSelected = selectedFlightKey === flightKey;
             const planeSize = (af.isSameCont ? 3.5 : 5) * markerScale;
             const color = af.isSameCont ? '#60a5fa' : '#fbbf24';
             return (
               <Marker
-                key={`plane-${flightKey}`}
+                key={`plane-${flightKey}-${af.vuelo.llegadaUTC}-${index}`}
                 coordinates={[af.lng, af.lat]}
                 onClick={() => onFlightSelect?.(af.vuelo)}
                 style={{ cursor: 'pointer' }}
               >
                 {/* Selection ring */}
-                {isSelected && <circle r={planeSize * 3} fill="none" stroke={color} strokeWidth={1.5 * markerScale} opacity={0.8} />}
+                {isSelected && (
+                  <circle
+                    r={planeSize * 3.2}
+                    fill="none"
+                    stroke={color}
+                    strokeWidth={1.5 * markerScale}
+                    opacity={0.85}
+                  />
+                )}
                 {/* Glow */}
-                <circle r={planeSize * (isSelected ? 2.5 : 1.8)} fill={color} opacity={isSelected ? 0.3 : 0.15} />
-                {/* Airplane icon */}
-                <g transform={`rotate(${-af.angle + 90}) scale(${planeSize / 12})`}>
+                <circle r={planeSize * (isSelected ? 2.7 : 1.9)} fill={color} opacity={isSelected ? 0.32 : 0.16} />
+                <circle r={planeSize * 0.65} fill={mc.bg} opacity={0.45} />
+                {/* Avión real: el path está centrado y su nariz apunta hacia arriba en 0°. */}
+                <g transform={`rotate(${af.angle}) scale(${planeSize / 32})`}>
                   <path
-                    d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"
+                    d="
+                      M 30 0
+                      C 27 -3 23 -4 18 -4
+                      L 6 -4
+                      L -7 -18
+                      C -8.5 -19.5 -11 -18.5 -10 -16
+                      L -5 -4
+                      L -18 -4
+                      L -27 -10
+                      C -29 -11.5 -31 -10 -31 -7
+                      L -31 7
+                      C -31 10 -29 11.5 -27 10
+                      L -18 4
+                      L -5 4
+                      L -10 16
+                      C -11 18.5 -8.5 19.5 -7 18
+                      L 6 4
+                      L 18 4
+                      C 23 4 27 3 30 0
+                      Z
+                    "
                     fill={color}
                     stroke={mc.bg}
-                    strokeWidth={1}
-                    transform="translate(-12, -12)"
+                    strokeWidth={2}
+                    strokeLinejoin="round"
+                  />
+
+                  {/* Cabina / cuerpo central */}
+                  <path
+                    d="M 22 0 L 4 -2.2 L -9 0 L 4 2.2 Z"
+                    fill={mc.bg}
+                    opacity={0.45}
+                  />
+
+                  {/* Línea central */}
+                  <path
+                    d="M -20 0 L 24 0"
+                    stroke={mc.bg}
+                    strokeWidth={1.4}
+                    strokeLinecap="round"
+                    opacity={0.55}
                   />
                 </g>
               </Marker>
@@ -553,15 +642,15 @@ export const Map = memo(function Map({ selectedAirportId, onAirportSelect, onFli
             </div>
           ))}
           <div className="border-t pt-1.5 mt-1.5" style={{ borderColor: 'var(--panel-border)' }}>
-            <p className="text-xs font-medium mb-1" style={{ color: 'var(--panel-text-faint)' }}>Aviones en vuelo</p>
+            <p className="text-xs font-medium mb-1" style={{ color: 'var(--panel-text-faint)' }}>Vuelos activos</p>
             <div className="flex items-center gap-3">
               <div className="flex items-center gap-1">
                 <div className="h-2 w-2 rounded-full bg-blue-400" />
-                <span className="text-[10px]" style={{ color: 'var(--map-overlay-text-muted)' }}>Continental</span>
+                <span className="text-[10px]" style={{ color: 'var(--map-overlay-text-muted)' }}>Ruta continental</span>
               </div>
               <div className="flex items-center gap-1">
                 <div className="h-2 w-2 rounded-full bg-amber-400" />
-                <span className="text-[10px]" style={{ color: 'var(--map-overlay-text-muted)' }}>Intercontinental</span>
+                <span className="text-[10px]" style={{ color: 'var(--map-overlay-text-muted)' }}>Ruta intercontinental</span>
               </div>
             </div>
           </div>

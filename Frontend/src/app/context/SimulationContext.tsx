@@ -12,6 +12,8 @@ import {
   Contadores,
   AeropuertoEstado,
   DatasetInfo,
+  PlanResumenVisual,
+  PlanTramoVisual,
   SimulationStats,
   Baggage,
 } from '../types';
@@ -54,6 +56,10 @@ interface SimulationContextType {
   progresoPct: number;    // 0-100
   contadores: Contadores;
   aeropuertosState: AeropuertoEstado[];
+  /** Tramos reales del plan generado por el planificador. Se usan solo para la visualización del mapa. */
+  planTramos: PlanTramoVisual[];
+  planResumen: PlanResumenVisual | null;
+  planVisualCargado: boolean;
 
   // ── Configuración ──
   config: SimulationConfig;
@@ -112,6 +118,9 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     total: 0, pendiente: 0, en_vuelo: 0, en_escala: 0, entregado: 0, rechazado: 0,
   });
   const [aeropuertosState, setAeropuertos]  = useState<AeropuertoEstado[]>([]);
+  const [planTramos, setPlanTramos]          = useState<PlanTramoVisual[]>([]);
+  const [planResumen, setPlanResumen]        = useState<PlanResumenVisual | null>(null);
+  const [planVisualCargado, setPlanVisualCargado] = useState(false);
   const esRef = useRef<EventSource | null>(null);
 
   // ── Dataset info ──
@@ -145,6 +154,57 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     };
   }, []);
 
+
+  // ─── Cargar tramos reales del plan para la visualización del mapa ─────────
+  const cargarPlanVisual = useCallback(async (jid: string) => {
+    setPlanVisualCargado(false);
+    setPlanTramos([]);
+    setPlanResumen(null);
+
+    try {
+      const res = await fetch(`${BFF}/api/planificacion/resultado/${jid}`);
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+
+      const json = await res.json();
+      const plan = json.data ?? json;
+      const envios = Array.isArray(plan.envios) ? plan.envios : [];
+
+      const tramos: PlanTramoVisual[] = [];
+      for (const envio of envios) {
+        if (!Array.isArray(envio.tramos)) continue;
+        for (let i = 0; i < envio.tramos.length; i++) {
+          const tramo = envio.tramos[i];
+          const salidaUTC = Number(tramo.salidaUTC);
+          const llegadaUTC = Number(tramo.llegadaUTC);
+          if (!Number.isFinite(salidaUTC) || !Number.isFinite(llegadaUTC) || llegadaUTC <= salidaUTC) {
+            continue;
+          }
+          tramos.push({
+            envioIndice: Number(envio.indice ?? 0),
+            tramoIndex: i,
+            desde: String(tramo.desde ?? '').toUpperCase(),
+            hasta: String(tramo.hasta ?? '').toUpperCase(),
+            salidaUTC,
+            llegadaUTC,
+            maletas: Number(envio.maletas ?? 1),
+          });
+        }
+      }
+
+      setPlanTramos(tramos);
+      setPlanResumen(plan.resumen ?? null);
+      setPlanVisualCargado(true);
+      console.log(`[Plan visual] ${tramos.length} tramos reales cargados para el mapa`);
+    } catch (e: any) {
+      console.warn('[Plan visual] No se pudo cargar el detalle de tramos:', e.message);
+      setPlanVisualCargado(false);
+      setPlanTramos([]);
+      setPlanResumen(null);
+    }
+  }, []);
+
   // ─── Iniciar planificación ────────────────────────────────────────────────
   const iniciarPlanificacion = useCallback(async (
     overrides?: Partial<Pick<SimulationConfig, 'startDate' | 'dias' | 'criterio' | 'duracionRealMin'>>
@@ -154,6 +214,9 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setErrorMsg(null);
     setPlanProgreso(0);
     setPlanMensaje('Iniciando planificación...');
+    setPlanTramos([]);
+    setPlanResumen(null);
+    setPlanVisualCargado(false);
 
     const fechaISO = efectivo.startDate.toISOString().slice(0, 10);
 
@@ -198,6 +261,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           if (sd.estado === 'COMPLETADO') {
             clearInterval(pollRef.current!);
             pollRef.current = null;
+            await cargarPlanVisual(jid);
             setFase('listo');
             console.log('[Plan] ✓ Planificación completada — listo para ejecutar');
           } else if (sd.estado === 'ERROR') {
@@ -215,7 +279,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       setFase('error');
       setErrorMsg(e.message ?? 'Error al iniciar planificación');
     }
-  }, [config]);
+  }, [config, cargarPlanVisual]);
 
   // ─── Iniciar simulación ───────────────────────────────────────────────────
   const iniciarSimulacion = useCallback(async () => {
@@ -294,6 +358,9 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setJobId(null);
     setProgresoPct(0);
     setTiempoSimUTC(0);
+    setPlanTramos([]);
+    setPlanResumen(null);
+    setPlanVisualCargado(false);
   }, []);
 
   // ─── Resetear ─────────────────────────────────────────────────────────────
@@ -308,6 +375,9 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setProgresoPct(0);
     setContadores({ total: 0, pendiente: 0, en_vuelo: 0, en_escala: 0, entregado: 0, rechazado: 0 });
     setAeropuertos([]);
+    setPlanTramos([]);
+    setPlanResumen(null);
+    setPlanVisualCargado(false);
     setErrorMsg(null);
   }, []);
 
@@ -379,6 +449,9 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       progresoPct,
       contadores,
       aeropuertosState,
+      planTramos,
+      planResumen,
+      planVisualCargado,
       config,
       datasetInfo,
       stats,
