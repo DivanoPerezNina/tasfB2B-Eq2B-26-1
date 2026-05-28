@@ -21,7 +21,7 @@ import { airports } from '../data/airports';
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
-const BFF = 'http://localhost:8081';
+const BFF = import.meta.env.VITE_BFF_URL ?? '';
 
 const CONFIG_DEFAULT: SimulationConfig = {
   scenario:       'realtime',

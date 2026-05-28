@@ -11,7 +11,9 @@ import { aeropuertosBackend as staticAeros } from '../data/aeropuertos';
 import { vuelosBackend as staticVuelos }     from '../data/envios';
 import { flights as staticFlights }          from '../data/flights';
 
-const BFF = 'http://localhost:8081';
+// En desarrollo apunta directo al BFF; en producción usa path relativo
+// para que nginx haga el proxy transparentemente.
+const BFF = import.meta.env.VITE_BFF_URL ?? '';
 
 // ─── Tipos BFF (envelope ya desenvuelto) ──────────────────────────────────────
 export interface AeroBFF {
