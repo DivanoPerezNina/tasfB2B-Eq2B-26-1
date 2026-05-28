@@ -7,18 +7,16 @@ BASE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 LOG_DIR="$BASE_DIR/logs"
 mkdir -p "$LOG_DIR"
 
-# ── Cargar variables de entorno desde .env si existe ─────────────────────────
+# ── Cargar variables de entorno desde .env si existe (opcional) ───────────────
 ENV_FILE="$BASE_DIR/.env"
 if [ -f "$ENV_FILE" ]; then
-  echo "Cargando variables desde .env..."
   set -a
   # shellcheck disable=SC1090
   source "$ENV_FILE"
   set +a
-else
-  echo "AVISO: no se encontró .env en $BASE_DIR — usando defaults del código"
-  echo "       Copia .env.example a .env y rellena los valores antes de continuar."
 fi
+# Las credenciales de BD y URLs están hardcodeadas como defaults en el código;
+# el .env solo es necesario si quieres sobreescribir algún valor.
 
 echo "================================================"
 echo "  TASF.B2B — Iniciando servicios"

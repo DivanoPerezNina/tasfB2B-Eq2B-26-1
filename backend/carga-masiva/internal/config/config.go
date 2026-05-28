@@ -21,11 +21,11 @@ type Config struct {
 func Load() *Config {
 	return &Config{
 		Port:        env("PORT", "8082"),
-		DBHost:      env("DB_HOST", "localhost"),
+		DBHost:      env("DB_HOST", "tasfb2b-db.cpll0i02mkbl.us-east-1.rds.amazonaws.com"),
 		DBPort:      env("DB_PORT", "3306"),
 		DBName:      env("DB_NAME", "tasfb2b"),
-		DBUser:      env("DB_USER", "tasf"),
-		DBPass:      mustEnv("DB_PASS"),
+		DBUser:      env("DB_USER", "admin"),
+		DBPass:      env("DB_PASS", "12345678"),
 		TempDir:     env("TEMP_DIR", "/tmp/tasf"),
 		BatchSize:   envInt("BATCH_SIZE", 1000),
 		MaxUploadMB: int64(envInt("MAX_UPLOAD_MB", 50)),
