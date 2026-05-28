@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import * as SliderPrimitive from '@radix-ui/react-slider';
 import { useSimulation } from '../context/SimulationContext';
 import { Button } from '../components/ui/button';
@@ -130,7 +130,121 @@ function ThresholdSlider({
   );
 }
 
-// ─── Date picker estilizado ───────────────────────────────────────────────────
+// ─── Time picker estilizado ───────────────────────────────────────────────────
+
+function TimePickerField({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: string;          // "HH:MM"
+  onChange: (t: string) => void;
+  disabled?: boolean;
+}) {
+  const [open, setOpen]   = useState(false);
+  const [draft, setDraft] = useState(value);
+  const selectedRef = useRef<HTMLButtonElement>(null);
+
+  // Sync draft when controlled value changes
+  useEffect(() => { setDraft(value); }, [value]);
+
+  // Scroll selected slot into view every time the popover opens
+  useEffect(() => {
+    if (open) {
+      const id = setTimeout(() =>
+        selectedRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 60);
+      return () => clearTimeout(id);
+    }
+  }, [open]);
+
+  // 96 slots: 00:00 → 23:45 in 15-min increments
+  const slots = useMemo(() => {
+    const r: string[] = [];
+    for (let h = 0; h < 24; h++)
+      for (let m = 0; m < 60; m += 15)
+        r.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
+    return r;
+  }, []);
+
+  // Nearest slot for auto-scroll reference (rounds to closest 15-min)
+  const nearestSlot = useMemo(() => {
+    const [h = 0, m = 0] = value.split(':').map(Number);
+    const rm = Math.round(m / 15) * 15;
+    const rh = rm === 60 ? (h + 1) % 24 : h;
+    return `${String(rh).padStart(2, '0')}:${String(rm === 60 ? 0 : rm).padStart(2, '0')}`;
+  }, [value]);
+
+  const handleDraft = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setDraft(e.target.value);
+    if (/^\d{2}:\d{2}$/.test(e.target.value)) {
+      const [h, m] = e.target.value.split(':').map(Number);
+      if (h >= 0 && h < 24 && m >= 0 && m < 60) onChange(e.target.value);
+    }
+  };
+
+  return (
+    <Popover open={open && !disabled} onOpenChange={(v) => !disabled && setOpen(v)}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          disabled={disabled}
+          className={cn(
+            'flex h-9 w-28 items-center gap-2 rounded-md border border-panel-border',
+            'bg-panel-section-bg px-3 py-1 text-sm shadow-sm transition-colors',
+            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
+            'disabled:cursor-not-allowed disabled:opacity-40',
+            open && 'ring-2 ring-primary/40 border-primary/40',
+          )}
+        >
+          <Clock className="h-4 w-4 text-panel-text-faint shrink-0" />
+          <span className="font-semibold text-panel-text tabular-nums">{value || '00:00'}</span>
+        </button>
+      </PopoverTrigger>
+
+      <PopoverContent className="w-36 p-2" align="start" sideOffset={6}>
+        {/* Manual input — type="time" gestiona teclado y validación nativa */}
+        <input
+          type="time"
+          value={draft}
+          onChange={handleDraft}
+          className={cn(
+            'mb-2 h-8 w-full rounded-md border border-panel-border bg-panel-section-bg',
+            'px-2 text-sm font-mono tabular-nums text-panel-text shadow-sm',
+            'focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/40',
+          )}
+        />
+
+        {/* Slots cada 15 min */}
+        <div className="max-h-52 overflow-y-auto space-y-0.5 pr-0.5">
+          {slots.map(slot => {
+            const isExact    = slot === value;
+            const isNearest  = slot === nearestSlot && !isExact;
+            return (
+              <button
+                key={slot}
+                ref={slot === nearestSlot ? selectedRef : undefined}
+                type="button"
+                onClick={() => { onChange(slot); setOpen(false); }}
+                className={cn(
+                  'w-full rounded px-2 py-1 text-left text-xs font-mono tabular-nums transition-colors',
+                  isExact
+                    ? 'bg-primary/15 font-semibold text-primary'
+                    : isNearest
+                      ? 'bg-panel-hover text-panel-text'
+                      : 'text-panel-text-muted hover:bg-panel-hover hover:text-panel-text',
+                )}
+              >
+                {slot}
+              </button>
+            );
+          })}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+// ─── Date + Time picker estilizado ───────────────────────────────────────────
 
 function DatePickerField({
   value,
@@ -147,45 +261,77 @@ function DatePickerField({
 }) {
   const [open, setOpen] = useState(false);
 
+  // Al seleccionar un día preserva la hora vigente
+  const handleDaySelect = (date: Date | undefined) => {
+    if (!date) return;
+    const prev = value ?? new Date();
+    const merged = new Date(date);
+    merged.setHours(prev.getHours(), prev.getMinutes(), 0, 0);
+    onChange(merged);
+    setOpen(false);
+  };
+
+  // Al cambiar la hora preserva la fecha vigente
+  const handleTimeChange = (t: string) => {
+    const [h, m] = t.split(':').map(Number);
+    const next = new Date(value ?? new Date());
+    next.setHours(h, m, 0, 0);
+    onChange(next);
+  };
+
+  const timeValue = value && !isNaN(value.getTime())
+    ? `${String(value.getHours()).padStart(2, '0')}:${String(value.getMinutes()).padStart(2, '0')}`
+    : '00:00';
+
   return (
-    <Popover open={open && !disabled} onOpenChange={(v) => !disabled && setOpen(v)}>
-      <PopoverTrigger asChild>
-        <button
-          type="button"
-          disabled={disabled}
-          className={cn(
-            'flex h-9 w-full items-center gap-2.5 rounded-md border border-panel-border',
-            'bg-panel-section-bg px-3 py-1 text-sm shadow-sm transition-colors text-left',
-            'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
-            'disabled:cursor-not-allowed disabled:opacity-40',
-            open && 'ring-2 ring-primary/40 border-primary/40',
-          )}
-        >
-          <CalendarDays className="h-4 w-4 text-panel-text-faint shrink-0" />
-          {value && !isNaN(value.getTime()) ? (
-            <span className="font-semibold text-panel-text tabular-nums">
-              {format(value, 'dd / MM / yyyy')}
+    <div className="flex gap-2">
+      {/* Selector de fecha */}
+      <Popover open={open && !disabled} onOpenChange={(v) => !disabled && setOpen(v)}>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            disabled={disabled}
+            className={cn(
+              'flex h-9 flex-1 items-center gap-2.5 rounded-md border border-panel-border',
+              'bg-panel-section-bg px-3 py-1 text-sm shadow-sm transition-colors text-left',
+              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
+              'disabled:cursor-not-allowed disabled:opacity-40',
+              open && 'ring-2 ring-primary/40 border-primary/40',
+            )}
+          >
+            <CalendarDays className="h-4 w-4 text-panel-text-faint shrink-0" />
+            {value && !isNaN(value.getTime()) ? (
+              <span className="font-semibold text-panel-text tabular-nums">
+                {format(value, 'dd / MM / yyyy')}
+              </span>
+            ) : (
+              <span className="text-panel-text-faint">Seleccionar fecha…</span>
+            )}
+            <span className="ml-auto text-xs text-panel-text-faint">
+              {value && !isNaN(value.getTime()) ? format(value, 'EEE', { locale: es }) : ''}
             </span>
-          ) : (
-            <span className="text-panel-text-faint">Seleccionar fecha…</span>
-          )}
-          <span className="ml-auto text-xs text-panel-text-faint">
-            {value && !isNaN(value.getTime()) ? format(value, 'EEEE', { locale: es }) : ''}
-          </span>
-        </button>
-      </PopoverTrigger>
-      <PopoverContent className="w-auto p-0" align="start" sideOffset={6}>
-        <CalendarUI
-          mode="single"
-          selected={value ?? undefined}
-          onSelect={(date) => { if (date) { onChange(date); setOpen(false); } }}
-          fromDate={fromDate}
-          toDate={toDate}
-          defaultMonth={value ?? fromDate}
-          initialFocus
-        />
-      </PopoverContent>
-    </Popover>
+          </button>
+        </PopoverTrigger>
+        <PopoverContent className="w-auto p-0" align="start" sideOffset={6}>
+          <CalendarUI
+            mode="single"
+            selected={value ?? undefined}
+            onSelect={handleDaySelect}
+            fromDate={fromDate}
+            toDate={toDate}
+            defaultMonth={value ?? fromDate}
+            initialFocus
+          />
+        </PopoverContent>
+      </Popover>
+
+      {/* Selector de hora */}
+      <TimePickerField
+        value={timeValue}
+        onChange={handleTimeChange}
+        disabled={disabled}
+      />
+    </div>
   );
 }
 
@@ -247,9 +393,13 @@ export function SimulationConfig() {
         scenario:    config.scenario,
         dias:        config.scenario === 'period' ? config.dias : undefined,
         duracionMin: config.scenario === 'period' ? config.duracionRealMin : undefined,
-        fechaInicio: config.scenario === 'period'
-          ? config.startDate.toISOString().slice(0, 10)
-          : undefined,
+        fechaInicio: config.scenario === 'period' ? (() => {
+          const sd = config.startDate;
+          const p = (n: number) => String(n).padStart(2, '0');
+          const base = `${sd.getFullYear()}-${p(sd.getMonth()+1)}-${p(sd.getDate())}`;
+          const hasTime = sd.getHours() !== 0 || sd.getMinutes() !== 0;
+          return hasTime ? `${base}T${p(sd.getHours())}:${p(sd.getMinutes())}` : base;
+        })() : undefined,
         total:      contadores.total,
         exitosos:   contadores.entregado,
         rechazados: contadores.rechazado,
