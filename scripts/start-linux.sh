@@ -4,6 +4,10 @@
 # Uso: cd /opt/tasfb2b && ./scripts/start-linux.sh
 set -e
 
+# Forzar Java 21 para Maven (el mvn de apt puede apuntar a otra JVM)
+export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+export PATH="$JAVA_HOME/bin:$PATH"
+
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 LOG_DIR="$REPO/logs"
 mkdir -p "$LOG_DIR"
