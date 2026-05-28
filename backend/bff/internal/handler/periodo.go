@@ -36,7 +36,7 @@ type umbralesReq struct {
 // Body:
 //
 //	{
-//	  "fechaInicio":      "2026-01-15",   // YYYY-MM-DD
+//	  "fechaInicio":      "2026-01-15T08:30",   // YYYY-MM-DD o YYYY-MM-DDTHH:MM
 //	  "dias":             7,              // 3 | 5 | 7
 //	  "criterio":         "EDF",          // EDF | FIFO | ALEATORIO
 //	  "semilla":          42,             // opcional
@@ -63,7 +63,7 @@ func (h *PeriodoHandler) Iniciar(w http.ResponseWriter, r *http.Request) {
 
 	// Validaciones básicas
 	if body.FechaInicio == "" {
-		errResp(w, 400, "PARAM_FALTANTE", "Se requiere 'fechaInicio' (YYYY-MM-DD)")
+		errResp(w, 400, "PARAM_FALTANTE", "Se requiere 'fechaInicio' (YYYY-MM-DD o YYYY-MM-DDTHH:MM)")
 		return
 	}
 	if body.Dias < 1 || body.Dias > 30 {

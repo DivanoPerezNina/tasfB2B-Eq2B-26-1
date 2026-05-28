@@ -218,7 +218,11 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setPlanResumen(null);
     setPlanVisualCargado(false);
 
-    const fechaISO = efectivo.startDate.toISOString().slice(0, 10);
+    // Enviar fecha+hora local como YYYY-MM-DDTHH:MM
+    // El planificador trabaja en epoch-minutos UTC y usa GMT=0 al recibir este campo
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const d = efectivo.startDate;
+    const fechaISO = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 
     try {
       // Usa el endpoint unificado del BFF que recibe todos los parámetros a la vez

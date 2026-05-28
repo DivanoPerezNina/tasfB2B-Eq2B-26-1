@@ -102,10 +102,11 @@ public class PlanificadorController {
         // ── Convertir fechaInicio a epoch-minutos UTC ──────────────────────
         long fechaIniUTC;
         try {
-            int[] ymd = parsearFechaISO(fechaIsoStr);
-            fechaIniUTC = GestorDatos.calcularEpochMinutos(ymd[0], ymd[1], ymd[2], 0, 0, 0);
+            int[] ymdhm = parsearFechaISO(fechaIsoStr);
+            // ymdhm = [anio, mes, dia, hora, minuto]; GMT=0 porque el frontend envía en UTC
+            fechaIniUTC = GestorDatos.calcularEpochMinutos(ymdhm[0], ymdhm[1], ymdhm[2], ymdhm[3], ymdhm[4], 0);
         } catch (Exception e) {
-            return error(400, "FECHA_INVALIDA", "Formato esperado: YYYY-MM-DD");
+            return error(400, "FECHA_INVALIDA", "Formato esperado: YYYY-MM-DD o YYYY-MM-DDTHH:MM");
         }
 
         // ── Calcular inicio del dataset para warm-up ───────────────────────
@@ -316,14 +317,28 @@ public class PlanificadorController {
     // Helpers
     // ═══════════════════════════════════════════════════════════════════════════
 
-    /** Parsea "YYYY-MM-DD" → [anio, mes, dia]. */
+    /**
+     * Parsea "YYYY-MM-DD" o "YYYY-MM-DDTHH:MM" → [anio, mes, dia, hora, minuto].
+     * Si no se incluye la parte de tiempo se asume 00:00.
+     */
     private static int[] parsearFechaISO(String iso) {
-        String[] p = iso.split("-");
+        // Separar parte de fecha y hora opcional
+        int hora = 0, minuto = 0;
+        String fechaParte = iso;
+        if (iso.length() >= 16 && iso.charAt(10) == 'T') {
+            fechaParte = iso.substring(0, 10);
+            String[] hm = iso.substring(11, 16).split(":");
+            hora   = Integer.parseInt(hm[0]);
+            minuto = Integer.parseInt(hm[1]);
+        }
+        String[] p = fechaParte.split("-");
         if (p.length != 3) throw new IllegalArgumentException("Formato inválido: " + iso);
         return new int[]{
             Integer.parseInt(p[0]),
             Integer.parseInt(p[1]),
-            Integer.parseInt(p[2])
+            Integer.parseInt(p[2]),
+            hora,
+            minuto
         };
     }
 
