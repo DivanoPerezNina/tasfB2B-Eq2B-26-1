@@ -22,3 +22,11 @@ backend/planificador/datos/_envios_preliminar_/
 # ─── Logs y PIDs generados por los scripts de arranque ────────────────────────
 logs/
 *.pid
+
+# ─── Secretos — nunca commitear ───────────────────────────────────────────────
+.env
+
+# ─── Binarios compilados para Linux (se regeneran con build-all.sh) ───────────
+backend/bff/bin/
+backend/carga-masiva/bin/
+backend/ejecutor/bin/
