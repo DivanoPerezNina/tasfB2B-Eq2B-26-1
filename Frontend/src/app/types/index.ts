@@ -68,6 +68,13 @@ export interface SimulationConfig {
   duracionRealMin: number;
   /** Criterio de ordenamiento para GVNS */
   criterio: CriterioOrden;
+  /**
+   * Si true, el planificador reconstruye el estado de la red desde el inicio
+   * del dataset hasta la fecha elegida (procesa maletas pasadas).
+   * Si false (default), tiempo=0 es la fecha elegida y solo se procesan
+   * maletas desde ese momento — comportamiento requerido por Sim5D.
+   */
+  warmUp: boolean;
   /** @deprecated Derivado de duracionRealMin — sólo para compatibilidad con componentes legacy */
   speed: number;
   thresholds: {
@@ -101,7 +108,7 @@ export interface AeropuertoEstado {
   iata:              string;
   maletas_almacen:   number;
   capacidad_almacen: number;
-  ocupacion:         string; // "0.450"
+  ocupacion:         number; // 0..1 (ej. 0.450)
   semaforo:          'verde' | 'ambar' | 'rojo';
 }
 

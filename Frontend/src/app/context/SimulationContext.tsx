@@ -24,11 +24,12 @@ import { airports } from '../data/airports';
 const BFF = import.meta.env.VITE_BFF_URL ?? '';
 
 const CONFIG_DEFAULT: SimulationConfig = {
-  scenario:       'realtime',
+  scenario:       'period',
   startDate:      new Date('2026-01-15'),
-  dias:           7,
+  dias:           5,
   duracionRealMin: 60,
   criterio:       'EDF',
+  warmUp:         false,      // default: tiempo 0 = fecha elegida (sin maletas pasadas)
   speed:          1,          // derivado; no se usa directamente
   thresholds: {
     warehouse: { green: 60, yellow: 80, red: 95 },
@@ -72,7 +73,7 @@ interface SimulationContextType {
 
   // ── Acciones ──
   updateConfig: (patch: Partial<SimulationConfig>) => void;
-  iniciarPlanificacion: (overrides?: Partial<Pick<SimulationConfig, 'startDate' | 'dias' | 'criterio' | 'duracionRealMin'>>) => Promise<void>;
+  iniciarPlanificacion: (overrides?: Partial<Pick<SimulationConfig, 'startDate' | 'dias' | 'criterio' | 'duracionRealMin' | 'warmUp'>>) => Promise<void>;
   iniciarSimulacion: () => Promise<void>;
   pausarSimulacion: () => Promise<void>;
   reanudarSimulacion: () => Promise<void>;
@@ -122,6 +123,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [planResumen, setPlanResumen]        = useState<PlanResumenVisual | null>(null);
   const [planVisualCargado, setPlanVisualCargado] = useState(false);
   const esRef = useRef<EventSource | null>(null);
+  const sseErroresRef = useRef(0);  // errores SSE consecutivos para detectar caída del BFF
 
   // ── Dataset info ──
   const [datasetInfo, setDatasetInfo] = useState<DatasetInfo | null>(null);
@@ -138,12 +140,27 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             fecha_max:    d.fecha_max.slice(0, 10),
             total_envios: d.total_envios,
           });
-          // Poner startDate dentro del rango del dataset
           const fechaIni = new Date(d.fecha_min.slice(0, 10) + 'T00:00:00');
           setConfig(prev => ({ ...prev, startDate: fechaIni }));
+        } else {
+          // dataset_meta no existe todavía (carga-masiva no se ejecutó):
+          // usar rango fijo del dataset conocido para permitir testing local
+          setDatasetInfo({
+            fecha_min:    '2026-01-01',
+            fecha_max:    '2027-12-31',
+            total_envios: '?',
+          });
+          setConfig(prev => ({ ...prev, startDate: new Date('2026-07-20T08:15:00') }));
         }
       })
-      .catch(() => { /* silencioso — servicio puede no estar levantado */ });
+      .catch(() => {
+        // BFF no disponible — igual ponemos el rango por defecto
+        setDatasetInfo({
+          fecha_min:    '2026-01-01',
+          fecha_max:    '2027-12-31',
+          total_envios: '?',
+        });
+      });
   }, []);
 
   // ── Limpiar recursos al desmontar ─────────────────────────────────────────
@@ -207,7 +224,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
   // ─── Iniciar planificación ────────────────────────────────────────────────
   const iniciarPlanificacion = useCallback(async (
-    overrides?: Partial<Pick<SimulationConfig, 'startDate' | 'dias' | 'criterio' | 'duracionRealMin'>>
+    overrides?: Partial<Pick<SimulationConfig, 'startDate' | 'dias' | 'criterio' | 'duracionRealMin' | 'warmUp'>>
   ) => {
     const efectivo = { ...config, ...overrides };
     setFase('planificando');
@@ -235,6 +252,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           criterio:         efectivo.criterio ?? 'EDF',
           semilla:          42,
           duracion_real_min: efectivo.duracionRealMin,
+          warmUp:           efectivo.warmUp ?? false,
           umbrales: {
             verde_hasta: config.thresholds.warehouse.green  / 100,
             ambar_hasta: config.thresholds.warehouse.yellow / 100,
@@ -304,10 +322,15 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
       // Suscribir SSE
       if (esRef.current) esRef.current.close();
+      sseErroresRef.current = 0;
       const es = new EventSource(`${BFF}/api/simulacion/eventos`);
       esRef.current = es;
 
+      // Cualquier mensaje válido reinicia el contador de errores
+      es.addEventListener('open', () => { sseErroresRef.current = 0; });
+
       es.addEventListener('tick', (e: MessageEvent) => {
+        sseErroresRef.current = 0;
         const d = JSON.parse(e.data);
         setTiempoSimUTC(d.tiempo_sim_utc);
         setProgresoPct(parseFloat(d.progreso_pct ?? '0'));
@@ -333,7 +356,16 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       });
 
       es.onerror = () => {
-        // SSE se reconecta automáticamente; solo cerramos si ya completó
+        // EventSource reintenta solo; pero si el BFF/Ejecutor cae de verdad,
+        // acumulamos errores y tras varios intentos marcamos error explícito
+        // en lugar de quedarnos colgados en 'ejecutando'.
+        sseErroresRef.current += 1;
+        if (es.readyState === EventSource.CLOSED || sseErroresRef.current >= 5) {
+          es.close();
+          if (esRef.current === es) esRef.current = null;
+          setFase(prev => (prev === 'ejecutando' ? 'error' : prev));
+          setErrorMsg('Se perdió la conexión con la simulación (SSE). Verifica que el Ejecutor y el BFF estén activos.');
+        }
       };
 
     } catch (e: any) {
@@ -419,7 +451,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       return {
         occupancy:  liveAp.maletas_almacen,
         capacity:   liveAp.capacidad_almacen,
-        percentage: parseFloat(liveAp.ocupacion) * 100,
+        percentage: liveAp.ocupacion * 100,
       };
     },
     [aeropuertosState],

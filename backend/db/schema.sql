@@ -11,15 +11,15 @@ USE tasfb2b;
 
 -- ── Aeropuertos ──────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS aeropuertos (
-  id                TINYINT UNSIGNED  NOT NULL,
+  id                SMALLINT UNSIGNED NOT NULL,
   iata              CHAR(4)           NOT NULL,
   ciudad            VARCHAR(60)       NOT NULL,
   pais              VARCHAR(60)       NOT NULL,
   alias             CHAR(4)           NOT NULL DEFAULT '',
   gmt_offset        TINYINT           NOT NULL,
   capacidad_almacen SMALLINT UNSIGNED NOT NULL,
-  latitud           DECIMAL(9,6)      NOT NULL,
-  longitud          DECIMAL(9,6)      NOT NULL,
+  latitud           DECIMAL(10,7)     NOT NULL,  -- rango -90..90 con 7 decimales
+  longitud          DECIMAL(11,7)     NOT NULL,  -- rango -180..180 con 7 decimales
   continente        TINYINT UNSIGNED  NOT NULL,  -- 1=América 2=Europa 3=Asia
   PRIMARY KEY (id),
   UNIQUE KEY uq_iata (iata)
@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS vuelos (
 
 -- ── Envíos ───────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS envios (
-  id_envio         VARCHAR(12)       NOT NULL,
+  id_envio         VARCHAR(20)       NOT NULL,
   origen_iata      CHAR(4)           NOT NULL,
   fecha_registro   DATE              NOT NULL,
   hora             TINYINT UNSIGNED  NOT NULL,

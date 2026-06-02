@@ -87,7 +87,7 @@ data: {"tiempo_sim_utc":1755563400,"progreso_pct":"38.5","tick":120,"contadores"
 **Evento `aeropuertos`** (cada 5 ticks):
 ```
 event: aeropuertos
-data: [{"iata":"SKBO","maletas_almacen":50,"capacidad_almacen":430,"ocupacion":"0.116","semaforo":"verde"},...]
+data: [{"iata":"SKBO","maletas_almacen":50,"capacidad_almacen":430,"ocupacion":0.116,"semaforo":"verde"},...]
 ```
 
 **Evento `completado`**:

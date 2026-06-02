@@ -286,27 +286,27 @@ export function UnifiedDashboard() {
         <div className="ml-auto flex items-center gap-1.5">
           {fase === 'ejecutando' && (
             <button
-              disabled
-              title="Pausar no disponible aún"
-              className="flex items-center gap-1.5 rounded-md bg-yellow-500/10 px-2.5 py-1.5 text-xs font-medium text-yellow-600/40 dark:text-yellow-400/40 cursor-not-allowed opacity-50"
+              onClick={pausarSimulacion}
+              title="Pausar la simulación"
+              className="flex items-center gap-1.5 rounded-md bg-yellow-500/10 px-2.5 py-1.5 text-xs font-medium text-yellow-600 dark:text-yellow-400 hover:bg-yellow-500/20 transition-colors"
             >
               <Pause className="h-3.5 w-3.5" /> Pausar
             </button>
           )}
           {fase === 'pausado' && (
             <button
-              disabled
-              title="Reanudar no disponible aún"
-              className="flex items-center gap-1.5 rounded-md bg-green-500/10 px-2.5 py-1.5 text-xs font-medium text-green-600/40 dark:text-green-400/40 cursor-not-allowed opacity-50"
+              onClick={reanudarSimulacion}
+              title="Reanudar la simulación"
+              className="flex items-center gap-1.5 rounded-md bg-green-500/10 px-2.5 py-1.5 text-xs font-medium text-green-600 dark:text-green-400 hover:bg-green-500/20 transition-colors"
             >
               <Play className="h-3.5 w-3.5" /> Reanudar
             </button>
           )}
           {(fase === 'ejecutando' || fase === 'pausado') && (
             <button
-              disabled
-              title="Detener no disponible aún"
-              className="flex items-center gap-1.5 rounded-md bg-red-500/10 px-2.5 py-1.5 text-xs font-medium text-red-600/40 dark:text-red-400/40 cursor-not-allowed opacity-50"
+              onClick={detenerSimulacion}
+              title="Detener la simulación"
+              className="flex items-center gap-1.5 rounded-md bg-red-500/10 px-2.5 py-1.5 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-500/20 transition-colors"
             >
               <Square className="h-3.5 w-3.5" /> Detener
             </button>
