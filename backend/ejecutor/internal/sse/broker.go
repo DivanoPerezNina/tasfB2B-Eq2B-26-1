@@ -19,6 +19,7 @@ type Broker struct {
 	mu          sync.Mutex
 	clientes    map[chan Mensaje]struct{}
 	maxClientes int
+	cerrado     bool
 }
 
 // Nuevo crea un Broker con límite de clientes.
@@ -26,6 +27,23 @@ func Nuevo(maxClientes int) *Broker {
 	return &Broker{
 		clientes:    make(map[chan Mensaje]struct{}),
 		maxClientes: maxClientes,
+	}
+}
+
+// Cerrar desconecta a todos los clientes y marca el broker como cerrado.
+// Tras llamarlo, las conexiones SSE en curso terminan (sus goroutines y las
+// del proxy SSE del BFF se liberan) y no se aceptan nuevos clientes.
+// Se usa al iniciar una nueva simulación para limpiar la anterior.
+func (b *Broker) Cerrar() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.cerrado {
+		return
+	}
+	b.cerrado = true
+	for ch := range b.clientes {
+		delete(b.clientes, ch)
+		close(ch)
 	}
 }
 
@@ -67,6 +85,11 @@ func (b *Broker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Registrar cliente
 	b.mu.Lock()
+	if b.cerrado {
+		b.mu.Unlock()
+		http.Error(w, "Simulación finalizada", http.StatusGone)
+		return
+	}
 	if len(b.clientes) >= b.maxClientes {
 		b.mu.Unlock()
 		http.Error(w, "Demasiados clientes SSE", http.StatusTooManyRequests)
@@ -76,11 +99,13 @@ func (b *Broker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	b.clientes[ch] = struct{}{}
 	b.mu.Unlock()
 
-	// Limpiar al desconectar
+	// Limpiar al desconectar (idempotente: Cerrar() pudo haber cerrado ch ya)
 	defer func() {
 		b.mu.Lock()
-		delete(b.clientes, ch)
-		close(ch)
+		if _, existe := b.clientes[ch]; existe {
+			delete(b.clientes, ch)
+			close(ch)
+		}
 		b.mu.Unlock()
 	}()
 

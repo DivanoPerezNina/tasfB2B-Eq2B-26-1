@@ -99,6 +99,13 @@ public class PlanificadorController {
                 ? ((Number) body.get("semilla")).longValue()
                 : 42L;
 
+        // warmUp: si true, se reconstruye el estado de la red desde el inicio del
+        // dataset hasta la fecha elegida (procesa maletas pasadas). Si false (default),
+        // tiempo=0 es la fecha elegida y SOLO se procesan maletas desde ese momento
+        // en adelante — comportamiento requerido por el enunciado de Sim5D.
+        boolean warmUp = body.containsKey("warmUp")
+                && Boolean.TRUE.equals(body.get("warmUp"));
+
         // ── Convertir fechaInicio a epoch-minutos UTC ──────────────────────
         long fechaIniUTC;
         try {
@@ -123,8 +130,9 @@ public class PlanificadorController {
         final int    numDias  = diasSolicitud;
         final CriterioOrden crit   = criterio;
         final long          sem    = semilla;
+        final boolean       wUp    = warmUp;
 
-        executor.submit(() -> ejecutarJob(job, dsIniUTC, fIniUTC, numDias, crit, sem));
+        executor.submit(() -> ejecutarJob(job, dsIniUTC, fIniUTC, numDias, crit, sem, wUp));
 
         return ResponseEntity.status(HttpStatus.ACCEPTED)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -250,27 +258,31 @@ public class PlanificadorController {
     /**
      * Ejecuta el job completo:
      * <ol>
-     *   <li>Warm-up: planificar (greedy, sin GVNS) cada día desde el inicio del
-     *       dataset hasta {@code fechaIniUTC} exclusive. Esto simula el estado
-     *       acumulado de la red antes del periodo visible.</li>
+     *   <li>Warm-up (opcional, solo si {@code warmUp == true}): planificar
+     *       (greedy, sin GVNS) cada día desde el inicio del dataset hasta
+     *       {@code fechaIniUTC} exclusive. Reconstruye el estado acumulado de
+     *       la red antes del periodo visible.</li>
      *   <li>Plan real: {@code planificarConRutas} para {@code numDias} días
-     *       desde {@code fechaIniUTC}.</li>
+     *       desde {@code fechaIniUTC}. Esta ventana SOLO carga envíos cuyo
+     *       registro cae dentro de [fechaIniUTC, ventanaFin), por lo que con
+     *       {@code warmUp == false} tiempo=0 es la fecha elegida y no se
+     *       procesa ninguna maleta anterior.</li>
      * </ol>
      */
     private void ejecutarJob(JobStore.Job job,
                               long datasetIniUTC, long fechaIniUTC,
-                              int numDias, CriterioOrden criterio, long semilla) {
+                              int numDias, CriterioOrden criterio, long semilla,
+                              boolean warmUp) {
         try {
             PlanificadorService svc = new PlanificadorService(
                     props.getRutaAeropuertos(),
                     props.getRutaVuelos(),
                     props.getRutaEnvios());
 
-            // ── Warm-up ────────────────────────────────────────────────────
-            long diasWarmup  = (fechaIniUTC - datasetIniUTC) / 1440L;
-            long diasTotales = diasWarmup + numDias;
-
+            // ── Warm-up (opcional) ─────────────────────────────────────────
+            long diasWarmup  = warmUp ? (fechaIniUTC - datasetIniUTC) / 1440L : 0L;
             if (diasWarmup < 0) diasWarmup = 0;
+            long diasTotales = diasWarmup + numDias;
 
             for (long d = 0; d < diasWarmup; d++) {
                 long dIni = datasetIniUTC + d * 1440L;

@@ -61,6 +61,17 @@ func (h *SimulacionHandler) Iniciar(w http.ResponseWriter, r *http.Request) {
 				"Ya hay una simulación en curso. Deténgala antes.")
 			return
 		}
+		// La simulación anterior terminó (completado/detenido): limpiarla por
+		// completo antes de arrancar la nueva. Detener corta su tick loop (si
+		// quedara vivo) y Cerrar libera el broker SSE viejo, evitando que la
+		// conexión SSE del run anterior quede colgada en el proxy del BFF —
+		// causa de que la "2da simulación" no recibiera eventos.
+		h.activa.Detener()
+		if h.broker != nil {
+			h.broker.Cerrar()
+			h.broker = nil
+		}
+		h.activa = nil
 	}
 
 	umbrales := engine.Umbrales{

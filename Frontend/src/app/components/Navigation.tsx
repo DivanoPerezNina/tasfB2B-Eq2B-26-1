@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'react-router';
-import { Activity, Settings, Sun, Moon, Monitor } from 'lucide-react';
+import { Activity, Settings, Sun, Moon, Monitor, Database } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 
 export function Navigation() {
@@ -9,6 +9,7 @@ export function Navigation() {
   const links = [
     { path: '/', label: 'Simulación', icon: Activity },
     { path: '/configuracion', label: 'Configuración', icon: Settings },
+    { path: '/datos', label: 'Ingreso de datos', icon: Database },
   ];
 
   const themeOptions = [

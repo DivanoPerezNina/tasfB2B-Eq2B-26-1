@@ -319,7 +319,7 @@ export const Map = memo(function Map({ selectedAirportId, onAirportSelect, onFli
   const getLiveOccupancy = useCallback((airportCode: string, fallback: { occ: number; cap: number }) => {
     const live = aeropuertosState.find(a => a.iata === airportCode);
     if (live) {
-      const pct = parseFloat(live.ocupacion) * 100;
+      const pct = live.ocupacion * 100;
       return { occ: live.maletas_almacen, cap: live.capacidad_almacen, pct };
     }
     const pct = fallback.cap > 0 ? (fallback.occ / fallback.cap) * 100 : 0;

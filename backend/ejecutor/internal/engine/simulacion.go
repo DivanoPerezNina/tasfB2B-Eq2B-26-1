@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -405,7 +406,7 @@ func (s *Simulacion) snapshotAeropuertos() []map[string]interface{} {
 			"iata":              a.IATA,
 			"maletas_almacen":   a.MaletasAlmacen,
 			"capacidad_almacen": a.CapacidadAlmacen,
-			"ocupacion":         fmt.Sprintf("%.3f", ocup),
+			"ocupacion":         math.Round(ocup*1000) / 1000, // número 0..1 (3 decimales)
 			"semaforo":          a.Semaforo,
 		})
 	}

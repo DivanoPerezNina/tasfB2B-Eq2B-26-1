@@ -41,6 +41,7 @@ type umbralesReq struct {
 //	  "criterio":         "EDF",          // EDF | FIFO | ALEATORIO
 //	  "semilla":          42,             // opcional
 //	  "duracion_real_min": 60,            // 30 | 45 | 60 | 90
+//	  "warmUp":            false,         // true = reconstruir estado previo; false = tiempo 0 en la fecha
 //	  "umbrales": { "verde_hasta": 0.60, "ambar_hasta": 0.85 }  // opcional
 //	}
 //
@@ -54,6 +55,7 @@ func (h *PeriodoHandler) Iniciar(w http.ResponseWriter, r *http.Request) {
 		Criterio        string      `json:"criterio"`
 		Semilla         int64       `json:"semilla"`
 		DuracionRealMin float64     `json:"duracion_real_min"`
+		WarmUp          bool        `json:"warmUp"`
 		Umbrales        umbralesReq `json:"umbrales"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -70,12 +72,14 @@ func (h *PeriodoHandler) Iniciar(w http.ResponseWriter, r *http.Request) {
 		errResp(w, 400, "PARAM_INVALIDO", "'dias' debe estar entre 1 y 30")
 		return
 	}
-	if body.DuracionRealMin <= 0 {
-		errResp(w, 400, "PARAM_FALTANTE", "Se requiere 'duracion_real_min' (30-90 minutos)")
+	// duracion_real_min == 0 → modo tiempo real (1 min sim por segundo real).
+	// > 0 → modo periodo comprimido, acotado a 30-90 minutos.
+	if body.DuracionRealMin < 0 {
+		errResp(w, 400, "PARAM_INVALIDO", "'duracion_real_min' no puede ser negativo")
 		return
 	}
-	if body.DuracionRealMin < 30 || body.DuracionRealMin > 90 {
-		errResp(w, 400, "PARAM_INVALIDO", "'duracion_real_min' debe estar entre 30 y 90 minutos")
+	if body.DuracionRealMin > 0 && (body.DuracionRealMin < 30 || body.DuracionRealMin > 90) {
+		errResp(w, 400, "PARAM_INVALIDO", "'duracion_real_min' debe estar entre 30 y 90 minutos (o 0 para tiempo real)")
 		return
 	}
 
@@ -99,6 +103,7 @@ func (h *PeriodoHandler) Iniciar(w http.ResponseWriter, r *http.Request) {
 		"dias":        body.Dias,
 		"criterio":    body.Criterio,
 		"semilla":     body.Semilla,
+		"warmUp":      body.WarmUp,
 	}
 	raw, _ := json.Marshal(planBody)
 
@@ -140,8 +145,21 @@ func (h *PeriodoHandler) Iniciar(w http.ResponseWriter, r *http.Request) {
 	}
 	h.mu.Unlock()
 
-	// Velocidad efectiva para informar al cliente
-	velocidad := float64(body.Dias*1440) / (body.DuracionRealMin * 60.0)
+	// Velocidad efectiva para informar al cliente.
+	// duracion_real_min == 0 → tiempo real (el Ejecutor usa avance 1 min sim/seg).
+	tiempoReal := body.DuracionRealMin == 0
+	velocidad := 0.0
+	if !tiempoReal {
+		velocidad = float64(body.Dias*1440) / (body.DuracionRealMin * 60.0)
+	}
+
+	mensaje := fmt.Sprintf("Planificación iniciada — %d días desde %s, simulación durará %.0f min reales (%.2f×)",
+		body.Dias, body.FechaInicio, body.DuracionRealMin, velocidad)
+	velocidadStr := fmt.Sprintf("%.2f", velocidad)
+	if tiempoReal {
+		mensaje = fmt.Sprintf("Operación día a día iniciada — %s en tiempo real", body.FechaInicio)
+		velocidadStr = "tiempo_real"
+	}
 
 	ok(w, map[string]interface{}{
 		"job_id":             planResp.JobID,
@@ -150,9 +168,9 @@ func (h *PeriodoHandler) Iniciar(w http.ResponseWriter, r *http.Request) {
 		"dias":               body.Dias,
 		"criterio":           body.Criterio,
 		"duracion_real_min":  body.DuracionRealMin,
-		"velocidad_efectiva": fmt.Sprintf("%.2f", velocidad),
-	}, fmt.Sprintf("Planificación iniciada — %d días desde %s, simulación durará %.0f min reales (%.2f×)",
-		body.Dias, body.FechaInicio, body.DuracionRealMin, velocidad))
+		"warm_up":            body.WarmUp,
+		"velocidad_efectiva": velocidadStr,
+	}, mensaje)
 }
 
 // ── GET /api/periodo/status/{jobId} ──────────────────────────────────────────

@@ -21,11 +21,11 @@ type Config struct {
 func Load() *Config {
 	return &Config{
 		Port:            env("PORT", "8081"),
-		DBHost:          env("DB_HOST", "tasfb2b-db.cpll0i02mkbl.us-east-1.rds.amazonaws.com"),
+		DBHost:          env("DB_HOST", "tasfb2b.cpll0i02mkbl.us-east-1.rds.amazonaws.com"),
 		DBPort:          env("DB_PORT", "3306"),
 		DBName:          env("DB_NAME", "tasfb2b"),
-		DBUser:          env("DB_USER", "admin"),
-		DBPass:          env("DB_PASS", "12345678"),
+		DBUser:          env("DB_USER", "Hamilton"),
+		DBPass:          env("DB_PASS", "i5aLJibP1fwf05OBkYKu"),
 		CargaMasivaURL:  env("CARGA_MASIVA_URL", "http://localhost:8082"),
 		PlanificadorURL: env("PLANIFICADOR_URL", "http://localhost:8084"),
 		EjecutorURL:     env("EJECUTOR_URL", "http://localhost:8083"),

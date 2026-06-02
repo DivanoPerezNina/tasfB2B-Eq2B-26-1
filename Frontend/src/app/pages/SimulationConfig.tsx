@@ -18,10 +18,7 @@ import {
   Pause,
   RotateCcw,
   Clock,
-  Upload,
-  FileSpreadsheet,
   X,
-  Download,
   AlertCircle,
   CheckCircle2,
   TrendingUp,
@@ -367,10 +364,6 @@ export function SimulationConfig() {
   } = useSimulation();
 
   const [localConfig, setLocalConfig] = useState(config);
-  const [airportsFile,   setAirportsFile]   = useState<File | null>(null);
-  const [flightsFile,    setFlightsFile]    = useState<File | null>(null);
-  const [shipmentsFile,  setShipmentsFile]  = useState<File | null>(null);
-  const [dataLoaded,     setDataLoaded]     = useState(false);
   const [currentTime,    setCurrentTime]    = useState(new Date());
   const [history,        setHistory]        = useState<HistoryRecord[]>(loadHistory);
 
@@ -417,47 +410,55 @@ export function SimulationConfig() {
   }, [fase]); // eslint-disable-line
 
   const backendTieneDatos = !!datasetInfo;
-  const datosDisponibles  = dataLoaded || backendTieneDatos;
-  const allFilesSelected  = !!airportsFile && !!flightsFile && !!shipmentsFile;
+  const datosDisponibles  = backendTieneDatos;
+
+  // ── Cálculos derivados (T03/T10/T12) ──
+  const esPeriodo  = localConfig.scenario === 'period';
+  const esRealtime = localConfig.scenario === 'realtime';
+  // Ambos eligen una fecha de inicio; día a día (realtime) simula exactamente 1 día.
+  const esConFecha = esPeriodo || esRealtime;
+  const diasEfectivos = esRealtime ? 1 : localConfig.dias;
+  // Velocidad efectiva (solo aplica a Periodo comprimido; realtime es tiempo real).
+  const velocidad = (diasEfectivos * 1440) / (localConfig.duracionRealMin * 60);
+  // La duración real ya está acotada por el slider a 30-90; validamos por seguridad.
+  const duracionFueraDeRango = esPeriodo && (localConfig.duracionRealMin < 30 || localConfig.duracionRealMin > 90);
+  // Validación de rango de fecha: la ventana [inicio, inicio+dias) debe caber en el dataset.
+  const fechaMaxDataset = datasetInfo ? new Date(datasetInfo.fecha_max + 'T23:59:59') : null;
+  const fechaFinSim     = new Date(localConfig.startDate.getTime() + diasEfectivos * 86_400_000);
+  const fechaFueraDeRango = esConFecha
+    && !!fechaMaxDataset && fechaFinSim > fechaMaxDataset;
+  const puedeIniciar = !esConFecha
+    || (!fechaFueraDeRango && !duracionFueraDeRango);
 
   // ── Handlers ──
 
   // Guarda la config actual; si nada fue seleccionado usa realtime por defecto
   const handleGuardar = () => {
     const toSave = { ...localConfig };
-    if (!toSave.scenario) toSave.scenario = 'realtime';
+    if (!toSave.scenario) toSave.scenario = 'period';
     updateConfig(toSave);
     resetSimulation();
     toast.success('Configuración guardada');
   };
 
   const handleIniciarPlanificacion = () => {
+    if (!puedeIniciar) {
+      toast.error('Revisa la configuración', {
+        description: fechaFueraDeRango
+          ? 'La ventana de simulación excede el rango del dataset.'
+          : 'La duración real debe estar entre 30 y 90 minutos.',
+      });
+      return;
+    }
     updateConfig(localConfig);
     iniciarPlanificacion({
       startDate:       localConfig.startDate,
-      dias:            localConfig.dias,
-      criterio:        'EDF',
-      duracionRealMin: localConfig.duracionRealMin,
+      dias:            diasEfectivos,
+      criterio:        localConfig.criterio,
+      // Realtime = tiempo real → duracion 0 (el backend usa avance 1 min sim/seg)
+      duracionRealMin: esRealtime ? 0 : localConfig.duracionRealMin,
+      warmUp:          localConfig.warmUp,
     });
-  };
-
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>, type: 'airports' | 'flights' | 'shipments') => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (!file.name.toLowerCase().endsWith('.txt')) { toast.error('Formato no válido — use archivos .txt'); return; }
-    if (type === 'airports') setAirportsFile(file);
-    else if (type === 'flights') setFlightsFile(file);
-    else setShipmentsFile(file);
-  };
-
-  const handleLoadData = () => {
-    if (!allFilesSelected) return;
-    toast.success('Datos cargados', { description: 'Aeropuertos, vuelos y envíos listos para simular' });
-    setDataLoaded(true);
-  };
-
-  const handleDownloadTemplate = (_tipo: 'aeropuertos' | 'vuelos' | 'envios') => {
-    toast.info('Disponible cuando el backend esté operativo');
   };
 
   const handleClearHistory = () => {
@@ -545,7 +546,13 @@ export function SimulationConfig() {
                 <RotateCcw className="mr-1.5 h-3.5 w-3.5" />Nueva
               </Button>
             ) : (
-              <Button onClick={handleIniciarPlanificacion} size="sm" className="bg-green-600 hover:bg-green-700">
+              <Button
+                onClick={handleIniciarPlanificacion}
+                size="sm"
+                disabled={!puedeIniciar}
+                title={!puedeIniciar ? 'Corrige la configuración antes de iniciar' : undefined}
+                className="bg-green-600 hover:bg-green-700"
+              >
                 <Play className="mr-1.5 h-3.5 w-3.5" />Iniciar
               </Button>
             )}
@@ -569,7 +576,6 @@ export function SimulationConfig() {
           <TabsList className="mb-4">
             <TabsTrigger value="general"><Settings className="mr-1.5 h-3.5 w-3.5" />General</TabsTrigger>
             <TabsTrigger value="thresholds"><Sliders className="mr-1.5 h-3.5 w-3.5" />Umbrales</TabsTrigger>
-            <TabsTrigger value="upload"><Upload className="mr-1.5 h-3.5 w-3.5" />Carga Masiva</TabsTrigger>
             <TabsTrigger value="history">
               <Calendar className="mr-1.5 h-3.5 w-3.5" />Historial
               {history.length > 0 && (
@@ -633,7 +639,7 @@ export function SimulationConfig() {
                     <DatePickerField
                       value={localConfig.startDate}
                       onChange={(d) => setLocalConfig({ ...localConfig, startDate: d })}
-                      disabled={localConfig.scenario !== 'period'}
+                      disabled={!esConFecha}
                       fromDate={datasetInfo ? new Date(datasetInfo.fecha_min + 'T00:00:00') : undefined}
                       toDate={datasetInfo   ? new Date(datasetInfo.fecha_max + 'T00:00:00') : undefined}
                     />
@@ -657,17 +663,45 @@ export function SimulationConfig() {
                       ) : (
                         <span className="flex items-center gap-1.5 text-yellow-700 dark:text-yellow-400">
                           <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-                          Backend no conectado — inicia el BFF para ver el rango
+                          Sin datos de dataset — sube archivos en Ingreso de datos
                         </span>
                       )}
                     </div>
-                    {localConfig.scenario !== 'period' && (
-                      <p className="text-xs text-panel-text-faint">Solo editable en escenario Periodo</p>
+                    {fechaFueraDeRango && (
+                      <div className="flex items-start gap-1.5 rounded-md border border-red-400/40 bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-400">
+                        <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                        <span>
+                          La ventana ({diasEfectivos} {diasEfectivos === 1 ? 'día' : 'días'} desde el inicio) termina el{' '}
+                          <span className="font-mono font-semibold">{format(fechaFinSim, 'dd/MM/yyyy')}</span>,
+                          fuera del rango del dataset ({datasetInfo?.fecha_max}). Elige una fecha más temprana
+                          o menos días.
+                        </span>
+                      </div>
+                    )}
+                    {localConfig.scenario === 'realtime' && (
+                      <p className="text-xs text-panel-text-faint">Día a día: simula 1 día desde la fecha elegida</p>
+                    )}
+                    {localConfig.scenario === 'collapse' && (
+                      <p className="text-xs text-panel-text-faint">Solo editable en Periodo y Día a día</p>
                     )}
                   </div>
 
-                  {/* Duración real — Periodo */}
-                  {localConfig.scenario === 'period' && (
+                  {/* Día a día (tiempo real): sin configuración de duración */}
+                  {esRealtime && (
+                    <div className="flex items-start gap-2 rounded-xl border border-blue-400/40 bg-blue-500/10 p-3">
+                      <Activity className="h-4 w-4 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-xs font-semibold text-blue-700 dark:text-blue-300">Operación en tiempo real</p>
+                        <p className="text-[10px] text-blue-600 dark:text-blue-400">
+                          Simula el día elegido a ritmo real. Controla con <strong>Iniciar</strong>,
+                          {' '}<strong>Pausar</strong> y <strong>Detener</strong>.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Duración real — solo Periodo */}
+                  {esPeriodo && (
                     <div className="space-y-3">
                       <div className="flex items-center justify-between">
                         <Label className="text-sm font-medium">Duración real</Label>
@@ -689,12 +723,21 @@ export function SimulationConfig() {
                       <div className="flex justify-between text-xs text-panel-text-faint">
                         <span>30 min</span><span>90 min</span>
                       </div>
-                      <p className="text-xs text-panel-text-muted">
-                        Velocidad:{' '}
-                        <span className="font-semibold text-panel-text">
-                          {((localConfig.dias * 1440) / (localConfig.duracionRealMin * 60)).toFixed(2)}×
-                        </span>
-                      </p>
+                      <div className="rounded-md border border-panel-border bg-panel-section-bg px-3 py-2 text-xs space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-panel-text-muted">Duración real estimada</span>
+                          <span className="font-semibold text-panel-text tabular-nums">
+                            ~{localConfig.duracionRealMin} min
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-panel-text-muted">Velocidad efectiva</span>
+                          <span className="font-semibold text-panel-text tabular-nums">{velocidad.toFixed(2)}×</span>
+                        </div>
+                        <p className="text-[10px] text-panel-text-faint pt-0.5">
+                          {diasEfectivos} {diasEfectivos === 1 ? 'día simulado se comprime' : 'días simulados se comprimen'} en {localConfig.duracionRealMin} minutos reales.
+                        </p>
+                      </div>
                     </div>
                   )}
 
@@ -754,6 +797,45 @@ export function SimulationConfig() {
                             </label>
                           ))}
                         </RadioGroup>
+                      </div>
+
+                      {/* Estado inicial: warm-up on/off (T02) */}
+                      <div className="space-y-2">
+                        <Label className="text-sm font-medium">Estado inicial de la red</Label>
+                        <div className="grid grid-cols-2 gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setLocalConfig({ ...localConfig, warmUp: false })}
+                            className={`flex flex-col items-start gap-0.5 rounded-xl border-2 px-3 py-2.5 text-left transition-all ${
+                              !localConfig.warmUp
+                                ? 'border-primary bg-primary/5 shadow-sm'
+                                : 'border-panel-border bg-panel-bg hover:border-primary/40'
+                            }`}
+                          >
+                            <span className={`text-xs font-semibold ${!localConfig.warmUp ? 'text-primary' : 'text-panel-text'}`}>
+                              Desde cero
+                            </span>
+                            <span className="text-[10px] text-panel-text-faint leading-tight">
+                              Tiempo 0 = fecha elegida. Solo procesa maletas desde ese momento.
+                            </span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setLocalConfig({ ...localConfig, warmUp: true })}
+                            className={`flex flex-col items-start gap-0.5 rounded-xl border-2 px-3 py-2.5 text-left transition-all ${
+                              localConfig.warmUp
+                                ? 'border-primary bg-primary/5 shadow-sm'
+                                : 'border-panel-border bg-panel-bg hover:border-primary/40'
+                            }`}
+                          >
+                            <span className={`text-xs font-semibold ${localConfig.warmUp ? 'text-primary' : 'text-panel-text'}`}>
+                              Cargar estado previo
+                            </span>
+                            <span className="text-[10px] text-panel-text-faint leading-tight">
+                              Reconstruye la ocupación acumulada desde el inicio del dataset (más lento).
+                            </span>
+                          </button>
+                        </div>
                       </div>
 
                       {/* Estados de planificación */}
@@ -828,70 +910,6 @@ export function SimulationConfig() {
               </div>
             </TabsContent>
 
-            {/* ── Tab: Carga Masiva ─────────────────────────────────────────── */}
-            <TabsContent value="upload" className="m-0">
-              <div className="max-w-4xl space-y-5">
-                {backendTieneDatos ? (
-                  <div className="flex items-start gap-3 rounded-xl border border-green-400/40 bg-green-500/10 p-4">
-                    <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-green-600 dark:text-green-400" />
-                    <div>
-                      <p className="text-sm font-medium text-green-700 dark:text-green-300">Datos disponibles en el servidor</p>
-                      <p className="text-xs text-green-600 dark:text-green-400">
-                        {Number(datasetInfo!.total_envios).toLocaleString()} envíos ·
-                        Rango: {datasetInfo!.fecha_min} → {datasetInfo!.fecha_max}
-                      </p>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex items-start gap-3 rounded-xl border border-yellow-400/40 bg-yellow-500/10 p-4">
-                    <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-yellow-600 dark:text-yellow-400" />
-                    <p className="text-sm text-yellow-700 dark:text-yellow-300">
-                      Selecciona los tres archivos y haz clic en <strong>Cargar datos</strong>.
-                    </p>
-                  </div>
-                )}
-                <div className="grid grid-cols-3 gap-4">
-                  {(
-                    [
-                      { id: 'airports-upload',  type: 'airports'  as const, label: 'Aeropuertos', hint: 'aeropuertos.txt',    tpl: 'aeropuertos' as const, file: airportsFile  },
-                      { id: 'flights-upload',   type: 'flights'   as const, label: 'Vuelos',      hint: 'vuelos.txt',        tpl: 'vuelos'      as const, file: flightsFile   },
-                      { id: 'shipments-upload', type: 'shipments' as const, label: 'Envíos',      hint: '_envios_XXXX_.txt', tpl: 'envios'      as const, file: shipmentsFile },
-                    ] as const
-                  ).map(({ id, type, label, hint, tpl, file }) => (
-                    <div key={id}>
-                      <div className="mb-1.5 flex items-center justify-between">
-                        <Label>{label}</Label>
-                        <button type="button" className="flex items-center gap-1 text-xs text-panel-text-muted hover:text-panel-text transition-colors" onClick={() => handleDownloadTemplate(tpl)}>
-                          <Download className="h-3 w-3" />Plantilla
-                        </button>
-                      </div>
-                      <input id={id} type="file" accept=".txt" onChange={(e) => handleFileUpload(e, type)} className="hidden" />
-                      <label htmlFor={id}>
-                        <div className={`flex h-28 cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed transition-colors ${
-                          file ? 'border-green-400 bg-green-500/10' : 'border-panel-border bg-panel-section-bg hover:border-primary/40 hover:bg-primary/5'
-                        }`}>
-                          <FileSpreadsheet className={`h-7 w-7 ${file ? 'text-green-500' : 'text-panel-text-faint'}`} />
-                          <p className="mt-1.5 px-2 text-center text-xs text-panel-text-muted">{file ? file.name : 'Seleccionar archivo'}</p>
-                          <p className="text-[10px] text-panel-text-faint">{hint}</p>
-                        </div>
-                      </label>
-                    </div>
-                  ))}
-                </div>
-                <div className="flex items-center gap-4">
-                  <Button onClick={handleLoadData} disabled={!allFilesSelected} className="gap-2">
-                    <Upload className="h-4 w-4" />Cargar datos
-                  </Button>
-                  {dataLoaded ? (
-                    <span className="flex items-center gap-1.5 text-sm text-green-600 dark:text-green-400">
-                      <CheckCircle2 className="h-4 w-4" />Carga completada
-                    </span>
-                  ) : !allFilesSelected ? (
-                    <span className="text-xs text-panel-text-muted">Selecciona los 3 archivos para habilitar la carga</span>
-                  ) : null}
-                </div>
-              </div>
-            </TabsContent>
 
             {/* ── Tab: Historial ────────────────────────────────────────────── */}
             <TabsContent value="history" className="m-0">
