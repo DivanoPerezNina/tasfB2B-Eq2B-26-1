@@ -46,6 +46,12 @@ function cssVar(name: string): string {
 
 const MAX_VISIBLE_ACTIVE_FLIGHTS = 180;
 
+// Tasa máxima plausible de avance del reloj simulado (min sim por ms real). El
+// periodo comprimido más agresivo (~7 días en 30 min) avanza ~0.006 min/ms; el
+// warm-up turbo avanza miles. Este umbral separa ambos para no contaminar la
+// extrapolación con los saltos instantáneos del warm-up.
+const MAX_PLAUSIBLE_RATE = 1;
+
 function clamp(value: number, min = 0, max = 1): number {
   return Math.min(Math.max(value, min), max);
 }
@@ -235,7 +241,15 @@ export const Map = memo(function Map({ selectedAirportId, onAirportSelect, onFli
     const prev = lastTickRef.current;
     if (prev.wallMs > 0 && newUtcMin > prev.utcMin) {
       const elapsedMs = now - prev.wallMs;
-      lastTickRef.current.advancePerMs = (newUtcMin - prev.utcMin) / elapsedMs;
+      const rate = elapsedMs > 0 ? (newUtcMin - prev.utcMin) / elapsedMs : 0;
+      // Ignorar los SALTOS del warm-up (avanzan decenas de minutos simulados en
+      // pocos ms reales → tasa enorme). Si dejáramos esa tasa, el bucle de
+      // extrapolación dispararía smoothMinute miles de minutos al futuro, más
+      // allá de la ventana, y el mapa quedaría sin aviones. Solo aceptamos tasas
+      // plausibles de tiempo real / periodo comprimido (< 1 min sim por ms real).
+      if (rate > 0 && rate < MAX_PLAUSIBLE_RATE) {
+        lastTickRef.current.advancePerMs = rate;
+      }
     }
     lastTickRef.current.utcMin  = newUtcMin;
     lastTickRef.current.wallMs  = now;
@@ -245,6 +259,12 @@ export const Map = memo(function Map({ selectedAirportId, onAirportSelect, onFli
   // Loop a 10fps: extrapola posición entre ticks
   React.useEffect(() => {
     if (!isRunning || !showPlanes || !simHasStarted) return;
+    // Al (re)arrancar el bucle —incluido tras una PAUSA o al terminar el
+    // warm-up— re-anclamos el reloj de pared al instante actual. Sin esto,
+    // (now - wallMs) arrastraría todo el tiempo de pared transcurrido mientras
+    // estuvo pausado y los aviones saltarían hacia adelante para luego volver a
+    // su sitio con el siguiente tick del servidor.
+    lastTickRef.current.wallMs = performance.now();
     const id = setInterval(() => {
       const now = performance.now();
       const ref = lastTickRef.current;

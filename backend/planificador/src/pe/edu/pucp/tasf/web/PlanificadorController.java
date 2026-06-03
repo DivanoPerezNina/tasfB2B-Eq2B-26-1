@@ -258,15 +258,18 @@ public class PlanificadorController {
     /**
      * Ejecuta el job completo:
      * <ol>
-     *   <li>Warm-up (opcional, solo si {@code warmUp == true}): planificar
-     *       (greedy, sin GVNS) cada día desde el inicio del dataset hasta
-     *       {@code fechaIniUTC} exclusive. Reconstruye el estado acumulado de
-     *       la red antes del periodo visible.</li>
-     *   <li>Plan real: {@code planificarConRutas} para {@code numDias} días
-     *       desde {@code fechaIniUTC}. Esta ventana SOLO carga envíos cuyo
-     *       registro cae dentro de [fechaIniUTC, ventanaFin), por lo que con
-     *       {@code warmUp == false} tiempo=0 es la fecha elegida y no se
-     *       procesa ninguna maleta anterior.</li>
+     *   <li>Warm-up por <b>lookback</b> (opcional, solo si {@code warmUp == true}):
+     *       en vez de replanificar día a día desde el inicio del dataset, se
+     *       extiende la ventana de planificación hacia atrás {@code LOOKBACK_MIN}
+     *       minutos (≈ viaje más largo posible). Así el plan incluye los envíos
+     *       registrados justo antes de la fecha de observación que aún estarían
+     *       en tránsito/almacén en ese instante.</li>
+     *   <li>Plan: {@code planificarConRutas} sobre {@code [planIniUTC, ventanaFin)}.
+     *       El campo {@code observacionIniUTC} del JSON marca el instante donde el
+     *       Ejecutor arranca el tiempo real; el tramo previo es el pre-roll de
+     *       warm-up que el Ejecutor reproduce a máxima velocidad. Con
+     *       {@code warmUp == false}, {@code planIniUTC == fechaIniUTC} y no hay
+     *       pre-roll (arranque en frío en la fecha elegida).</li>
      * </ol>
      */
     private void ejecutarJob(JobStore.Job job,
@@ -279,41 +282,46 @@ public class PlanificadorController {
                     props.getRutaVuelos(),
                     props.getRutaEnvios());
 
-            // ── Warm-up (opcional) ─────────────────────────────────────────
-            long diasWarmup  = warmUp ? (fechaIniUTC - datasetIniUTC) / 1440L : 0L;
-            if (diasWarmup < 0) diasWarmup = 0;
-            long diasTotales = diasWarmup + numDias;
-
-            for (long d = 0; d < diasWarmup; d++) {
-                long dIni = datasetIniUTC + d * 1440L;
-                job.mensaje  = "Warm-up: calculando día " + (d + 1) + " de " + diasWarmup;
-                job.progreso = (int) (d * 70 / Math.max(diasTotales, 1));
-
-                // Greedy sin GVNS — solo para construir el "estado pasado"
-                svc.planificarDia(dIni, criterio, semilla, false);
+            // ── Warm-up por LOOKBACK (rápido) ───────────────────────────────
+            // En lugar de replanificar día a día desde el inicio del dataset
+            // (lento: cientos de días de GVNS), extendemos la ventana hacia
+            // atrás unos pocos días — suficiente para cubrir el viaje más largo
+            // posible. Así el plan incluye los envíos que YA estarían en tránsito
+            // o en almacén en la fecha de observación; el Ejecutor reproduce ese
+            // tramo previo a máxima velocidad para sembrar el estado de la red.
+            final long LOOKBACK_MIN = 3L * 1440L; // 3 días (cubre el viaje más largo)
+            long planIniUTC = fechaIniUTC;
+            if (warmUp) {
+                planIniUTC = fechaIniUTC - LOOKBACK_MIN;
+                if (planIniUTC < datasetIniUTC) planIniUTC = datasetIniUTC;
             }
-
-            // ── Planificación real del periodo visible ─────────────────────
-            job.mensaje  = "Planificando periodo: " + numDias + " día(s)...";
-            job.progreso = (int) (diasWarmup * 70 / Math.max(diasTotales, 1));
 
             long ventanaFin = fechaIniUTC + numDias * 1440L;
 
-            // Meta (métricas)
-            ResultadoPlanificacion meta = svc.planificarVentana(
-                    fechaIniUTC, ventanaFin, criterio, semilla, false);
-
-            job.progreso = 85;
-            job.mensaje  = "Construyendo rutas completas...";
+            // ── Planificación de la ventana (lookback + periodo visible) ────
+            // UNA sola pasada: planificarConRutas carga los archivos y corre el
+            // GVNS una vez; las métricas del resumen se derivan de su resultado
+            // (antes se llamaba además planificarVentana, duplicando carga+GVNS).
+            job.mensaje  = warmUp
+                    ? "Planificando con warm-up (lookback de rutas)..."
+                    : "Planificando periodo: " + numDias + " día(s)...";
+            job.progreso = 30;
 
             // Rutas completas para el Ejecutor
             List<EnvioAsignado> envios = svc.planificarConRutas(
-                    fechaIniUTC, ventanaFin, criterio, semilla);
+                    planIniUTC, ventanaFin, criterio, semilla);
 
-            job.progreso = 95;
+            job.progreso = 90;
             job.mensaje  = "Serializando resultado...";
 
-            job.resultadoJson = PlanificadorService.serializarPlanJSON(envios, meta);
+            // Métricas del resumen derivadas de la misma corrida.
+            ResultadoPlanificacion meta = PlanificadorService.metaDesdeEnvios(
+                    envios, planIniUTC, ventanaFin, criterio);
+
+            // observacionIniUTC = fechaIniUTC: instante donde arranca el tiempo real.
+            // capacidades = capacidad real de almacén por aeropuerto (para el Ejecutor).
+            job.resultadoJson = PlanificadorService.serializarPlanJSON(
+                    envios, meta, fechaIniUTC, svc.capacidadesAlmacen());
             job.progreso      = 100;
             job.mensaje       = "Completado. " + meta.exitosos + "/" + meta.totalEnvios + " envíos asignados.";
             job.estado        = JobStore.Estado.COMPLETADO;

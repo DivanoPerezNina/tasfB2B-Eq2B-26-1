@@ -1,7 +1,9 @@
 package pe.edu.pucp.tasf.gvns;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Fachada del motor de planificación GVNS para uso en aplicaciones web.
@@ -217,12 +219,18 @@ public class PlanificadorService {
      * Útil para devolver el plan completo como respuesta HTTP desde el
      * Spring Boot wrapper.
      *
-     * @param envios lista devuelta por {@link #planificarConRutas}
-     * @param meta   ResultadoPlanificacion para el bloque "resumen"
+     * @param envios            lista devuelta por {@link #planificarConRutas}
+     * @param meta              ResultadoPlanificacion para el bloque "resumen"
+     * @param observacionIniUTC minuto UTC donde arranca la simulación VISIBLE en
+     *                          tiempo real. Con warm-up es mayor que
+     *                          {@code meta.ventanaIniUTC} (el tramo previo es el
+     *                          pre-roll que el Ejecutor reproduce acelerado).
      * @return cadena JSON
      */
     public static String serializarPlanJSON(List<EnvioAsignado> envios,
-                                             ResultadoPlanificacion meta) {
+                                             ResultadoPlanificacion meta,
+                                             long observacionIniUTC,
+                                             Map<String, Integer> capacidades) {
         StringBuilder sb = new StringBuilder(envios.size() * 200);
         sb.append("{\"resumen\":{");
         sb.append("\"totalEnvios\":").append(meta.totalEnvios).append(',');
@@ -233,14 +241,80 @@ public class PlanificadorService {
         sb.append("\"tiempoFase2Seg\":").append(String.format("%.3f", meta.tiempoFase2Seg)).append(',');
         sb.append("\"tiempoFase3Seg\":").append(String.format("%.3f", meta.tiempoFase3Seg)).append(',');
         sb.append("\"ventanaIniUTC\":").append(meta.ventanaIniUTC).append(',');
-        sb.append("\"ventanaFinUTC\":").append(meta.ventanaFinUTC);
-        sb.append("},\"envios\":[");
+        sb.append("\"ventanaFinUTC\":").append(meta.ventanaFinUTC).append(',');
+        sb.append("\"observacionIniUTC\":").append(observacionIniUTC);
+        sb.append("},");
+
+        // Capacidades reales de almacén por aeropuerto (para que el Ejecutor
+        // calcule ocupación y semáforo contra el valor correcto, no un default).
+        sb.append("\"aeropuertos\":[");
+        if (capacidades != null) {
+            boolean first = true;
+            for (Map.Entry<String, Integer> e : capacidades.entrySet()) {
+                if (!first) sb.append(',');
+                first = false;
+                sb.append("{\"iata\":\"").append(e.getKey())
+                  .append("\",\"capacidad\":").append(e.getValue()).append('}');
+            }
+        }
+        sb.append("],");
+
+        sb.append("\"envios\":[");
         for (int i = 0; i < envios.size(); i++) {
             if (i > 0) sb.append(',');
             envios.get(i).appendJSON(sb);
         }
         sb.append("]}");
         return sb.toString();
+    }
+
+    /**
+     * Devuelve un mapa IATA → capacidad de almacén leyendo el archivo de
+     * aeropuertos (archivo pequeño; carga independiente y barata). Lo usa el
+     * controlador para incluir las capacidades reales en el plan JSON.
+     */
+    public Map<String, Integer> capacidadesAlmacen() {
+        GestorDatos datos = new GestorDatos();
+        datos.cargarAeropuertos(rutaAeropuertos);
+        Map<String, Integer> m = new LinkedHashMap<>();
+        for (int i = 1; i <= datos.numAeropuertos; i++) {
+            m.put(datos.iataAeropuerto[i], datos.capacidadAlmacen[i]);
+        }
+        return m;
+    }
+
+    /**
+     * Construye el {@link ResultadoPlanificacion} (métricas del "resumen") a
+     * partir de la lista de envíos ya planificada por {@link #planificarConRutas},
+     * SIN volver a cargar archivos ni re-ejecutar el GVNS.
+     *
+     * <p>Antes el controlador llamaba {@code planificarVentana} (para las métricas)
+     * y {@code planificarConRutas} (para las rutas) por separado: dos cargas de
+     * archivos y dos corridas completas de GVNS por job. Este helper deriva las
+     * métricas de la única corrida de {@code planificarConRutas}.
+     */
+    public static ResultadoPlanificacion metaDesdeEnvios(List<EnvioAsignado> envios,
+                                                         long ventanaIniUTC,
+                                                         long ventanaFinUTC,
+                                                         CriterioOrden criterio) {
+        int total = envios.size();
+        int exitosos = 0, directas = 0, una = 0, dos = 0;
+        long transito = 0;
+        for (EnvioAsignado e : envios) {
+            if (!"Exitoso".equals(e.estado) || e.tramos.isEmpty()) continue;
+            exitosos++;
+            int n = e.tramos.size();
+            if      (n == 1) directas++;
+            else if (n == 2) una++;
+            else if (n >= 3) dos++;
+            EnvioAsignado.Tramo ultimo = e.tramos.get(n - 1);
+            transito += (ultimo.llegadaUTC - e.registroUTC);
+        }
+        return new ResultadoPlanificacion(
+                ventanaIniUTC, ventanaFinUTC, criterio,
+                total, exitosos, total - exitosos, 0,
+                transito, directas, una, dos,
+                0.0, 0.0, 0, true);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

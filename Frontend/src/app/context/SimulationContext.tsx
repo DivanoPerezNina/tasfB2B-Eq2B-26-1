@@ -29,7 +29,8 @@ const CONFIG_DEFAULT: SimulationConfig = {
   dias:           5,
   duracionRealMin: 60,
   criterio:       'EDF',
-  warmUp:         false,      // default: tiempo 0 = fecha elegida (sin maletas pasadas)
+  warmUp:         true,       // default: sembrar el estado de la red en la fecha elegida
+                              // (aviones en vuelo + almacenes ocupados). "Desde cero" lo apaga.
   speed:          1,          // derivado; no se usa directamente
   thresholds: {
     warehouse: { green: 60, yellow: 80, red: 95 },
@@ -54,7 +55,8 @@ interface SimulationContextType {
   isRunning: boolean;     // fase === 'ejecutando'
   simulationTime: Date;   // derivado de tiempoSimUTC
   tiempoSimUTC: number;   // minutos epoch
-  progresoPct: number;    // 0-100
+  progresoPct: number;    // 0-100 (ventana visible en tiempo real)
+  warmupPct: number;      // 0-100 (progreso del pre-roll de warm-up)
   contadores: Contadores;
   aeropuertosState: AeropuertoEstado[];
   /** Tramos reales del plan generado por el planificador. Se usan solo para la visualización del mapa. */
@@ -115,6 +117,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   // ── Simulación en vivo ──
   const [tiempoSimUTC, setTiempoSimUTC]     = useState(0);
   const [progresoPct, setProgresoPct]       = useState(0);
+  const [warmupPct, setWarmupPct]           = useState(0);
   const [contadores, setContadores]         = useState<Contadores>({
     total: 0, pendiente: 0, en_vuelo: 0, en_escala: 0, entregado: 0, rechazado: 0,
   });
@@ -323,11 +326,31 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       // Suscribir SSE
       if (esRef.current) esRef.current.close();
       sseErroresRef.current = 0;
+      setWarmupPct(0);
       const es = new EventSource(`${BFF}/api/simulacion/eventos`);
       esRef.current = es;
 
       // Cualquier mensaje válido reinicia el contador de errores
       es.addEventListener('open', () => { sseErroresRef.current = 0; });
+
+      // ── Warm-up turbo: el Ejecutor reproduce el tramo previo a máxima velocidad ──
+      es.addEventListener('warmup-progress', (e: MessageEvent) => {
+        sseErroresRef.current = 0;
+        const d = JSON.parse(e.data);
+        setFase('calentando');
+        setWarmupPct(parseFloat(d.progreso_pct ?? '0'));
+        setTiempoSimUTC(d.tiempo_sim_utc);
+      });
+
+      es.addEventListener('warmup-completado', (e: MessageEvent) => {
+        sseErroresRef.current = 0;
+        const d = JSON.parse(e.data);
+        setWarmupPct(100);
+        if (d.contadores) setContadores(d.contadores);
+        setTiempoSimUTC(d.tiempo_sim_utc);
+        setFase('ejecutando');
+        console.log('[Sim] ✓ Warm-up completado — arrancando tiempo real');
+      });
 
       es.addEventListener('tick', (e: MessageEvent) => {
         sseErroresRef.current = 0;
@@ -363,7 +386,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         if (es.readyState === EventSource.CLOSED || sseErroresRef.current >= 5) {
           es.close();
           if (esRef.current === es) esRef.current = null;
-          setFase(prev => (prev === 'ejecutando' ? 'error' : prev));
+          setFase(prev => (prev === 'ejecutando' || prev === 'calentando' ? 'error' : prev));
           setErrorMsg('Se perdió la conexión con la simulación (SSE). Verifica que el Ejecutor y el BFF estén activos.');
         }
       };
@@ -375,24 +398,51 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   }, [jobId]);
 
   // ─── Pausar ───────────────────────────────────────────────────────────────
+  // Solo tiene sentido en 'ejecutando'. Durante 'calentando' el backend responde
+  // 409 (el warm-up no es pausable); en ese caso no tocamos la UI.
   const pausarSimulacion = useCallback(async () => {
-    await fetch(`${BFF}/api/simulacion/pausar`, { method: 'POST' });
-    setFase('pausado');
-  }, []);
+    if (fase !== 'ejecutando') return;
+    try {
+      const res = await fetch(`${BFF}/api/simulacion/pausar`, { method: 'POST' });
+      if (res.ok) {
+        setFase('pausado');
+      } else {
+        console.warn('[Sim] pausar rechazado por el backend:', res.status);
+      }
+    } catch (e) {
+      console.warn('[Sim] error al pausar:', e);
+    }
+  }, [fase]);
 
   // ─── Reanudar ─────────────────────────────────────────────────────────────
   const reanudarSimulacion = useCallback(async () => {
-    await fetch(`${BFF}/api/simulacion/reanudar`, { method: 'POST' });
-    setFase('ejecutando');
-  }, []);
+    if (fase !== 'pausado') return;
+    try {
+      const res = await fetch(`${BFF}/api/simulacion/reanudar`, { method: 'POST' });
+      if (res.ok) {
+        setFase('ejecutando');
+      } else {
+        console.warn('[Sim] reanudar rechazado por el backend:', res.status);
+      }
+    } catch (e) {
+      console.warn('[Sim] error al reanudar:', e);
+    }
+  }, [fase]);
 
   // ─── Detener ──────────────────────────────────────────────────────────────
+  // Detener SIEMPRE limpia la UI local, aunque el backend falle: el usuario
+  // quiere abortar. Cerramos el SSE primero para no recibir más eventos.
   const detenerSimulacion = useCallback(async () => {
-    await fetch(`${BFF}/api/simulacion/detener`, { method: 'POST' });
     if (esRef.current) { esRef.current.close(); esRef.current = null; }
+    try {
+      await fetch(`${BFF}/api/simulacion/detener`, { method: 'POST' });
+    } catch (e) {
+      console.warn('[Sim] error al detener (se limpia la UI igual):', e);
+    }
     setFase('idle');
     setJobId(null);
     setProgresoPct(0);
+    setWarmupPct(0);
     setTiempoSimUTC(0);
     setPlanTramos([]);
     setPlanResumen(null);
@@ -409,6 +459,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setPlanMensaje('');
     setTiempoSimUTC(0);
     setProgresoPct(0);
+    setWarmupPct(0);
     setContadores({ total: 0, pendiente: 0, en_vuelo: 0, en_escala: 0, entregado: 0, rechazado: 0 });
     setAeropuertos([]);
     setPlanTramos([]);
@@ -483,6 +534,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       simulationTime,
       tiempoSimUTC,
       progresoPct,
+      warmupPct,
       contadores,
       aeropuertosState,
       planTramos,

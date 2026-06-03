@@ -83,7 +83,7 @@ interface SearchResult {
 export function UnifiedDashboard() {
   const {
     stats, getAirportStats,
-    fase, contadores, progresoPct, simulationTime,
+    fase, contadores, progresoPct, warmupPct, simulationTime,
     pausarSimulacion, reanudarSimulacion, detenerSimulacion, resetear,
   } = useSimulation();
   const {
@@ -215,6 +215,7 @@ export function UnifiedDashboard() {
 
   // ─── Fase label ───
   const faseLabel: Record<string, { text: string; color: string }> = {
+    calentando: { text: 'Calentando…', color: 'text-orange-500' },
     ejecutando: { text: 'Ejecutando', color: 'text-green-500' },
     pausado:    { text: 'Pausado',    color: 'text-yellow-500' },
     completado: { text: 'Completado', color: 'text-blue-500' },
@@ -232,7 +233,7 @@ export function UnifiedDashboard() {
       <div className="flex items-center gap-4 border-b border-panel-border bg-panel-bg px-4 py-2 flex-shrink-0">
         {/* Fase badge */}
         <div className="flex items-center gap-1.5">
-          <span className={`h-2 w-2 rounded-full ${fase === 'ejecutando' ? 'animate-pulse bg-green-500' : fase === 'pausado' ? 'bg-yellow-500' : fase === 'completado' ? 'bg-blue-500' : 'bg-panel-text-faint'}`} />
+          <span className={`h-2 w-2 rounded-full ${fase === 'ejecutando' ? 'animate-pulse bg-green-500' : fase === 'calentando' ? 'animate-pulse bg-orange-500' : fase === 'pausado' ? 'bg-yellow-500' : fase === 'completado' ? 'bg-blue-500' : 'bg-panel-text-faint'}`} />
           <span className={`text-xs font-semibold ${fl.color}`}>{fl.text}</span>
         </div>
         <div className="h-4 w-px bg-panel-border" />
@@ -243,8 +244,24 @@ export function UnifiedDashboard() {
             {contadores.total > 0 ? format(simulationTime, 'dd/MM/yyyy HH:mm') : '—'}
           </span>
         </div>
-        {/* Progress bar */}
-        {contadores.total > 0 && (
+        {/* Warm-up progress bar (pre-roll acelerado) */}
+        {fase === 'calentando' && (
+          <>
+            <div className="h-4 w-px bg-panel-border" />
+            <div className="flex items-center gap-2 min-w-[160px]">
+              <span className="text-[11px] text-orange-500 whitespace-nowrap">Preparando red…</span>
+              <div className="flex-1 h-1.5 overflow-hidden rounded-full bg-panel-section-bg">
+                <div
+                  className="h-full rounded-full bg-orange-500 transition-all duration-200"
+                  style={{ width: `${warmupPct}%` }}
+                />
+              </div>
+              <span className="text-xs font-medium text-panel-text tabular-nums w-9 text-right">{warmupPct.toFixed(0)}%</span>
+            </div>
+          </>
+        )}
+        {/* Progress bar (ventana visible en tiempo real) */}
+        {fase !== 'calentando' && contadores.total > 0 && (
           <>
             <div className="h-4 w-px bg-panel-border" />
             <div className="flex items-center gap-2 min-w-[120px]">
@@ -302,7 +319,7 @@ export function UnifiedDashboard() {
               <Play className="h-3.5 w-3.5" /> Reanudar
             </button>
           )}
-          {(fase === 'ejecutando' || fase === 'pausado') && (
+          {(fase === 'ejecutando' || fase === 'pausado' || fase === 'calentando') && (
             <button
               onClick={detenerSimulacion}
               title="Detener la simulación"

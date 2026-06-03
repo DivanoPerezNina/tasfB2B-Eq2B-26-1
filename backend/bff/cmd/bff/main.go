@@ -31,6 +31,8 @@ func main() {
 		PlanificadorURL: cfg.PlanificadorURL,
 		EjecutorURL:     cfg.EjecutorURL,
 	}
+	auth := &handler.AuthHandler{Usuario: cfg.AuthUser, Clave: cfg.AuthPass}
+	muro := &handler.MuroHandler{Archivo: cfg.MuroFile}
 
 	mux := http.NewServeMux()
 
@@ -39,6 +41,11 @@ func main() {
 	mux.HandleFunc("GET /api/vuelos",      dom.Vuelos)
 	mux.HandleFunc("GET /api/dataset",     dom.Dataset)
 	mux.HandleFunc("GET /api/health",      hlth.Health)
+
+	// ── Login (credencial compartida) + Muro de comentarios ──────────────────
+	mux.HandleFunc("POST /api/login", auth.Login)
+	mux.HandleFunc("POST /api/muro",  muro.Crear)
+	mux.HandleFunc("GET /api/muro",   muro.Listar)
 
 	// ── Simulación de Periodo (orquestación BFF) ──────────────────────────────
 	// Único punto de entrada: recibe fechaInicio+dias+criterio+duracion_real_min
