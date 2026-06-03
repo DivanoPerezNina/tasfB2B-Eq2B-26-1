@@ -17,10 +17,11 @@ type Simulacion struct {
 	mu    sync.RWMutex
 
 	// Configuración
-	IniUTC        int64   // minuto UTC inicio del periodo simulado
-	FinUTC        int64   // minuto UTC fin del periodo simulado
-	AvancePorTick float64 // minutos simulados por segundo real
-	TickInterval  time.Duration
+	IniUTC         int64   // minuto UTC inicio del PLAN (= inicio del pre-roll de warm-up)
+	ObservacionUTC int64   // minuto UTC donde arranca la simulación VISIBLE en tiempo real
+	FinUTC         int64   // minuto UTC fin del periodo simulado
+	AvancePorTick  float64 // minutos simulados por segundo real (fase tiempo real)
+	TickInterval   time.Duration
 
 	// Estado
 	estado        string  // cargando|ejecutando|pausado|detenido|completado
@@ -56,23 +57,42 @@ func Nueva(id string, planJSON string, duracionRealMin float64,
 
 	ini := plan.Resumen.VentanaIniUTC
 	fin := plan.Resumen.VentanaFinUTC
-	ventanaMin := float64(fin - ini) // minutos simulados totales
+
+	// Instante donde arranca la simulación visible (tiempo real). El planificador
+	// lo envía en observacionIniUTC; si viene 0 (planes viejos o sin warm-up),
+	// arrancamos directamente en el inicio del plan (sin pre-roll).
+	obs := plan.Resumen.ObservacionIniUTC
+	if obs <= 0 || obs < ini {
+		obs = ini
+	}
+	if obs > fin {
+		obs = fin
+	}
+
+	// La velocidad de la FASE VISIBLE se calcula sobre [observación, fin], no
+	// sobre todo el plan: el tramo de warm-up no consume tiempo real.
+	ventanaVisibleMin := float64(fin - obs)
 
 	var avance float64
 	if duracionRealMin <= 0 {
-		avance = 1.0 // tiempo real: 1 min sim / 1 seg real
+		// Tiempo real ESTRICTO 1:1 — el reloj simulado avanza al mismo ritmo
+		// que el reloj de pared. Un tick ocurre cada TickInterval (1 seg real),
+		// así que en 1 seg real debe avanzar (TickInterval en segundos) minutos
+		// simulados / 60. Con tick de 1 seg: 1/60 min sim = 1 seg sim por seg real.
+		avance = tickInterval.Seconds() / 60.0
 	} else {
-		avance = ventanaMin / (duracionRealMin * 60.0)
+		avance = ventanaVisibleMin / (duracionRealMin * 60.0)
 	}
 
 	s := &Simulacion{
-		ID:            id,
-		IniUTC:        ini,
-		FinUTC:        fin,
-		AvancePorTick: avance,
-		TickInterval:  tickInterval,
-		estado:        "cargando",
-		TiempoSimUTC:  float64(ini),
+		ID:             id,
+		IniUTC:         ini,
+		ObservacionUTC: obs,
+		FinUTC:         fin,
+		AvancePorTick:  avance,
+		TickInterval:   tickInterval,
+		estado:         "cargando",
+		TiempoSimUTC:   float64(ini),
 		Aeropuertos:   make(map[string]*EstadoAeropuerto),
 		Umbrales:      umbrales,
 		pauseCh:       make(chan struct{}, 1),
@@ -115,6 +135,20 @@ func (s *Simulacion) GetEstado() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.estado
+}
+
+// setEstadoSalvoTerminal cambia el estado salvo que ya sea terminal
+// (detenido/completado). Devuelve false si NO cambió porque ya estaba en un
+// estado terminal — lo usa el tickLoop para abortar si Detener() llegó durante
+// la ventana entre Iniciar() y el arranque real del loop.
+func (s *Simulacion) setEstadoSalvoTerminal(e string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.estado == "detenido" || s.estado == "completado" {
+		return false
+	}
+	s.estado = e
+	return true
 }
 
 func (s *Simulacion) GetTiempoSim() float64 {
@@ -198,8 +232,48 @@ func (s *Simulacion) Detener() {
 func (s *Simulacion) tickLoop() {
 	defer close(s.doneCh)
 
+	// ── Fase 1: warm-up turbo (sin sleep) ──────────────────────────────────────
+	// Reproduce el tramo [IniUTC, ObservacionUTC] a máxima velocidad para sembrar
+	// el estado de la red (maletas en almacén / en vuelo) tal como estaría en el
+	// instante de observación. No consume tiempo real.
+	if s.ObservacionUTC > s.IniUTC {
+		if detenido := s.warmUpLoop(); detenido {
+			return // se llamó Detener() durante el warm-up
+		}
+	}
+
+	// Salir si nos detuvieron justo al terminar el warm-up.
+	select {
+	case <-s.stopCh:
+		return
+	default:
+	}
+
+	// ── Transición a tiempo real ───────────────────────────────────────────────
+	if !s.setEstadoSalvoTerminal("ejecutando") {
+		return // Detener() llegó durante/justo al terminar el warm-up
+	}
+	// Snapshot inicial para que el mapa aparezca poblado desde el primer segundo.
+	s.mu.Lock()
+	contIni := s.calcularContadores()
+	aeroIni := s.snapshotAeropuertos()
+	s.mu.Unlock()
+	s.Broadcast("aeropuertos", aeroIni)
+	s.Broadcast("tick", map[string]interface{}{
+		"tiempo_sim_utc": int64(s.ObservacionUTC),
+		"progreso_pct":   "0.0",
+		"tick":           int64(0),
+		"contadores":     contIni,
+	})
+
+	// ── Fase 2: tiempo real ─────────────────────────────────────────────────────
 	ticker := time.NewTicker(s.TickInterval)
 	defer ticker.Stop()
+
+	denomVisible := float64(s.FinUTC - s.ObservacionUTC)
+	if denomVisible <= 0 {
+		denomVisible = 1
+	}
 
 	for {
 		select {
@@ -228,11 +302,14 @@ func (s *Simulacion) tickLoop() {
 			}
 			s.mu.Unlock()
 
-			// Emitir tick SSE
-			progreso := (s.TiempoSimUTC - float64(s.IniUTC)) /
-				float64(s.FinUTC-s.IniUTC) * 100.0
+			// Progreso sobre la ventana VISIBLE [ObservacionUTC, FinUTC]
+			progreso := (s.TiempoSimUTC - float64(s.ObservacionUTC)) /
+				denomVisible * 100.0
 			if progreso > 100 {
 				progreso = 100
+			}
+			if progreso < 0 {
+				progreso = 0
 			}
 
 			s.Broadcast("tick", map[string]interface{}{
@@ -258,6 +335,67 @@ func (s *Simulacion) tickLoop() {
 	}
 }
 
+// warmUpLoop reproduce el tramo [IniUTC, ObservacionUTC] a máxima velocidad
+// (sin sleep, en pasos grandes) para reconstruir el estado de la red en el
+// instante de observación. Devuelve true si se solicitó Detener() durante el
+// proceso (en cuyo caso el llamador debe salir del tickLoop).
+func (s *Simulacion) warmUpLoop() bool {
+	if !s.setEstadoSalvoTerminal("calentando") {
+		return true // ya fue detenido antes de empezar
+	}
+
+	const pasoMin = 60.0 // 1 hora simulada por iteración
+	total := float64(s.ObservacionUTC - s.IniUTC)
+	if total <= 0 {
+		return false
+	}
+
+	iter := 0
+	for {
+		// Permitir cancelar el warm-up con Detener().
+		select {
+		case <-s.stopCh:
+			return true
+		default:
+		}
+
+		s.mu.Lock()
+		s.TiempoSimUTC += pasoMin
+		if s.TiempoSimUTC > float64(s.ObservacionUTC) {
+			s.TiempoSimUTC = float64(s.ObservacionUTC)
+		}
+		s.procesarEventos(int64(s.TiempoSimUTC))
+		alcanzado := s.TiempoSimUTC >= float64(s.ObservacionUTC)
+		pct := (s.TiempoSimUTC - float64(s.IniUTC)) / total * 100.0
+		s.mu.Unlock()
+
+		iter++
+		// Reportar progreso cada ~24 pasos (1 día simulado) para no saturar SSE.
+		if iter%24 == 0 || alcanzado {
+			if pct > 100 {
+				pct = 100
+			}
+			s.Broadcast("warmup-progress", map[string]interface{}{
+				"tiempo_sim_utc": int64(s.TiempoSimUTC),
+				"progreso_pct":   fmt.Sprintf("%.1f", pct),
+			})
+		}
+
+		if alcanzado {
+			break
+		}
+	}
+
+	s.mu.Lock()
+	cont := s.calcularContadores()
+	s.mu.Unlock()
+	s.Broadcast("warmup-completado", map[string]interface{}{
+		"tiempo_sim_utc": int64(s.ObservacionUTC),
+		"contadores":     cont,
+	})
+	return false
+}
+
 // ─── Procesamiento de eventos por tick ───────────────────────────────────────
 
 func (s *Simulacion) procesarEventos(t int64) {
@@ -267,22 +405,21 @@ func (s *Simulacion) procesarEventos(t int64) {
 			continue
 		}
 
-		// Verificar deadline
-		if e.DeadlineUTC > 0 && t > e.DeadlineUTC &&
-			e.Estado != "entregado" {
-			if e.Estado != "rechazado" {
-				e.Estado = "rechazado"
-				// Decrementar almacén si estaba pendiente ahí
-				if aero, ok := s.Aeropuertos[e.Origen]; ok {
-					if aero.MaletasAlmacen > 0 {
-						aero.MaletasAlmacen -= e.Maletas
-					}
-				}
+		// 0) Registro: el envío ingresa al almacén origen cuando se registra.
+		//    Antes (cargarPlan) se sumaban todos de golpe → ocupación inflada.
+		if !e.Registrado && t >= e.RegistroUTC {
+			e.Registrado = true
+			if aero, ok := s.Aeropuertos[e.Origen]; ok {
+				aero.MaletasAlmacen += e.Maletas
 			}
-			continue
 		}
 
-		// Procesar tramos
+		// 1) Procesar tramos PRIMERO: un mismo paso puede hacer despegar y/o
+		//    aterrizar el envío. Es clave hacerlo antes del chequeo de deadline:
+		//    si no, un paso grande (los 60 min del warm-up, o un tick comprimido)
+		//    que salta por encima de la llegada Y del deadline a la vez marcaría
+		//    el envío como "rechazado" aunque en realidad aterrizó a tiempo
+		//    (rechazos espurios → falsa sensación de colapso).
 		for j := e.TramoActual; j < len(e.Tramos); j++ {
 			tr := &e.Tramos[j]
 
@@ -320,6 +457,28 @@ func (s *Simulacion) procesarEventos(t int64) {
 				}
 			}
 		}
+
+		// 2) Deadline: solo si el envío SIGUE sin entregarse tras procesar las
+		//    llegadas de este paso. Un envío todavía en tránsito cuando t ya pasó
+		//    su deadline es un incumplimiento de SLA real (24h/48h). Como el
+		//    Planificador solo asigna rutas que cumplen el deadline, en la práctica
+		//    esto solo dispara para envíos sin ruta factible (ya marcados al cargar).
+		if e.Estado != "entregado" && e.DeadlineUTC > 0 && t > e.DeadlineUTC {
+			estadoPrevio := e.Estado
+			e.Estado = "rechazado"
+			// Liberar las maletas del almacén donde estaban esperando. Solo si
+			// seguían registradas y sin despegar (pendiente=origen) o en escala.
+			if e.Registrado && estadoPrevio == "pendiente" {
+				if aero, ok := s.Aeropuertos[e.Origen]; ok && aero.MaletasAlmacen > 0 {
+					aero.MaletasAlmacen -= e.Maletas
+				}
+			} else if estadoPrevio == "en_escala" && e.TramoActual < len(e.Tramos) {
+				escala := e.Tramos[e.TramoActual].Desde
+				if aero, ok := s.Aeropuertos[escala]; ok && aero.MaletasAlmacen > 0 {
+					aero.MaletasAlmacen -= e.Maletas
+				}
+			}
+		}
 	}
 
 	// Recalcular semáforos
@@ -333,6 +492,23 @@ func (s *Simulacion) procesarEventos(t int64) {
 func (s *Simulacion) cargarPlan(plan PlanResponse) {
 	s.Envios = make([]EstadoEnvio, 0, len(plan.Envios))
 
+	// 1) Sembrar aeropuertos con sus capacidades REALES (vienen del Planificador).
+	for _, ap := range plan.Aeropuertos {
+		cap := ap.Capacidad
+		if cap <= 0 {
+			cap = capacidadPorDefecto
+		}
+		s.Aeropuertos[ap.IATA] = &EstadoAeropuerto{
+			IATA:             ap.IATA,
+			CapacidadAlmacen: cap,
+			Semaforo:         "verde",
+		}
+	}
+
+	// 2) Cargar envíos. NO se suman maletas al almacén aquí: un envío ocupa el
+	//    almacén origen solo desde que se REGISTRA (t >= RegistroUTC), no desde
+	//    el inicio del plan. Sumarlas todas de golpe inflaba la ocupación muy por
+	//    encima de la capacidad (p. ej. 1000/400 en un hub).
 	for _, ep := range plan.Envios {
 		e := EstadoEnvio{
 			Indice:      ep.Indice,
@@ -362,17 +538,28 @@ func (s *Simulacion) cargarPlan(plan PlanResponse) {
 					Estado:     st,
 				}
 			}
-			// Contabilizar en almacén origen
-			if _, ok := s.Aeropuertos[e.Origen]; !ok {
-				s.Aeropuertos[e.Origen] = &EstadoAeropuerto{
-					IATA:             e.Origen,
-					CapacidadAlmacen: 400, // default; se sobrescribe si hay datos
-					Semaforo:         "verde",
-				}
+			// Asegurar que el aeropuerto origen exista (si no vino en la lista de
+			// capacidades, se crea con la capacidad por defecto).
+			s.asegurarAeropuerto(e.Origen)
+			// Asegurar también los aeropuertos de escala/destino de los tramos.
+			for _, tr := range e.Tramos {
+				s.asegurarAeropuerto(tr.Hasta)
 			}
-			s.Aeropuertos[e.Origen].MaletasAlmacen += e.Maletas
 		}
 		s.Envios = append(s.Envios, e)
+	}
+}
+
+const capacidadPorDefecto = 400
+
+// asegurarAeropuerto crea el aeropuerto con capacidad por defecto si no existe.
+func (s *Simulacion) asegurarAeropuerto(iata string) {
+	if _, ok := s.Aeropuertos[iata]; !ok {
+		s.Aeropuertos[iata] = &EstadoAeropuerto{
+			IATA:             iata,
+			CapacidadAlmacen: capacidadPorDefecto,
+			Semaforo:         "verde",
+		}
 	}
 }
 

@@ -1,10 +1,16 @@
 import { Link, useLocation } from 'react-router';
-import { Activity, Settings, Sun, Moon, Monitor, Database } from 'lucide-react';
+import { Activity, Settings, Sun, Moon, Monitor, Database, LogOut } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
+import { clearToken } from '../lib/auth';
 
 export function Navigation() {
   const location = useLocation();
   const { theme, setTheme, resolvedTheme } = useTheme();
+
+  const cerrarSesion = () => {
+    clearToken();
+    window.location.reload(); // vuelve al gate de login
+  };
 
   const links = [
     { path: '/', label: 'Simulación', icon: Activity },
@@ -41,6 +47,7 @@ export function Navigation() {
         })}
       </div>
 
+      <div className="flex items-center gap-2">
       {/* Theme toggle */}
       <div className="flex items-center rounded-lg border border-panel-border bg-panel-section-bg p-0.5">
         {themeOptions.map(opt => {
@@ -62,6 +69,16 @@ export function Navigation() {
             </button>
           );
         })}
+        </div>
+
+        <button
+          onClick={cerrarSesion}
+          title="Cerrar sesión"
+          className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs text-panel-text-faint hover:bg-panel-hover hover:text-red-500 transition-colors"
+        >
+          <LogOut className="h-3.5 w-3.5" />
+          <span className="hidden sm:inline">Salir</span>
+        </button>
       </div>
     </nav>
   );

@@ -16,6 +16,9 @@ type Config struct {
 	PlanificadorURL string
 	EjecutorURL    string
 	CORSOrigin     string
+	AuthUser       string // usuario del login compartido
+	AuthPass       string // clave del login compartido
+	MuroFile       string // ruta del archivo JSON del muro de comentarios
 }
 
 func Load() *Config {
@@ -30,6 +33,9 @@ func Load() *Config {
 		PlanificadorURL: env("PLANIFICADOR_URL", "http://localhost:8084"),
 		EjecutorURL:     env("EJECUTOR_URL", "http://localhost:8083"),
 		CORSOrigin:      env("CORS_ORIGIN", "*"),
+		AuthUser:        env("AUTH_USER", "admin"),
+		AuthPass:        env("AUTH_PASS", "tasf2026"),
+		MuroFile:        env("MURO_FILE", "muro.json"),
 	}
 }
 

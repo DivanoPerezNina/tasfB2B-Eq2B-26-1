@@ -3,16 +3,29 @@ package engine
 // ── Tipos del plan recibido desde el Planificador ────────────────────────────
 
 type PlanResponse struct {
-	Resumen ResumenPlan  `json:"resumen"`
-	Envios  []EnvioPlan  `json:"envios"`
+	Resumen     ResumenPlan       `json:"resumen"`
+	Envios      []EnvioPlan       `json:"envios"`
+	Aeropuertos []AeropuertoPlan  `json:"aeropuertos"` // capacidades reales de almacén
+}
+
+// AeropuertoPlan trae la capacidad real de almacén de cada aeropuerto, para que
+// el Ejecutor no use un valor por defecto al calcular ocupación y semáforo.
+type AeropuertoPlan struct {
+	IATA      string `json:"iata"`
+	Capacidad int    `json:"capacidad"`
 }
 
 type ResumenPlan struct {
 	TotalEnvios   int   `json:"totalEnvios"`
 	Exitosos      int   `json:"exitosos"`
 	Rechazados    int   `json:"rechazados"`
-	VentanaIniUTC int64 `json:"ventanaIniUTC"`
-	VentanaFinUTC int64 `json:"ventanaFinUTC"`
+	VentanaIniUTC int64 `json:"ventanaIniUTC"` // inicio del PLAN (= inicio del pre-roll de warm-up)
+	VentanaFinUTC int64 `json:"ventanaFinUTC"` // fin del periodo simulado
+	// ObservacionIniUTC marca el instante donde arranca la simulación VISIBLE en
+	// tiempo real. Con warm-up: VentanaIniUTC < ObservacionIniUTC (el tramo previo
+	// se reproduce a máxima velocidad para sembrar el estado de la red). Sin
+	// warm-up el planificador lo deja igual a VentanaIniUTC (no hay pre-roll).
+	ObservacionIniUTC int64 `json:"observacionIniUTC"`
 }
 
 type EnvioPlan struct {
@@ -47,6 +60,7 @@ type EstadoEnvio struct {
 	Tramos      []TramoSim
 	TramoActual int    // índice del tramo actual (0, 1, 2)
 	Estado      string // pendiente|en_vuelo|en_escala|entregado|rechazado
+	Registrado  bool   // true cuando el envío ya ingresó al almacén origen (t >= RegistroUTC)
 }
 
 // TramoSim es un tramo individual de la ruta de un envío.

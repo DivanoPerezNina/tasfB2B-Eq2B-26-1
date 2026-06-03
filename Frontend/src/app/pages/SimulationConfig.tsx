@@ -455,9 +455,13 @@ export function SimulationConfig() {
       startDate:       localConfig.startDate,
       dias:            diasEfectivos,
       criterio:        localConfig.criterio,
-      // Realtime = tiempo real → duracion 0 (el backend usa avance 1 min sim/seg)
+      // Realtime = tiempo real → duracion 0 (el backend usa avance 1 seg sim/seg real)
       duracionRealMin: esRealtime ? 0 : localConfig.duracionRealMin,
-      warmUp:          localConfig.warmUp,
+      // En Tiempo Real el warm-up es IMPLÍCITO y siempre activo: la idea es ver el
+      // estado de la red (aviones en vuelo, almacenes ocupados) en la fecha/hora
+      // elegida, lo que requiere reproducir el tramo previo (lookback). En Periodo
+      // el usuario decide con el toggle "Estado inicial de la red".
+      warmUp:          esRealtime ? true : localConfig.warmUp,
     });
   };
 
@@ -693,8 +697,9 @@ export function SimulationConfig() {
                       <div>
                         <p className="text-xs font-semibold text-blue-700 dark:text-blue-300">Operación en tiempo real</p>
                         <p className="text-[10px] text-blue-600 dark:text-blue-400">
-                          Simula el día elegido a ritmo real. Controla con <strong>Iniciar</strong>,
-                          {' '}<strong>Pausar</strong> y <strong>Detener</strong>.
+                          Arranca en la fecha/hora elegida mostrando el estado real de la red
+                          (aviones en vuelo y almacenes ocupados) y avanza 1:1 con el reloj.
+                          Controla con <strong>Iniciar</strong>, <strong>Pausar</strong> y <strong>Detener</strong>.
                         </p>
                       </div>
                     </div>
@@ -832,7 +837,7 @@ export function SimulationConfig() {
                               Cargar estado previo
                             </span>
                             <span className="text-[10px] text-panel-text-faint leading-tight">
-                              Reconstruye la ocupación acumulada desde el inicio del dataset (más lento).
+                              Siembra aviones en vuelo y almacenes ocupados al inicio (lookback rápido).
                             </span>
                           </button>
                         </div>

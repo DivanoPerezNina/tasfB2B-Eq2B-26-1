@@ -167,9 +167,16 @@ func (h *SimulacionHandler) Estado(w http.ResponseWriter, r *http.Request) {
 	}
 	t := sim.GetTiempoSim()
 	cont := sim.GetContadores()
-	progreso := (t - float64(sim.IniUTC)) / float64(sim.FinUTC-sim.IniUTC) * 100
+	denom := float64(sim.FinUTC - sim.ObservacionUTC)
+	if denom <= 0 {
+		denom = 1
+	}
+	progreso := (t - float64(sim.ObservacionUTC)) / denom * 100
 	if progreso > 100 {
 		progreso = 100
+	}
+	if progreso < 0 {
+		progreso = 0
 	}
 	respond(w, 200, map[string]interface{}{
 		"simulacion_id":   sim.ID,

@@ -90,6 +90,7 @@ export type FaseSimulacion =
   | 'idle'
   | 'planificando'
   | 'listo'
+  | 'calentando'   // warm-up turbo: reproduciendo el tramo previo a máxima velocidad
   | 'ejecutando'
   | 'pausado'
   | 'completado'
