@@ -31,6 +31,7 @@ var (
 	objMin       = flag.Float64("obj-min", 30, "duración real mínima deseada (min)")
 	objMax       = flag.Float64("obj-max", 90, "duración real máxima deseada (min)")
 	muestras     = flag.Int("muestras", 0, "si >0, mide solo N bloques espaciados (rápido); 0 = todos (preciso)")
+	verbose      = flag.Bool("verbose", false, "imprime la curva Ta por bloque (horizonte acumulado)")
 )
 
 // ── Respuesta del endpoint benchmark ─────────────────────────────────────────
@@ -62,9 +63,10 @@ func main() {
 	fmt.Printf("  Criterio:     %s\n", *criterio)
 	fmt.Printf("  Objetivo:     %.0f–%.0f min reales\n\n", *objMin, *objMax)
 
-	fmt.Printf("%-8s %-8s %-10s %-9s %-9s %-9s %-9s %-9s %s\n",
-		"Sc(min)", "bloques", "envíos", "Ta_max(s)", "Ta_avg(s)", "rech", "Sa_min*", "K_max**", "¿factible 30-90?")
-	fmt.Println(strings.Repeat("─", 110))
+	fmt.Printf("Modelo: ACUMULATIVO — el bloque i planifica TODO desde t=0 hasta t0+i·Sc (Ta creciente).\n\n")
+	fmt.Printf("%-8s %-8s %-11s %-10s %-10s %-7s %-10s %-8s %s\n",
+		"Sc(min)", "bloques", "envíos_últ", "Ta_1º(s)", "Ta_últ(s)", "rech", "Sa_min*", "K_min**", "¿factible 30-90?")
+	fmt.Println(strings.Repeat("─", 115))
 
 	for _, scStr := range strings.Split(*scLista, ",") {
 		sc, err := strconv.ParseInt(strings.TrimSpace(scStr), 10, 64)
@@ -74,10 +76,11 @@ func main() {
 		evaluarSc(t0, totalMin, sc)
 	}
 
-	fmt.Println(strings.Repeat("─", 110))
-	fmt.Println("*  Sa_min = Ta_max (estabilidad: Sa debe ser > Ta). Duración mínima = bloques·Ta_max.")
-	fmt.Println("** K_max = Sc / (Sa_min en min) — la aceleración máxima estable para ese Sc.")
-	fmt.Println("   Una combinación es 'factible' si existe Sa con Ta_max < Sa tal que bloques·Sa ∈ [obj-min, obj-max].")
+	fmt.Println(strings.Repeat("─", 115))
+	fmt.Println("Ta_últ = Ta del último bloque (5 días completos) = el MAYOR (modelo acumulativo).")
+	fmt.Println("*  Sa_min = Ta_últ (estabilidad: Sa debe ser > Ta_max, que es el del último bloque).")
+	fmt.Println("** K_min = Sc / (Sa_min en min) — aceleración con el Sa más ajustado a la estabilidad.")
+	fmt.Println("   'Factible' si existe Sa con Ta_últ < Sa tal que bloques·Sa ∈ [obj-min, obj-max].")
 }
 
 func evaluarSc(t0, totalMin, sc int64) {
@@ -86,12 +89,16 @@ func evaluarSc(t0, totalMin, sc int64) {
 		return
 	}
 
-	// Selección de bloques a medir (todos, o muestreo uniforme).
+	// Selección de bloques a medir (todos, o muestreo uniforme). SIEMPRE se mide
+	// el último (horizonte completo = Ta máximo del modelo acumulativo).
 	indices := make([]int, 0, nBloques)
 	if *muestras > 0 && *muestras < nBloques {
 		paso := nBloques / *muestras
 		for i := 0; i < nBloques; i += paso {
 			indices = append(indices, i)
+		}
+		if indices[len(indices)-1] != nBloques-1 {
+			indices = append(indices, nBloques-1)
 		}
 	} else {
 		for i := 0; i < nBloques; i++ {
@@ -99,48 +106,44 @@ func evaluarSc(t0, totalMin, sc int64) {
 		}
 	}
 
-	var taMax, taSum float64
-	var enviosTot, rechTot int
+	var taPrimero, taUltimo float64
+	var enviosUltimo, rechUltimo int
 	medidos := 0
 	for _, i := range indices {
-		ini := t0 + int64(i)*sc
-		fin := ini + sc
+		ini := t0
+		fin := t0 + int64(i+1)*sc // ACUMULATIVO: horizonte creciente desde t0
 		r, err := medirBloque(ini, fin)
 		if err != nil {
 			fmt.Printf("  [Sc=%d bloque %d] error: %v\n", sc, i, err)
 			continue
 		}
-		if r.TaSeg > taMax {
-			taMax = r.TaSeg
+		if medidos == 0 {
+			taPrimero = r.TaSeg
 		}
-		taSum += r.TaSeg
-		enviosTot += r.TotalEnvios
-		rechTot += r.Rechazados
+		taUltimo = r.TaSeg // el último medido = mayor horizonte
+		enviosUltimo = r.TotalEnvios
+		rechUltimo = r.Rechazados
 		medidos++
+		if *verbose {
+			fmt.Printf("    bloque %3d/%d  horizonte=%5d min  envíos=%-7d Ta=%.3fs\n",
+				i+1, nBloques, int64(i+1)*sc, r.TotalEnvios, r.TaSeg)
+		}
 	}
 	if medidos == 0 {
 		return
 	}
-	taAvg := taSum / float64(medidos)
-	// Si se muestreó, extrapolar envíos totales al nº real de bloques.
-	enviosEstim := enviosTot
-	if medidos < nBloques {
-		enviosEstim = enviosTot * nBloques / medidos
-	}
 
-	// Estabilidad: Sa debe superar Ta_max. Duración mínima posible = bloques·Ta_max.
-	durMinPosibleMin := float64(nBloques) * taMax / 60.0
+	// Estabilidad: Sa debe superar Ta del ÚLTIMO bloque (el mayor).
+	taMax := taUltimo
 	saMin := taMax                       // segundos
-	kMax := float64(sc) / (saMin / 60.0) // Sc[min] / Sa[min]
+	kMin := float64(sc) / (saMin / 60.0) // Sc[min] / Sa[min]
+	durMinPosibleMin := float64(nBloques) * taMax / 60.0
 
-	// ¿Existe Sa con Ta_max < Sa tal que bloques·Sa ∈ [objMin, objMax] (en min)?
-	// bloques·Sa(seg)/60 ∈ [objMin,objMax]  →  Sa ∈ [objMin*60/n, objMax*60/n]
 	saLo := *objMin * 60.0 / float64(nBloques)
 	saHi := *objMax * 60.0 / float64(nBloques)
-	factible := saHi > taMax && saLo <= saHi // existe Sa>Ta_max dentro del rango de duración
-	veredicto := "NO (Ta domina)"
+	factible := saHi > taMax && saLo <= saHi
+	veredicto := "NO"
 	if factible {
-		// Sa recomendado = max(taMax*margen, saLo), acotado a saHi.
 		saRec := taMax * 1.3
 		if saRec < saLo {
 			saRec = saLo
@@ -155,8 +158,8 @@ func evaluarSc(t0, totalMin, sc int64) {
 		veredicto = fmt.Sprintf("NO (mín %.0fmin > %.0f)", durMinPosibleMin, *objMax)
 	}
 
-	fmt.Printf("%-8d %-8d %-10d %-9.3f %-9.3f %-9d %-9.2f %-9.0f %s\n",
-		sc, nBloques, enviosEstim, taMax, taAvg, rechTot, saMin, kMax, veredicto)
+	fmt.Printf("%-8d %-8d %-11d %-10.3f %-10.3f %-7d %-10.2f %-8.0f %s\n",
+		sc, nBloques, enviosUltimo, taPrimero, taUltimo, rechUltimo, saMin, kMin, veredicto)
 }
 
 func medirBloque(iniUTC, finUTC int64) (*benchResp, error) {

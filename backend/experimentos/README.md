@@ -16,6 +16,13 @@ minutos** sin que la solución se caiga.
 Regla de oro: **`Ta < Sa` siempre** (si no, la siguiente planificación empieza
 antes de terminar la anterior → caída). La duración total ≈ `nº bloques · Sa`.
 
+### Modelo: ACUMULATIVO
+
+El bloque `i` re-planifica con GVNS **todo desde t=0** hasta `t0 + i·Sc` (no solo
+el bloque nuevo). Por eso **`Ta` crece** con cada bloque — el último (5 días
+completos) es el más pesado. La estabilidad la fija el **último** bloque:
+`Sa > Ta_último`. Usa `-verbose` para ver la curva de `Ta` creciendo.
+
 ## Requisitos
 
 1. **Planificador corriendo** con el dataset cargado (lee de los archivos `.txt`).
