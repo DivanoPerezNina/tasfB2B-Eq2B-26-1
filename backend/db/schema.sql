@@ -49,10 +49,18 @@ CREATE TABLE IF NOT EXISTS envios (
   destino_iata     CHAR(4)           NOT NULL,
   cantidad_maletas SMALLINT UNSIGNED NOT NULL,
   id_cliente       INT UNSIGNED      NOT NULL,
+  -- Tiempos UTC PRECALCULADOS en la carga masiva (minutos absolutos desde Epoch).
+  -- registro_utc = fecha/hora local del origen convertida a UTC restando su GMT.
+  -- deadline_utc = registro_utc + 1440 (mismo continente) o + 2880 (distinto).
+  -- Así el Planificador NO recalcula la conversión horaria por cada envío, y la
+  -- ingesta incremental por bloques de tiempo se hace con un query indexado.
+  registro_utc     BIGINT            NOT NULL DEFAULT 0,
+  deadline_utc     BIGINT            NOT NULL DEFAULT 0,
   PRIMARY KEY (id_envio, origen_iata),
   KEY idx_origen_envio  (origen_iata),
   KEY idx_destino_envio (destino_iata),
-  KEY idx_fecha         (fecha_registro)
+  KEY idx_fecha         (fecha_registro),
+  KEY idx_registro_utc  (registro_utc)   -- consumo incremental: WHERE registro_utc >= H_prev AND < H
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ── Metadatos del dataset ────────────────────────────────────

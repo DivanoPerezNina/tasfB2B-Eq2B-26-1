@@ -178,6 +178,61 @@ public class PlanificadorController {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
+    // POST /api/planificacion/benchmark
+    // ───────────────────────────────────────────────────────────────────────────
+    // Mide el TIEMPO DE EJECUCIÓN (Ta) del GVNS para una ventana de datos en
+    // minutos UTC absolutos. SÍNCRONO (devuelve cuando termina). Lo usa el módulo
+    // de experimentación para calibrar Ta/Sa/Sc/K — NO es parte del flujo normal.
+    //
+    // Body: { "iniUTC": 29691840, "finUTC": 29695200, "criterio": "EDF" }
+    // Resp: { totalEnvios, exitosos, rechazados, taSeg, fase2Seg, fase3Seg }
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    @PostMapping("/planificacion/benchmark")
+    public ResponseEntity<String> benchmark(@RequestBody Map<String, Object> body) {
+        if (body.get("iniUTC") == null || body.get("finUTC") == null) {
+            return error(400, "PARAM_FALTANTE", "Se requieren 'iniUTC' y 'finUTC' (minutos UTC)");
+        }
+        long iniUTC = ((Number) body.get("iniUTC")).longValue();
+        long finUTC = ((Number) body.get("finUTC")).longValue();
+        if (finUTC <= iniUTC) {
+            return error(400, "PARAM_INVALIDO", "finUTC debe ser mayor que iniUTC");
+        }
+
+        CriterioOrden criterio;
+        try {
+            String c = body.containsKey("criterio")
+                    ? ((String) body.get("criterio")).toUpperCase()
+                    : props.getCriterioDefault().toUpperCase();
+            criterio = CriterioOrden.valueOf(c);
+        } catch (IllegalArgumentException e) {
+            return error(400, "CRITERIO_INVALIDO", "ALEATORIO | EDF | FIFO");
+        }
+        long semilla = body.containsKey("semilla") ? ((Number) body.get("semilla")).longValue() : 42L;
+
+        PlanificadorService svc = new PlanificadorService(
+                props.getRutaAeropuertos(), props.getRutaVuelos(), props.getRutaEnvios());
+
+        // Ta = wall-time total de la planificación (carga de datos + GVNS), que es
+        // lo que el orquestador realmente experimenta en cada bloque Sa.
+        long t0 = System.nanoTime();
+        ResultadoPlanificacion r = svc.planificarVentana(iniUTC, finUTC, criterio, semilla, false);
+        double taSeg = (System.nanoTime() - t0) / 1e9;
+
+        String json = "{"
+                + "\"iniUTC\":" + iniUTC + ","
+                + "\"finUTC\":" + finUTC + ","
+                + "\"totalEnvios\":" + r.totalEnvios + ","
+                + "\"exitosos\":" + r.exitosos + ","
+                + "\"rechazados\":" + r.rechazados + ","
+                + "\"taSeg\":" + String.format("%.4f", taSeg) + ","
+                + "\"fase2Seg\":" + String.format("%.4f", r.tiempoFase2Seg) + ","
+                + "\"fase3Seg\":" + String.format("%.4f", r.tiempoFase3Seg)
+                + "}";
+        return ok(json);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // GET /api/aeropuertos
     // ═══════════════════════════════════════════════════════════════════════════
 
