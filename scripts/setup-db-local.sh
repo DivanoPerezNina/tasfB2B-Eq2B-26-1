@@ -15,6 +15,10 @@
 #  Variables (override por entorno):
 #    DB_HOST (127.0.0.1)  DB_PORT (3306)  DB_USER (root)  DB_PASS (vacío)
 #    DB_NAME (tasfb2b)    CARGA_PORT (18082)   TEMP_DIR (/tmp/tasf)
+#    DATOS  → carpeta con aeropuertos.txt, vuelos.txt y _envios_preliminar_/
+#             OJO: los _envios_*.txt NO están en git (.gitignore — datos pesados).
+#             Apunta DATOS a donde los subiste en la VM (Drive/scp).
+#             Default: <repo>/backend/planificador/datos
 # ============================================================================
 set -euo pipefail
 
@@ -27,7 +31,7 @@ CARGA_PORT="${CARGA_PORT:-18082}"   # puerto temporal (no choca con el systemd :
 TEMP_DIR="${TEMP_DIR:-/tmp/tasf}"
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-DATOS="$REPO/backend/planificador/datos"
+DATOS="${DATOS:-$REPO/backend/planificador/datos}"
 SCHEMA="$REPO/backend/db/schema.sql"
 CARGA_URL="http://127.0.0.1:${CARGA_PORT}"
 
@@ -111,6 +115,12 @@ echo "[5/5] Ingesta de envíos (precalculando registro_utc)..."
 shopt -s nullglob
 archivos=("$DATOS"/_envios_preliminar_/_envios_*.txt)
 total=${#archivos[@]}
+if [ "$total" = "0" ]; then
+  echo "  ✗ No se encontraron _envios_*.txt en $DATOS/_envios_preliminar_/"
+  echo "    Esos archivos NO vienen por git (.gitignore). Súbelos a la VM y"
+  echo "    re-ejecuta con:  DATOS=/ruta/a/tus/datos DB_PASS=... ./scripts/setup-db-local.sh"
+  exit 1
+fi
 i=0
 for f in "${archivos[@]}"; do
   i=$((i+1))
