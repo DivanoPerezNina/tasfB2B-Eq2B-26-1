@@ -33,6 +33,7 @@ var (
 	objMax       = flag.Float64("obj-max", 90, "duración real máxima deseada (min)")
 	muestras     = flag.Int("muestras", 0, "si >0, mide solo N bloques espaciados (rápido); 0 = todos (preciso)")
 	verbose      = flag.Bool("verbose", false, "imprime la curva Ta por bloque (horizonte acumulado)")
+	horizontes   = flag.String("horizontes", "", "MODO COLAPSO: CSV de horizontes en días desde t0 (ej. 60,120,180,240,300,365). Localiza dónde colapsa la red.")
 )
 
 // ── Respuestas ───────────────────────────────────────────────────────────────
@@ -69,6 +70,12 @@ func main() {
 	fmt.Printf("  Criterio:     %s\n", *criterio)
 	fmt.Printf("  Objetivo:     %.0f–%.0f min reales\n\n", *objMin, *objMax)
 
+	// Modo COLAPSO: barre horizontes largos desde t0 para localizar el colapso.
+	if *horizontes != "" {
+		modoColapso(t0)
+		return
+	}
+
 	fmt.Printf("Modelo: ACUMULATIVO — el bloque i planifica TODO desde t=0 hasta t0+i·Sc (Ta creciente).\n\n")
 	fmt.Printf("%-8s %-8s %-11s %-10s %-10s %-7s %-10s %-8s %s\n",
 		"Sc(min)", "bloques", "envíos_últ", "Ta_1º(s)", "Ta_últ(s)", "rech", "Sa_min*", "K_min**", "¿factible 30-90?")
@@ -87,6 +94,39 @@ func main() {
 	fmt.Println("*  Sa_min = Ta_últ (estabilidad: Sa debe ser > Ta_max, que es el del último bloque).")
 	fmt.Println("** K_min = Sc / (Sa_min en min) — aceleración con el Sa más ajustado a la estabilidad.")
 	fmt.Println("   'Factible' si existe Sa con Ta_últ < Sa tal que bloques·Sa ∈ [obj-min, obj-max].")
+}
+
+// modoColapso planifica horizontes crecientes desde t0 (acumulativo) y reporta
+// envíos, Ta, rechazos y %éxito. Sirve para localizar a partir de qué fecha la
+// red empieza a colapsar (rechazos despegan) y medir el Ta del peor caso.
+func modoColapso(t0 int64) {
+	fmt.Printf("MODO COLAPSO — horizontes crecientes desde t0; el colapso aparece donde cae el %%éxito.\n\n")
+	fmt.Printf("%-7s %-13s %-11s %-9s %-10s %-8s\n",
+		"Hdías", "fecha_fin", "envíos", "Ta(s)", "rechazos", "%éxito")
+	fmt.Println(strings.Repeat("─", 70))
+	for _, hStr := range strings.Split(*horizontes, ",") {
+		h, err := strconv.ParseInt(strings.TrimSpace(hStr), 10, 64)
+		if err != nil || h <= 0 {
+			continue
+		}
+		fin := t0 + h*1440
+		taSeg, total, rech, err := medirBloque(t0, fin)
+		if err != nil {
+			fmt.Printf("  H=%d días: error: %v\n", h, err)
+			continue
+		}
+		exito := 100.0
+		if total > 0 {
+			exito = float64(total-rech) / float64(total) * 100
+		}
+		fechaFin := time.Unix(fin*60, 0).UTC().Format("2006-01-02")
+		fmt.Printf("%-7d %-13s %-11d %-9.2f %-10d %-8.1f\n",
+			h, fechaFin, total, taSeg, rech, exito)
+	}
+	fmt.Println(strings.Repeat("─", 70))
+	fmt.Println("Colapso = donde %éxito empieza a caer (rechazos despegan).")
+	fmt.Println("El Ta cerca del colapso es el peor caso para fijar Sa (Sa > Ta_max).")
+	fmt.Println("Para Sim5D representativa, elige fechas de ALTO volumen (cercanas al colapso).")
 }
 
 func evaluarSc(t0, totalMin, sc int64) {
