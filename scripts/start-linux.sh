@@ -66,7 +66,7 @@ echo "      OK → target/planificador-gvns-1.0.0.jar"
 # ── 4. Servicios Go ───────────────────────────────────────────────────────────
 echo ""
 echo "[4/5] Servicios Go (build nativo Linux)..."
-for SVC in bff carga-masiva ejecutor; do
+for SVC in bff carga-masiva ejecutor consultas; do
   cd "$REPO/backend/$SVC"
   mkdir -p bin
   go build -o bin/$SVC ./cmd/$SVC
@@ -77,6 +77,8 @@ done
 echo ""
 echo "[5/5] Reiniciando servicios..."
 sudo systemctl restart tasfb2b-planificador tasfb2b-bff tasfb2b-ejecutor tasfb2b-carga-masiva
+# El servicio de consultas es opcional (puede no existir el unit aún)
+sudo systemctl restart tasfb2b-consultas 2>/dev/null || echo "      (tasfb2b-consultas sin unit — créalo si vas a usar el esquema Sa/Sc)"
 sleep 4
 
 echo ""
