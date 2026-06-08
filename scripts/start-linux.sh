@@ -24,6 +24,30 @@ cd "$REPO"
 git pull
 echo "      OK — rama: $(git branch --show-current) @ $(git log -1 --format='%h %s')"
 
+# ── 1.5 Apuntar a la BD LOCAL de la VM ────────────────────────────────────────
+# Forzamos el host/puerto/nombre de la BD local en el .env (idempotente). Las
+# credenciales DB_USER/DB_PASS NO se tocan aquí (son secretos): déjalas puestas
+# en el .env apuntando a un usuario de la BD MySQL local.
+ENV_FILE="$REPO/.env"
+ensure_env() {
+  local key="$1" val="$2"
+  touch "$ENV_FILE"
+  if grep -q "^${key}=" "$ENV_FILE"; then
+    sed -i "s|^${key}=.*|${key}=${val}|" "$ENV_FILE"
+  else
+    echo "${key}=${val}" >> "$ENV_FILE"
+  fi
+}
+echo ""
+echo "[1.5] Apuntando servicios a la BD local (127.0.0.1)..."
+ensure_env DB_HOST 127.0.0.1
+ensure_env DB_PORT 3306
+ensure_env DB_NAME tasfb2b
+if ! grep -q "^DB_USER=" "$ENV_FILE" || ! grep -q "^DB_PASS=" "$ENV_FILE"; then
+  echo "      ⚠ Falta DB_USER/DB_PASS en $ENV_FILE — añádelos (usuario de la BD local)."
+fi
+echo "      OK ($ENV_FILE → DB_HOST=127.0.0.1)"
+
 # ── 2. Frontend ───────────────────────────────────────────────────────────────
 echo ""
 echo "[2/5] Frontend (npm build)..."
