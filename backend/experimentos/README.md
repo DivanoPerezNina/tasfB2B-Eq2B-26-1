@@ -23,10 +23,13 @@ el bloque nuevo). Por eso **`Ta` crece** con cada bloque — el último (5 días
 completos) es el más pesado. La estabilidad la fija el **último** bloque:
 `Sa > Ta_último`. Usa `-verbose` para ver la curva de `Ta` creciendo.
 
-## Requisitos
+## Requisitos (mide con la BD)
 
-1. **Planificador corriendo** con el dataset cargado (lee de los archivos `.txt`).
-2. El endpoint `POST /api/planificacion/benchmark` (incluido en esta rama).
+1. **Servicio de Consultas** (`:8085`) conectado a la BD local (envíos con `registro_utc`).
+2. **Planificador** (`:8084`) con el endpoint `POST /api/planificacion/desde-datos`.
+3. Aeropuertos/vuelos accesibles para el planificador (archivos, son pequeños).
+
+Flujo que mide por bloque (acumulativo): `GET consultas/envios?ini=t0&fin=H` → `POST planificador/desde-datos` → cronometra el GVNS = **Ta**.
 
 ### Levantar el Planificador apuntando al dataset
 
@@ -62,6 +65,7 @@ go run . -fecha 2026-07-20T08:15 -dias 5 -sc 120,240,480,720 -muestras 8
 | Flag | Default | Descripción |
 |---|---|---|
 | `-planificador` | `http://localhost:8084` | URL del Planificador |
+| `-consultas` | `http://localhost:8085` | URL del servicio de Consultas (BD) |
 | `-fecha` | `2026-07-20T08:15` | `t=0` de la Sim5D (UTC). Solo se consumen datos de aquí en adelante |
 | `-dias` | `5` | días a simular (Sim5D = 5) |
 | `-criterio` | `EDF` | `EDF` \| `FIFO` \| `ALEATORIO` |

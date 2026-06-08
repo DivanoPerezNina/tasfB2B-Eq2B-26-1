@@ -24,6 +24,7 @@ import (
 
 var (
 	planificador = flag.String("planificador", "http://localhost:8084", "URL del Planificador")
+	consultas    = flag.String("consultas", "http://localhost:8085", "URL del servicio de Consultas (BD)")
 	fechaStr     = flag.String("fecha", "2026-07-20T08:15", "t=0 de la Sim5D (YYYY-MM-DDTHH:MM, interpretada como UTC)")
 	dias         = flag.Int("dias", 5, "días a simular (Sim5D = 5)")
 	criterio     = flag.String("criterio", "EDF", "criterio GVNS: EDF | FIFO | ALEATORIO")
@@ -34,16 +35,21 @@ var (
 	verbose      = flag.Bool("verbose", false, "imprime la curva Ta por bloque (horizonte acumulado)")
 )
 
-// ── Respuesta del endpoint benchmark ─────────────────────────────────────────
+// ── Respuestas ───────────────────────────────────────────────────────────────
 
-// El Planificador devuelve el JSON PLANO (sin envelope {data:...} como el BFF).
-type benchResp struct {
-	TotalEnvios int     `json:"totalEnvios"`
-	Exitosos    int     `json:"exitosos"`
-	Rechazados  int     `json:"rechazados"`
-	TaSeg       float64 `json:"taSeg"`
-	Fase2Seg    float64 `json:"fase2Seg"`
-	Fase3Seg    float64 `json:"fase3Seg"`
+// Respuesta del servicio de Consultas (GET /envios).
+type consultaResp struct {
+	Total  int               `json:"total"`
+	Envios []json.RawMessage `json:"envios"` // se reenvían tal cual al planificador
+}
+
+// Resumen del plan que devuelve el Planificador (POST /planificacion/desde-datos).
+type planResp struct {
+	Resumen struct {
+		TotalEnvios int `json:"totalEnvios"`
+		Exitosos    int `json:"exitosos"`
+		Rechazados  int `json:"rechazados"`
+	} `json:"resumen"`
 }
 
 func main() {
@@ -110,23 +116,22 @@ func evaluarSc(t0, totalMin, sc int64) {
 	var enviosUltimo, rechUltimo int
 	medidos := 0
 	for _, i := range indices {
-		ini := t0
 		fin := t0 + int64(i+1)*sc // ACUMULATIVO: horizonte creciente desde t0
-		r, err := medirBloque(ini, fin)
+		taSeg, total, rech, err := medirBloque(t0, fin)
 		if err != nil {
 			fmt.Printf("  [Sc=%d bloque %d] error: %v\n", sc, i, err)
 			continue
 		}
 		if medidos == 0 {
-			taPrimero = r.TaSeg
+			taPrimero = taSeg
 		}
-		taUltimo = r.TaSeg // el último medido = mayor horizonte
-		enviosUltimo = r.TotalEnvios
-		rechUltimo = r.Rechazados
+		taUltimo = taSeg // el último medido = mayor horizonte
+		enviosUltimo = total
+		rechUltimo = rech
 		medidos++
 		if *verbose {
 			fmt.Printf("    bloque %3d/%d  horizonte=%5d min  envíos=%-7d Ta=%.3fs\n",
-				i+1, nBloques, int64(i+1)*sc, r.TotalEnvios, r.TaSeg)
+				i+1, nBloques, int64(i+1)*sc, total, taSeg)
 		}
 	}
 	if medidos == 0 {
@@ -162,12 +167,40 @@ func evaluarSc(t0, totalMin, sc int64) {
 		sc, nBloques, enviosUltimo, taPrimero, taUltimo, rechUltimo, saMin, kMin, veredicto)
 }
 
-func medirBloque(iniUTC, finUTC int64) (*benchResp, error) {
+// medirBloque consulta los envíos de [t0, fin) en la BD (índice idx_registro_utc)
+// y los planifica con el GVNS, midiendo el wall-time de la planificación (Ta).
+// Refleja el costo REAL por bloque del esquema Sa/Sc con la BD.
+func medirBloque(t0, fin int64) (taSeg float64, total, rech int, err error) {
+	// 1) Consultar los envíos de la ventana (rápido, query indexado).
+	cr, err := getEnvios(t0, fin)
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("consultas: %w", err)
+	}
+	// 2) Planificar con esos envíos, midiendo el tiempo (Ta = el GVNS).
 	body, _ := json.Marshal(map[string]interface{}{
-		"iniUTC": iniUTC, "finUTC": finUTC, "criterio": *criterio,
+		"iniUTC": t0, "finUTC": fin, "observacionIniUTC": t0,
+		"criterio": *criterio, "envios": cr.Envios,
 	})
-	resp, err := http.Post(*planificador+"/api/planificacion/benchmark",
+	start := time.Now()
+	resp, err := http.Post(*planificador+"/api/planificacion/desde-datos",
 		"application/json", bytes.NewReader(body))
+	if err != nil {
+		return 0, 0, 0, fmt.Errorf("desde-datos: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return 0, 0, 0, fmt.Errorf("desde-datos HTTP %d", resp.StatusCode)
+	}
+	var pr planResp
+	if err := json.NewDecoder(resp.Body).Decode(&pr); err != nil {
+		return 0, 0, 0, err
+	}
+	taSeg = time.Since(start).Seconds()
+	return taSeg, pr.Resumen.TotalEnvios, pr.Resumen.Rechazados, nil
+}
+
+func getEnvios(ini, fin int64) (*consultaResp, error) {
+	resp, err := http.Get(fmt.Sprintf("%s/envios?ini=%d&fin=%d", *consultas, ini, fin))
 	if err != nil {
 		return nil, err
 	}
@@ -175,11 +208,11 @@ func medirBloque(iniUTC, finUTC int64) (*benchResp, error) {
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
-	var r benchResp
-	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
+	var cr consultaResp
+	if err := json.NewDecoder(resp.Body).Decode(&cr); err != nil {
 		return nil, err
 	}
-	return &r, nil
+	return &cr, nil
 }
 
 // fechaAMinutosUTC convierte "YYYY-MM-DDTHH:MM" (interpretada como UTC) a minutos
