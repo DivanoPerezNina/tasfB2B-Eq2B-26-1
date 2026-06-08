@@ -15,10 +15,11 @@
 #  Variables (override por entorno):
 #    DB_HOST (127.0.0.1)  DB_PORT (3306)  DB_USER (root)  DB_PASS (vacío)
 #    DB_NAME (tasfb2b)    CARGA_PORT (18082)   TEMP_DIR (/tmp/tasf)
-#    DATOS  → carpeta con aeropuertos.txt, vuelos.txt y _envios_preliminar_/
-#             OJO: los _envios_*.txt NO están en git (.gitignore — datos pesados).
-#             Apunta DATOS a donde los subiste en la VM (Drive/scp).
+#    DATOS  → carpeta con aeropuertos.txt y vuelos.txt
 #             Default: <repo>/backend/planificador/datos
+#    ENVIOS_DIR → carpeta con los _envios_*.txt (sueltos o en _envios_preliminar_/).
+#             Default: $DATOS. Úsalo si los envíos están en otra ruta.
+#             OJO: los _envios_*.txt NO están en git (.gitignore — datos pesados).
 # ============================================================================
 set -euo pipefail
 
@@ -32,6 +33,7 @@ TEMP_DIR="${TEMP_DIR:-/tmp/tasf}"
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 DATOS="${DATOS:-$REPO/backend/planificador/datos}"
+ENVIOS_DIR="${ENVIOS_DIR:-$DATOS}"
 SCHEMA="$REPO/backend/db/schema.sql"
 CARGA_URL="http://127.0.0.1:${CARGA_PORT}"
 
@@ -113,14 +115,17 @@ subir_y_esperar "/upload/vuelos" "$DATOS/vuelos.txt" "?forzar=true"
 echo ""
 echo "[5/5] Ingesta de envíos (precalculando registro_utc)..."
 shopt -s nullglob
-archivos=("$DATOS"/_envios_preliminar_/_envios_*.txt)
+# Busca los _envios_*.txt tanto sueltos en ENVIOS_DIR como dentro de
+# ENVIOS_DIR/_envios_preliminar_/ (cubre ambas formas de organizarlos).
+archivos=("$ENVIOS_DIR"/_envios_*.txt "$ENVIOS_DIR"/_envios_preliminar_/_envios_*.txt)
 total=${#archivos[@]}
 if [ "$total" = "0" ]; then
-  echo "  ✗ No se encontraron _envios_*.txt en $DATOS/_envios_preliminar_/"
-  echo "    Esos archivos NO vienen por git (.gitignore). Súbelos a la VM y"
-  echo "    re-ejecuta con:  DATOS=/ruta/a/tus/datos DB_PASS=... ./scripts/setup-db-local.sh"
+  echo "  ✗ No se encontraron _envios_*.txt en $ENVIOS_DIR (ni en su _envios_preliminar_/)."
+  echo "    Encuéntralos en la VM con:  find / -name '_envios_*.txt' 2>/dev/null | head"
+  echo "    y re-ejecuta con:  ENVIOS_DIR=/ruta/de/los/envios DB_PASS=... ./scripts/setup-db-local.sh"
   exit 1
 fi
+echo "  ($total archivos de envíos en $ENVIOS_DIR)"
 i=0
 for f in "${archivos[@]}"; do
   i=$((i+1))
