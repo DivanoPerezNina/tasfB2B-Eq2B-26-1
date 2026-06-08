@@ -346,6 +346,15 @@ public class GestorDatos {
         if (numAeropuertos == 0) {
             throw new IllegalStateException("Cargue aeropuertos antes de los envíos");
         }
+        // Dimensionar los arrays al volumen REAL de esta ventana en vez de los
+        // 20 M fijos (~560 MB). Clave para escalar a horizontes grandes sin OOM:
+        // libera los arrays gigantes por defecto y reserva solo lo necesario.
+        int n = envios.size();
+        envioOrigen      = new int [n];
+        envioDestino     = new int [n];
+        envioMaletas     = new int [n];
+        envioRegistroUTC = new long[n];
+        envioDeadlineUTC = new long[n];
         numEnvios = 0;
         for (Map<String, Object> e : envios) {
             String origen  = (String) e.get("origen");
