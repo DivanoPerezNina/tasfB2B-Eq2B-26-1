@@ -16,12 +16,31 @@ import (
 // Solo puede haber una simulación activa a la vez.
 type SimulacionHandler struct {
 	PlanificadorURL string
+	ConsultasURL    string
 	TickInterval    time.Duration
 	MaxSSEClientes  int
 
 	mu     sync.Mutex
 	activa *engine.Simulacion
+	orq    *engine.Orquestador // simulación de periodo PROGRAMADA (esquema Sa/Sc)
 	broker *sse.Broker
+}
+
+// limpiarActivos detiene y libera cualquier simulación/orquestador previo y su
+// broker SSE. Debe llamarse con h.mu tomado.
+func (h *SimulacionHandler) limpiarActivos() {
+	if h.activa != nil {
+		h.activa.Detener()
+		h.activa = nil
+	}
+	if h.orq != nil {
+		h.orq.Detener()
+		h.orq = nil
+	}
+	if h.broker != nil {
+		h.broker.Cerrar()
+		h.broker = nil
+	}
 }
 
 // ── POST /api/simulacion/iniciar ─────────────────────────────────────────────
@@ -54,25 +73,15 @@ func (h *SimulacionHandler) Iniciar(w http.ResponseWriter, r *http.Request) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	if h.activa != nil {
-		st := h.activa.GetEstado()
-		if st != "detenido" && st != "completado" {
-			errResp(w, 409, "SIMULACION_ACTIVA",
-				"Ya hay una simulación en curso. Deténgala antes.")
-			return
-		}
-		// La simulación anterior terminó (completado/detenido): limpiarla por
-		// completo antes de arrancar la nueva. Detener corta su tick loop (si
-		// quedara vivo) y Cerrar libera el broker SSE viejo, evitando que la
-		// conexión SSE del run anterior quede colgada en el proxy del BFF —
-		// causa de que la "2da simulación" no recibiera eventos.
-		h.activa.Detener()
-		if h.broker != nil {
-			h.broker.Cerrar()
-			h.broker = nil
-		}
-		h.activa = nil
+	if hayEnCurso(h.activa, h.orq) {
+		errResp(w, 409, "SIMULACION_ACTIVA",
+			"Ya hay una simulación en curso. Deténgala antes.")
+		return
 	}
+	// Limpiar por completo lo anterior (simulación u orquestador) antes de
+	// arrancar: libera el broker SSE viejo para que la nueva conexión no quede
+	// colgada en el proxy del BFF.
+	h.limpiarActivos()
 
 	umbrales := engine.Umbrales{
 		VerdeHasta: req.Umbrales.VerdeHasta,
@@ -117,11 +126,102 @@ func (h *SimulacionHandler) Iniciar(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ── POST /api/simulacion/periodo-programado ──────────────────────────────────
+//
+// Lanza la simulación de PERIODO con el esquema Sa/Sc (planificación programada).
+// Body:
+//
+//	{
+//	  "t0_utc":   29742255,   // minuto UTC de la fecha/hora elegida
+//	  "dias":     5,          // ventana visible
+//	  "sc":       240,        // min de datos por bloque
+//	  "sa_seg":   120,        // segundos reales por bloque
+//	  "warmup":   false,      // true = siembra estado previo (lookback)
+//	  "criterio": "EDF",
+//	  "umbrales": { "verde_hasta": 0.6, "ambar_hasta": 0.85 }
+//	}
+func (h *SimulacionHandler) PeriodoProgramado(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		T0UTC    int64   `json:"t0_utc"`
+		Dias     int     `json:"dias"`
+		Sc       int64   `json:"sc"`
+		SaSeg    float64 `json:"sa_seg"`
+		WarmUp   bool    `json:"warmup"`
+		Criterio string  `json:"criterio"`
+		Umbrales struct {
+			VerdeHasta float64 `json:"verde_hasta"`
+			AmbarHasta float64 `json:"ambar_hasta"`
+		} `json:"umbrales"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		errResp(w, 400, "BODY_INVALIDO", err.Error())
+		return
+	}
+	if req.T0UTC <= 0 || req.Dias < 1 || req.Sc < 1 || req.SaSeg <= 0 {
+		errResp(w, 400, "PARAM_INVALIDO", "Se requieren t0_utc, dias, sc y sa_seg válidos")
+		return
+	}
+	if req.Criterio == "" {
+		req.Criterio = "EDF"
+	}
+
+	umbrales := engine.Umbrales{VerdeHasta: req.Umbrales.VerdeHasta, AmbarHasta: req.Umbrales.AmbarHasta}
+	if umbrales.VerdeHasta == 0 {
+		umbrales.VerdeHasta = 0.60
+	}
+	if umbrales.AmbarHasta == 0 {
+		umbrales.AmbarHasta = 0.85
+	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if hayEnCurso(h.activa, h.orq) {
+		errResp(w, 409, "SIMULACION_ACTIVA", "Ya hay una simulación en curso. Deténgala antes.")
+		return
+	}
+	h.limpiarActivos()
+
+	finUTC := req.T0UTC + int64(req.Dias)*1440
+	var lookback int64
+	if req.WarmUp {
+		lookback = 3 * 1440 // 3 días, cubre el viaje más largo
+	}
+	sa := time.Duration(req.SaSeg*1000) * time.Millisecond
+
+	broker := sse.Nuevo(h.MaxSSEClientes)
+	orq := engine.NuevoOrquestador("periodo", h.ConsultasURL, h.PlanificadorURL,
+		req.T0UTC, finUTC, req.Sc, sa, lookback, req.Criterio, umbrales)
+	orq.Broadcast = broker.Publicar
+	orq.Iniciar()
+
+	h.orq = orq
+	h.broker = broker
+
+	respond(w, 202, map[string]interface{}{
+		"estado":  orq.GetEstado(),
+		"t0_utc":  req.T0UTC,
+		"fin_utc": finUTC,
+		"sc":      req.Sc,
+		"sa_seg":  req.SaSeg,
+		"bloques": (finUTC - req.T0UTC) / req.Sc,
+		"warmup":  req.WarmUp,
+		"mensaje": "Simulación de periodo (programada) iniciada",
+	})
+}
+
 // ── POST /api/simulacion/pausar ──────────────────────────────────────────────
 
 func (h *SimulacionHandler) Pausar(w http.ResponseWriter, r *http.Request) {
-	sim := h.getActiva(w)
+	h.mu.Lock()
+	orq, sim := h.orq, h.activa
+	h.mu.Unlock()
+	if orq != nil {
+		orq.Pausar()
+		respond(w, 200, map[string]string{"estado": "pausado"})
+		return
+	}
 	if sim == nil {
+		errResp(w, 404, "SIN_SIMULACION", "No hay simulación activa")
 		return
 	}
 	if err := sim.Pausar(); err != nil {
@@ -134,8 +234,16 @@ func (h *SimulacionHandler) Pausar(w http.ResponseWriter, r *http.Request) {
 // ── POST /api/simulacion/reanudar ────────────────────────────────────────────
 
 func (h *SimulacionHandler) Reanudar(w http.ResponseWriter, r *http.Request) {
-	sim := h.getActiva(w)
+	h.mu.Lock()
+	orq, sim := h.orq, h.activa
+	h.mu.Unlock()
+	if orq != nil {
+		orq.Reanudar()
+		respond(w, 200, map[string]string{"estado": "ejecutando"})
+		return
+	}
 	if sim == nil {
+		errResp(w, 404, "SIN_SIMULACION", "No hay simulación activa")
 		return
 	}
 	if err := sim.Reanudar(); err != nil {
@@ -149,13 +257,36 @@ func (h *SimulacionHandler) Reanudar(w http.ResponseWriter, r *http.Request) {
 
 func (h *SimulacionHandler) Detener(w http.ResponseWriter, r *http.Request) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
-	if h.activa == nil {
+	orq, sim := h.orq, h.activa
+	h.mu.Unlock()
+	if orq != nil {
+		orq.Detener()
+		respond(w, 200, map[string]string{"estado": "detenido"})
+		return
+	}
+	if sim == nil {
 		errResp(w, 404, "SIN_SIMULACION", "No hay simulación activa")
 		return
 	}
-	h.activa.Detener()
+	sim.Detener()
 	respond(w, 200, map[string]string{"estado": "detenido"})
+}
+
+// hayEnCurso indica si una simulación u orquestador sigue activo (no terminal).
+func hayEnCurso(sim *engine.Simulacion, orq *engine.Orquestador) bool {
+	if sim != nil {
+		st := sim.GetEstado()
+		if st != "detenido" && st != "completado" {
+			return true
+		}
+	}
+	if orq != nil {
+		st := orq.GetEstado()
+		if st != "detenido" && st != "completado" {
+			return true
+		}
+	}
+	return false
 }
 
 // ── GET /api/simulacion/estado ───────────────────────────────────────────────

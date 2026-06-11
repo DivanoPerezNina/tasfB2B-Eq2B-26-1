@@ -76,6 +76,7 @@ interface SimulationContextType {
   // ── Acciones ──
   updateConfig: (patch: Partial<SimulationConfig>) => void;
   iniciarPlanificacion: (overrides?: Partial<Pick<SimulationConfig, 'startDate' | 'dias' | 'criterio' | 'duracionRealMin' | 'warmUp'>>) => Promise<void>;
+  iniciarPeriodoProgramado: (overrides?: Partial<Pick<SimulationConfig, 'startDate' | 'dias' | 'criterio' | 'warmUp'>>) => Promise<void>;
   iniciarSimulacion: () => Promise<void>;
   pausarSimulacion: () => Promise<void>;
   reanudarSimulacion: () => Promise<void>;
@@ -397,6 +398,112 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }
   }, [jobId]);
 
+  // ─── Iniciar simulación de PERIODO programada (esquema Sa/Sc) ──────────────
+  // Un solo paso: lanza el orquestador del Ejecutor, que cada Sa consulta el
+  // bloque [t0, H] a la BD, planifica (desde-datos) y emite el estado por SSE.
+  const iniciarPeriodoProgramado = useCallback(async (
+    overrides?: Partial<Pick<SimulationConfig, 'startDate' | 'dias' | 'criterio' | 'warmUp'>>
+  ) => {
+    const efectivo = { ...config, ...overrides };
+    setErrorMsg(null);
+    setPlanTramos([]); setPlanResumen(null); setPlanVisualCargado(false);
+    setProgresoPct(0);
+
+    // Fecha elegida → minuto epoch UTC (GMT=0, igual que el planificador).
+    const d = efectivo.startDate;
+    const t0utc = Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes()) / 60000);
+    // Valores calibrados: 30 bloques → ~60 min reales (Sa=120s, Sc = dias·48).
+    const sc    = efectivo.dias * 48;
+    const saSeg = 120;
+
+    try {
+      const res = await fetch(`${BFF}/api/simulacion/periodo-programado`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          t0_utc:  t0utc,
+          dias:    efectivo.dias,
+          sc,
+          sa_seg:  saSeg,
+          warmup:  efectivo.warmUp ?? false,
+          criterio: efectivo.criterio ?? 'EDF',
+          umbrales: {
+            verde_hasta: config.thresholds.warehouse.green  / 100,
+            ambar_hasta: config.thresholds.warehouse.yellow / 100,
+          },
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.mensaje ?? data.error ?? `HTTP ${res.status}`);
+
+      setJobId('periodo');
+      setFase('ejecutando');
+      console.log(`[Periodo] iniciado | t0=${t0utc} dias=${efectivo.dias} sc=${sc} sa=${saSeg}s bloques=${data.bloques} warmup=${efectivo.warmUp}`);
+
+      if (esRef.current) esRef.current.close();
+      sseErroresRef.current = 0;
+      const es = new EventSource(`${BFF}/api/simulacion/eventos`);
+      esRef.current = es;
+      es.addEventListener('open', () => { sseErroresRef.current = 0; });
+
+      es.addEventListener('tick', (e: MessageEvent) => {
+        sseErroresRef.current = 0;
+        const dd = JSON.parse(e.data);
+        setTiempoSimUTC(dd.tiempo_sim_utc);
+        setProgresoPct(parseFloat(dd.progreso_pct ?? '0'));
+        if (dd.contadores) setContadores(dd.contadores);
+        console.log(`[Periodo] bloque ${dd.bloque}/${dd.bloques} | Ta=${dd.ta_seg}s | ${dd.progreso_pct}%`, dd.contadores);
+      });
+
+      es.addEventListener('aeropuertos', (e: MessageEvent) => {
+        setAeropuertos(JSON.parse(e.data));
+      });
+
+      // Vuelos activos en H → tramos para que el mapa los dibuje.
+      es.addEventListener('vuelos', (e: MessageEvent) => {
+        const vuelos = JSON.parse(e.data);
+        const tramos: PlanTramoVisual[] = (Array.isArray(vuelos) ? vuelos : []).map((v: any, i: number) => ({
+          envioIndice: i, tramoIndex: 0,
+          desde: String(v.desde ?? '').toUpperCase(),
+          hasta: String(v.hasta ?? '').toUpperCase(),
+          salidaUTC: Number(v.salidaUTC), llegadaUTC: Number(v.llegadaUTC),
+          maletas: Number(v.maletas ?? 1),
+        }));
+        setPlanTramos(tramos);
+        setPlanVisualCargado(true);
+      });
+
+      es.addEventListener('completado', (e: MessageEvent) => {
+        const dd = JSON.parse(e.data);
+        if (dd.contadores) setContadores(dd.contadores);
+        setProgresoPct(100);
+        setFase('completado');
+        es.close(); esRef.current = null;
+        console.log('[Periodo] ✓ completado');
+      });
+
+      es.addEventListener('fallo', (e: MessageEvent) => {
+        try { const dd = JSON.parse(e.data); setErrorMsg(dd.mensaje ?? 'Fallo en la simulación'); } catch { /* */ }
+        setFase('error');
+        es.close(); esRef.current = null;
+      });
+
+      es.onerror = () => {
+        sseErroresRef.current += 1;
+        if (es.readyState === EventSource.CLOSED || sseErroresRef.current >= 5) {
+          es.close();
+          if (esRef.current === es) esRef.current = null;
+          setFase(prev => (prev === 'ejecutando' ? 'error' : prev));
+          setErrorMsg('Se perdió la conexión con la simulación (SSE).');
+        }
+      };
+
+    } catch (e: any) {
+      setFase('error');
+      setErrorMsg(e.message ?? 'Error al iniciar el periodo programado');
+    }
+  }, [config]);
+
   // ─── Pausar ───────────────────────────────────────────────────────────────
   // Solo tiene sentido en 'ejecutando'. Durante 'calentando' el backend responde
   // 409 (el warm-up no es pausable); en ese caso no tocamos la UI.
@@ -547,6 +654,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       getAirportStats,
       updateConfig,
       iniciarPlanificacion,
+      iniciarPeriodoProgramado,
       iniciarSimulacion,
       pausarSimulacion,
       reanudarSimulacion,

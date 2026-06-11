@@ -600,6 +600,37 @@ func (s *Simulacion) snapshotAeropuertos() []map[string]interface{} {
 	return out
 }
 
+// vuelosActivos devuelve los tramos EN VUELO en el instante t (salida ≤ t <
+// llegada), para que el mapa dibuje los aviones. Debe llamarse bajo s.mu.
+func (s *Simulacion) vuelosActivos(t int64) []map[string]interface{} {
+	out := make([]map[string]interface{}, 0, 256)
+	for i := range s.Envios {
+		e := &s.Envios[i]
+		if e.Estado != "en_vuelo" {
+			continue
+		}
+		for j := range e.Tramos {
+			tr := &e.Tramos[j]
+			if tr.Estado == "en_vuelo" && t >= tr.SalidaUTC && t < tr.LlegadaUTC {
+				dur := tr.LlegadaUTC - tr.SalidaUTC
+				prog := 0.0
+				if dur > 0 {
+					prog = float64(t-tr.SalidaUTC) / float64(dur)
+				}
+				out = append(out, map[string]interface{}{
+					"desde":      tr.Desde,
+					"hasta":      tr.Hasta,
+					"salidaUTC":  tr.SalidaUTC,
+					"llegadaUTC": tr.LlegadaUTC,
+					"maletas":    e.Maletas,
+					"progreso":   prog,
+				})
+			}
+		}
+	}
+	return out
+}
+
 func calcularSemaforo(a *EstadoAeropuerto, u Umbrales) string {
 	if a.CapacidadAlmacen == 0 {
 		return "verde"

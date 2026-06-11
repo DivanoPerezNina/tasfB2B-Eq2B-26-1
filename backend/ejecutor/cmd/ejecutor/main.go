@@ -14,6 +14,7 @@ func main() {
 
 	h := &handler.SimulacionHandler{
 		PlanificadorURL: cfg.PlanificadorURL,
+		ConsultasURL:    cfg.ConsultasURL,
 		TickInterval:    time.Duration(cfg.TickIntervalMs) * time.Millisecond,
 		MaxSSEClientes:  cfg.SSEMaxClientes,
 	}
@@ -22,6 +23,8 @@ func main() {
 
 	// Simulación
 	mux.HandleFunc("POST /api/simulacion/iniciar",  h.Iniciar)
+	// Simulación de PERIODO programada (esquema Sa/Sc)
+	mux.HandleFunc("POST /api/simulacion/periodo-programado", h.PeriodoProgramado)
 	mux.HandleFunc("POST /api/simulacion/pausar",   h.Pausar)
 	mux.HandleFunc("POST /api/simulacion/reanudar", h.Reanudar)
 	mux.HandleFunc("POST /api/simulacion/detener",  h.Detener)

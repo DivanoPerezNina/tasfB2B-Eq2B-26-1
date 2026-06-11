@@ -357,7 +357,7 @@ export function SimulationConfig() {
   const {
     config, updateConfig, datasetInfo,
     fase, planProgreso, planMensaje,
-    iniciarPlanificacion, iniciarSimulacion, pausarSimulacion,
+    iniciarPlanificacion, iniciarPeriodoProgramado, iniciarSimulacion, pausarSimulacion,
     reanudarSimulacion, resetear,
     contadores,
     resetSimulation,
@@ -451,16 +451,24 @@ export function SimulationConfig() {
       return;
     }
     updateConfig(localConfig);
+
+    // Periodo → esquema Sa/Sc (orquestador): un solo paso, planificación programada.
+    if (esPeriodo) {
+      iniciarPeriodoProgramado({
+        startDate: localConfig.startDate,
+        dias:      localConfig.dias,
+        criterio:  localConfig.criterio,
+        warmUp:    localConfig.warmUp,  // el usuario decide el estado inicial
+      });
+      return;
+    }
+
+    // Realtime / Colapso → flujo de planificación + ejecución (avance continuo).
     iniciarPlanificacion({
       startDate:       localConfig.startDate,
       dias:            diasEfectivos,
       criterio:        localConfig.criterio,
-      // Realtime = tiempo real → duracion 0 (el backend usa avance 1 seg sim/seg real)
       duracionRealMin: esRealtime ? 0 : localConfig.duracionRealMin,
-      // En Tiempo Real el warm-up es IMPLÍCITO y siempre activo: la idea es ver el
-      // estado de la red (aviones en vuelo, almacenes ocupados) en la fecha/hora
-      // elegida, lo que requiere reproducir el tramo previo (lookback). En Periodo
-      // el usuario decide con el toggle "Estado inicial de la red".
       warmUp:          esRealtime ? true : localConfig.warmUp,
     });
   };
@@ -705,42 +713,23 @@ export function SimulationConfig() {
                     </div>
                   )}
 
-                  {/* Duración real — solo Periodo */}
+                  {/* Duración — FIJA y calibrada (ya no editable por el usuario) */}
                   {esPeriodo && (
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <Label className="text-sm font-medium">Duración real</Label>
-                        <span className="rounded-md border border-panel-border bg-panel-section-bg px-2 py-0.5 text-sm font-semibold tabular-nums text-panel-text">
-                          {localConfig.duracionRealMin} min
-                        </span>
-                      </div>
-                      <SliderPrimitive.Root
-                        min={30} max={90} step={5}
-                        value={[localConfig.duracionRealMin]}
-                        onValueChange={([v]) => setLocalConfig({ ...localConfig, duracionRealMin: v })}
-                        className="relative flex w-full touch-none select-none items-center"
-                      >
-                        <SliderPrimitive.Track className="bg-muted relative h-2 w-full grow overflow-hidden rounded-full">
-                          <SliderPrimitive.Range className="bg-primary absolute h-full" />
-                        </SliderPrimitive.Track>
-                        <SliderPrimitive.Thumb className="border-primary bg-background ring-ring/50 block h-4 w-4 rounded-full border shadow-sm transition-shadow hover:ring-4 focus-visible:ring-4 focus-visible:outline-none dark:bg-neutral-800" />
-                      </SliderPrimitive.Root>
-                      <div className="flex justify-between text-xs text-panel-text-faint">
-                        <span>30 min</span><span>90 min</span>
-                      </div>
-                      <div className="rounded-md border border-panel-border bg-panel-section-bg px-3 py-2 text-xs space-y-1">
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium">Duración de la simulación</Label>
+                      <div className="rounded-md border border-panel-border bg-panel-section-bg px-3 py-2.5 text-xs space-y-1.5">
                         <div className="flex items-center justify-between">
-                          <span className="text-panel-text-muted">Duración real estimada</span>
-                          <span className="font-semibold text-panel-text tabular-nums">
-                            ~{localConfig.duracionRealMin} min
-                          </span>
+                          <span className="text-panel-text-muted">Duración real (fija, calibrada)</span>
+                          <span className="font-semibold text-panel-text tabular-nums">{localConfig.duracionRealMin} min</span>
                         </div>
                         <div className="flex items-center justify-between">
                           <span className="text-panel-text-muted">Velocidad efectiva</span>
-                          <span className="font-semibold text-panel-text tabular-nums">{velocidad.toFixed(2)}×</span>
+                          <span className="font-semibold text-panel-text tabular-nums">{velocidad.toFixed(2)}× ({Math.round(velocidad * 60)}× K)</span>
                         </div>
                         <p className="text-[10px] text-panel-text-faint pt-0.5">
-                          {diasEfectivos} {diasEfectivos === 1 ? 'día simulado se comprime' : 'días simulados se comprimen'} en {localConfig.duracionRealMin} minutos reales.
+                          Los saltos del algoritmo (Sa) y de datos (Sc) están calibrados para que
+                          la simulación dure ~{localConfig.duracionRealMin} min (dentro de 30–90).
+                          {' '}{diasEfectivos} {diasEfectivos === 1 ? 'día se comprime' : 'días se comprimen'} en {localConfig.duracionRealMin} min reales.
                         </p>
                       </div>
                     </div>
