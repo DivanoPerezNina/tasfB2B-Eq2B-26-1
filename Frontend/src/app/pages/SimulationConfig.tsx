@@ -452,7 +452,7 @@ export function SimulationConfig() {
     }
     updateConfig(localConfig);
 
-    // Periodo → esquema Sa/Sc (orquestador): un solo paso, planificación programada.
+    // Periodo → orquestador Sa/Sc: 30 bloques, Sa=120s, Sc=dias·48 (~60 min).
     if (esPeriodo) {
       iniciarPeriodoProgramado({
         startDate: localConfig.startDate,
@@ -463,13 +463,26 @@ export function SimulationConfig() {
       return;
     }
 
-    // Realtime / Colapso → flujo de planificación + ejecución (avance continuo).
+    // Tiempo Real → orquestador con K=60 (1 min-dato/seg-real): 1 día en ~24 min.
+    if (esRealtime) {
+      iniciarPeriodoProgramado({
+        startDate: localConfig.startDate,
+        dias:      1,
+        criterio:  localConfig.criterio,
+        warmUp:    localConfig.warmUp,
+        scMin:     60,   // Sc = 60 min de datos por bloque
+        saSeg:     60,   // cada 60 s reales  → K = 60
+      });
+      return;
+    }
+
+    // Colapso → flujo de planificación + ejecución (avance continuo).
     iniciarPlanificacion({
       startDate:       localConfig.startDate,
       dias:            diasEfectivos,
       criterio:        localConfig.criterio,
-      duracionRealMin: esRealtime ? 0 : localConfig.duracionRealMin,
-      warmUp:          esRealtime ? true : localConfig.warmUp,
+      duracionRealMin: localConfig.duracionRealMin,
+      warmUp:          localConfig.warmUp,
     });
   };
 

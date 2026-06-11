@@ -8,6 +8,7 @@ import React, {
 } from 'react';
 import {
   SimulationConfig,
+  CriterioOrden,
   FaseSimulacion,
   Contadores,
   AeropuertoEstado,
@@ -76,7 +77,7 @@ interface SimulationContextType {
   // ── Acciones ──
   updateConfig: (patch: Partial<SimulationConfig>) => void;
   iniciarPlanificacion: (overrides?: Partial<Pick<SimulationConfig, 'startDate' | 'dias' | 'criterio' | 'duracionRealMin' | 'warmUp'>>) => Promise<void>;
-  iniciarPeriodoProgramado: (overrides?: Partial<Pick<SimulationConfig, 'startDate' | 'dias' | 'criterio' | 'warmUp'>>) => Promise<void>;
+  iniciarPeriodoProgramado: (opts: { startDate: Date; dias: number; criterio?: CriterioOrden; warmUp?: boolean; scMin?: number; saSeg?: number }) => Promise<void>;
   iniciarSimulacion: () => Promise<void>;
   pausarSimulacion: () => Promise<void>;
   reanudarSimulacion: () => Promise<void>;
@@ -402,9 +403,9 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   // Un solo paso: lanza el orquestador del Ejecutor, que cada Sa consulta el
   // bloque [t0, H] a la BD, planifica (desde-datos) y emite el estado por SSE.
   const iniciarPeriodoProgramado = useCallback(async (
-    overrides?: Partial<Pick<SimulationConfig, 'startDate' | 'dias' | 'criterio' | 'warmUp'>>
+    opts: { startDate: Date; dias: number; criterio?: CriterioOrden; warmUp?: boolean; scMin?: number; saSeg?: number }
   ) => {
-    const efectivo = { ...config, ...overrides };
+    const efectivo = { ...config, ...opts };
     setErrorMsg(null);
     setPlanTramos([]); setPlanResumen(null); setPlanVisualCargado(false);
     setProgresoPct(0);
@@ -412,9 +413,10 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     // Fecha elegida → minuto epoch UTC (GMT=0, igual que el planificador).
     const d = efectivo.startDate;
     const t0utc = Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes()) / 60000);
-    // Valores calibrados: 30 bloques → ~60 min reales (Sa=120s, Sc = dias·48).
-    const sc    = efectivo.dias * 48;
-    const saSeg = 120;
+    // Valores calibrados (por defecto Periodo): 30 bloques → ~60 min (Sa=120s, Sc=dias·48).
+    // Tiempo Real los sobreescribe con Sc=60, Sa=60s (K=60: 1 min-dato/seg-real).
+    const sc    = opts.scMin ?? (efectivo.dias * 48);
+    const saSeg = opts.saSeg ?? 120;
 
     try {
       const res = await fetch(`${BFF}/api/simulacion/periodo-programado`, {
