@@ -600,6 +600,28 @@ func (s *Simulacion) snapshotAeropuertos() []map[string]interface{} {
 	return out
 }
 
+// todosLosTramos devuelve todos los tramos del plan (para que el mapa los anime
+// con el reloj continuo). Debe llamarse bajo s.mu.
+func (s *Simulacion) todosLosTramos() []map[string]interface{} {
+	out := make([]map[string]interface{}, 0, 1024)
+	for i := range s.Envios {
+		e := &s.Envios[i]
+		for j := range e.Tramos {
+			tr := &e.Tramos[j]
+			out = append(out, map[string]interface{}{
+				"envioIndice": e.Indice,
+				"tramoIndex":  j,
+				"desde":       tr.Desde,
+				"hasta":       tr.Hasta,
+				"salidaUTC":   tr.SalidaUTC,
+				"llegadaUTC":  tr.LlegadaUTC,
+				"maletas":     e.Maletas,
+			})
+		}
+	}
+	return out
+}
+
 // vuelosActivos devuelve los tramos EN VUELO en el instante t (salida ≤ t <
 // llegada), para que el mapa dibuje los aviones. Debe llamarse bajo s.mu.
 func (s *Simulacion) vuelosActivos(t int64) []map[string]interface{} {

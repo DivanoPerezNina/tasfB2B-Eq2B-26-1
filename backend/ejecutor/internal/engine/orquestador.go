@@ -129,13 +129,28 @@ func (o *Orquestador) Detener() {
 func (o *Orquestador) run() {
 	defer close(o.doneCh)
 
-	nBloques := int((o.FinUTC - o.T0UTC) / o.Sc)
-	if nBloques < 1 {
-		nBloques = 1
-	}
+	// Reloj de VISUALIZACIÓN continuo: avanza Sc minutos de datos por cada Sa
+	// segundos reales → avance por segundo = Sc / Sa (min-dato/seg).
+	avance := float64(o.Sc) / o.Sa.Seconds()
+	proximoH := o.T0UTC + o.Sc // se re-planifica cuando el reloj cruza este umbral
 
-	for i := 1; i <= nBloques; i++ {
-		// Control: detener / pausar.
+	// Plan inicial: bloque [iniPlan, t0+Sc].
+	finIni := o.T0UTC + o.Sc
+	if finIni > o.FinUTC {
+		finIni = o.FinUTC
+	}
+	sim, err := o.planificarYcargar(finIni, o.T0UTC)
+	if err != nil {
+		o.Broadcast("fallo", map[string]interface{}{"mensaje": err.Error()})
+		return
+	}
+	o.emitirTramos(sim)
+
+	tiempo := float64(o.T0UTC)
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	for {
 		select {
 		case <-o.stopCh:
 			return
@@ -145,75 +160,90 @@ func (o *Orquestador) run() {
 			case <-o.stopCh:
 				return
 			}
-		default:
-		}
+		case <-ticker.C:
+			tiempo += avance
+			if tiempo > float64(o.FinUTC) {
+				tiempo = float64(o.FinUTC)
+			}
+			t := int64(tiempo)
 
-		H := o.T0UTC + int64(i)*o.Sc
-		if H > o.FinUTC {
-			H = o.FinUTC
-		}
+			// Re-planificación PROGRAMADA: cada vez que el reloj cruza un bloque
+			// (Sc), se consulta+planifica el siguiente tramo de datos y se manda
+			// el plan completo al mapa. Aquí está el delay (Ta) del esquema.
+			for t >= proximoH && proximoH < o.FinUTC {
+				nuevoFin := proximoH + o.Sc
+				if nuevoFin > o.FinUTC {
+					nuevoFin = o.FinUTC
+				}
+				nsim, err := o.planificarYcargar(nuevoFin, t)
+				if err != nil {
+					o.Broadcast("fallo", map[string]interface{}{"mensaje": err.Error()})
+					return
+				}
+				sim = nsim
+				o.emitirTramos(sim)
+				proximoH += o.Sc
+			}
 
-		inicioReal := time.Now()
+			// Avanzar el estado al instante actual y emitir (cada segundo).
+			sim.mu.Lock()
+			sim.TiempoSimUTC = tiempo
+			sim.procesarEventos(t)
+			aeropuertos := sim.snapshotAeropuertos()
+			cont := sim.calcularContadores()
+			sim.mu.Unlock()
 
-		// 1) Consultar envíos del bloque acumulado [iniPlan, H].
-		envios, err := o.consultar(o.IniPlanUTC, H)
-		if err != nil {
-			o.Broadcast("fallo", map[string]interface{}{"mensaje": "consultas: " + err.Error()})
-			return
-		}
-		// 2) Planificar (el Planificador no toca BD ni archivos).
-		planJSON, err := o.planificar(envios, o.IniPlanUTC, H)
-		if err != nil {
-			o.Broadcast("fallo", map[string]interface{}{"mensaje": "desde-datos: " + err.Error()})
-			return
-		}
-		// 3) Reconstruir el estado de la red en el instante H.
-		sim, err := Nueva("blk", planJSON, 0, o.Umbrales, time.Second)
-		if err != nil {
-			o.Broadcast("fallo", map[string]interface{}{"mensaje": "estado: " + err.Error()})
-			return
-		}
-		sim.mu.Lock()
-		sim.TiempoSimUTC = float64(H)
-		sim.procesarEventos(H)
-		aeropuertos := sim.snapshotAeropuertos()
-		contadores := sim.calcularContadores()
-		vuelos := sim.vuelosActivos(H)
-		sim.mu.Unlock()
+			progreso := (tiempo - float64(o.T0UTC)) / float64(o.FinUTC-o.T0UTC) * 100.0
+			if progreso > 100 {
+				progreso = 100
+			}
+			o.Broadcast("tick", map[string]interface{}{
+				"tiempo_sim_utc": t,
+				"progreso_pct":   fmt.Sprintf("%.1f", progreso),
+				"contadores":     cont,
+			})
+			o.Broadcast("aeropuertos", aeropuertos)
 
-		taSeg := time.Since(inicioReal).Seconds()
-		progreso := float64(i) / float64(nBloques) * 100.0
-
-		// 4) Emitir el estado por SSE (mismos eventos que el front ya consume).
-		o.Broadcast("tick", map[string]interface{}{
-			"tiempo_sim_utc": H,
-			"progreso_pct":   fmt.Sprintf("%.1f", progreso),
-			"bloque":         i,
-			"bloques":        nBloques,
-			"ta_seg":         fmt.Sprintf("%.3f", taSeg),
-			"contadores":     contadores,
-		})
-		o.Broadcast("aeropuertos", aeropuertos)
-		o.Broadcast("vuelos", vuelos)
-
-		if H >= o.FinUTC {
-			break
-		}
-
-		// 5) Esperar (Sa − Ta) para mantener el ritmo del esquema.
-		espera := o.Sa - time.Since(inicioReal)
-		if espera > 0 {
-			select {
-			case <-time.After(espera):
-			case <-o.stopCh:
+			if t >= o.FinUTC {
+				o.setEstado("completado")
+				o.Broadcast("completado", map[string]interface{}{
+					"mensaje": "Simulación de periodo completada", "contadores": cont,
+				})
 				return
 			}
 		}
-		// Si Ta > Sa, no se espera: es la señal de "caída de la solución".
 	}
+}
 
-	o.setEstado("completado")
-	o.Broadcast("completado", map[string]interface{}{"mensaje": "Simulación de periodo completada"})
+// planificarYcargar consulta [iniPlan, fin], planifica (desde-datos) y carga el
+// plan en una Simulacion posicionada en el instante t.
+func (o *Orquestador) planificarYcargar(fin, t int64) (*Simulacion, error) {
+	envios, err := o.consultar(o.IniPlanUTC, fin)
+	if err != nil {
+		return nil, fmt.Errorf("consultas: %w", err)
+	}
+	planJSON, err := o.planificar(envios, o.IniPlanUTC, fin)
+	if err != nil {
+		return nil, fmt.Errorf("desde-datos: %w", err)
+	}
+	sim, err := Nueva("blk", planJSON, 0, o.Umbrales, time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("estado: %w", err)
+	}
+	sim.mu.Lock()
+	sim.TiempoSimUTC = float64(t)
+	sim.procesarEventos(t)
+	sim.mu.Unlock()
+	return sim, nil
+}
+
+// emitirTramos envía TODOS los tramos del plan actual para que el mapa anime
+// los aviones de forma continua (con cada tick el reloj avanza y los mueve).
+func (o *Orquestador) emitirTramos(sim *Simulacion) {
+	sim.mu.RLock()
+	tramos := sim.todosLosTramos()
+	sim.mu.RUnlock()
+	o.Broadcast("plan-tramos", tramos)
 }
 
 // ─── Llamadas a los servicios ────────────────────────────────────────────────

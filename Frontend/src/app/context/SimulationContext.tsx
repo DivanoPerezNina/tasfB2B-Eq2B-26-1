@@ -461,18 +461,20 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         setAeropuertos(JSON.parse(e.data));
       });
 
-      // Vuelos activos en H → tramos para que el mapa los dibuje.
-      es.addEventListener('vuelos', (e: MessageEvent) => {
-        const vuelos = JSON.parse(e.data);
-        const tramos: PlanTramoVisual[] = (Array.isArray(vuelos) ? vuelos : []).map((v: any, i: number) => ({
-          envioIndice: i, tramoIndex: 0,
+      // Plan completo del bloque actual → el mapa anima los aviones con el reloj
+      // (cada 'tick' avanza el tiempo y getActiveFlightsFromPlan recalcula posiciones).
+      es.addEventListener('plan-tramos', (e: MessageEvent) => {
+        const arr = JSON.parse(e.data);
+        const tramos: PlanTramoVisual[] = (Array.isArray(arr) ? arr : []).map((v: any) => ({
+          envioIndice: Number(v.envioIndice ?? 0), tramoIndex: Number(v.tramoIndex ?? 0),
           desde: String(v.desde ?? '').toUpperCase(),
           hasta: String(v.hasta ?? '').toUpperCase(),
           salidaUTC: Number(v.salidaUTC), llegadaUTC: Number(v.llegadaUTC),
           maletas: Number(v.maletas ?? 1),
-        }));
+        })).filter(t => Number.isFinite(t.salidaUTC) && Number.isFinite(t.llegadaUTC) && t.llegadaUTC > t.salidaUTC);
         setPlanTramos(tramos);
         setPlanVisualCargado(true);
+        console.log(`[Periodo] plan actualizado: ${tramos.length} tramos`);
       });
 
       es.addEventListener('completado', (e: MessageEvent) => {
