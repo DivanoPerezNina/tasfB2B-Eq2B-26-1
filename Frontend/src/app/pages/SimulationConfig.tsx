@@ -357,7 +357,7 @@ export function SimulationConfig() {
   const {
     config, updateConfig, datasetInfo,
     fase, planProgreso, planMensaje,
-    iniciarPlanificacion, iniciarPeriodoProgramado, iniciarSimulacion, pausarSimulacion,
+    iniciarPlanificacion, iniciarPeriodoProgramado, iniciarColapsoProgramado, iniciarSimulacion, pausarSimulacion,
     reanudarSimulacion, resetear,
     contadores,
     resetSimulation,
@@ -476,13 +476,17 @@ export function SimulationConfig() {
       return;
     }
 
-    // Colapso → flujo de planificación + ejecución (avance continuo).
-    iniciarPlanificacion({
-      startDate:       localConfig.startDate,
-      dias:            diasEfectivos,
-      criterio:        localConfig.criterio,
-      duracionRealMin: localConfig.duracionRealMin,
-      warmUp:          localConfig.warmUp,
+    // Colapso → inicia el nuevo endpoint de colapso del BFF/Ejecutor.
+    iniciarColapsoProgramado({
+      startDate:              localConfig.startDate,
+      criterio:               localConfig.criterio,
+      warmUp:                 localConfig.warmUp,
+      k:                      localConfig.speed > 1 ? localConfig.speed : 75,
+      saSeg:                  120,
+      maxDias:                540,
+      umbralColapso:          0.85,
+      umbralRechazosPct:      0.30,
+      bloquesRojoConsecutivos: 3,
     });
   };
 
