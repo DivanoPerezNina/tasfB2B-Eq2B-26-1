@@ -78,6 +78,7 @@ interface SimulationContextType {
   updateConfig: (patch: Partial<SimulationConfig>) => void;
   iniciarPlanificacion: (overrides?: Partial<Pick<SimulationConfig, 'startDate' | 'dias' | 'criterio' | 'duracionRealMin' | 'warmUp'>>) => Promise<void>;
   iniciarPeriodoProgramado: (opts: { startDate: Date; dias: number; criterio?: CriterioOrden; warmUp?: boolean; scMin?: number; saSeg?: number }) => Promise<void>;
+  iniciarColapsoProgramado: (opts: { startDate: Date; criterio?: CriterioOrden; warmUp?: boolean; k?: number; saSeg?: number; maxDias?: number; umbralColapso?: number; umbralRechazosPct?: number; bloquesRojoConsecutivos?: number }) => Promise<void>;
   iniciarSimulacion: () => Promise<void>;
   pausarSimulacion: () => Promise<void>;
   reanudarSimulacion: () => Promise<void>;
@@ -399,6 +400,146 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }
   }, [jobId]);
 
+  const attachSimulationEventSourceListeners = (es: EventSource, scenario: SimulationScenario) => {
+    es.addEventListener('open', () => { sseErroresRef.current = 0; });
+
+    es.addEventListener('aeropuertos', (e: MessageEvent) => {
+      setAeropuertos(JSON.parse(e.data));
+    });
+
+    es.addEventListener('tick', (e: MessageEvent) => {
+      sseErroresRef.current = 0;
+      const d = JSON.parse(e.data);
+      setTiempoSimUTC(d.tiempo_sim_utc);
+      setProgresoPct(parseFloat(d.progreso_pct ?? '0'));
+      if (d.contadores) setContadores(d.contadores);
+      console.log(
+        `[Sim:${scenario}] tick=${d.tick} | ${new Date(d.tiempo_sim_utc * 60 * 1000).toISOString().slice(0,16).replace('T',' ')} | ${d.progreso_pct}%`,
+        d.contadores,
+      );
+    });
+
+    es.addEventListener('plan-tramos', (e: MessageEvent) => {
+      const arr = JSON.parse(e.data);
+      const tramos: PlanTramoVisual[] = (Array.isArray(arr) ? arr : []).map((v: any) => ({
+        envioIndice: Number(v.envioIndice ?? 0), tramoIndex: Number(v.tramoIndex ?? 0),
+        desde: String(v.desde ?? '').toUpperCase(),
+        hasta: String(v.hasta ?? '').toUpperCase(),
+        salidaUTC: Number(v.salidaUTC), llegadaUTC: Number(v.llegadaUTC),
+        maletas: Number(v.maletas ?? 1),
+      })).filter(t => Number.isFinite(t.salidaUTC) && Number.isFinite(t.llegadaUTC) && t.llegadaUTC > t.salidaUTC);
+      setPlanTramos(tramos);
+      setPlanVisualCargado(true);
+      console.log(`[Sim:${scenario}] plan-tramos actualizado: ${tramos.length} tramos`);
+    });
+
+    es.addEventListener('completado', (e: MessageEvent) => {
+      const d = JSON.parse(e.data);
+      if (d.contadores) setContadores(d.contadores);
+      setProgresoPct(100);
+      setFase('completado');
+      es.close();
+      if (esRef.current === es) esRef.current = null;
+      console.log(`[Sim:${scenario}] ✓ completado`, d.contadores);
+    });
+
+    es.addEventListener('fallo', (e: MessageEvent) => {
+      try { const d = JSON.parse(e.data); setErrorMsg(d.mensaje ?? 'Fallo en la simulación'); } catch { /* */ }
+      setFase('error');
+      es.close();
+      if (esRef.current === es) esRef.current = null;
+    });
+
+    if (scenario === 'collapse') {
+      es.addEventListener('colapso', (e: MessageEvent) => {
+        const d = JSON.parse(e.data);
+        if (d.contadores) setContadores(d.contadores);
+        setFase('completado');
+        setProgresoPct(100);
+        setPlanResumen(prev => prev ?? ({
+          totalEnvios: d.total_envios,
+          exitosos: d.exitosos,
+          rechazados: d.rechazados ?? d.contadores?.rechazado,
+          ventanaIniUTC: d.t0_utc,
+          ventanaFinUTC: d.fin_utc,
+        }));
+        console.log('[Sim:collapse] colapso detectado:', {
+          tipo: d.tipo ?? d.type,
+          motivo: d.motivo ?? d.reason,
+          aeropuerto: d.aeropuerto ?? d.airport,
+          ocupacion: d.ocupacion ?? d.occupancy,
+          ta_seg: d.ta_seg,
+          sa_seg: d.sa_seg,
+        });
+        es.close();
+        if (esRef.current === es) esRef.current = null;
+      });
+    }
+
+    es.onerror = () => {
+      sseErroresRef.current += 1;
+      if (es.readyState === EventSource.CLOSED || sseErroresRef.current >= 5) {
+        es.close();
+        if (esRef.current === es) esRef.current = null;
+        setFase(prev => (prev === 'ejecutando' || prev === 'calentando' ? 'error' : prev));
+        setErrorMsg('Se perdió la conexión con la simulación (SSE).');
+      }
+    };
+  };
+
+  const iniciarColapsoProgramado = useCallback(async (
+    opts: { startDate: Date; criterio?: CriterioOrden; warmUp?: boolean; k?: number; saSeg?: number; maxDias?: number; umbralColapso?: number; umbralRechazosPct?: number; bloquesRojoConsecutivos?: number }
+  ) => {
+    const efectivo = { ...config, ...opts };
+    setErrorMsg(null);
+    setPlanTramos([]);
+    setPlanResumen(null);
+    setPlanVisualCargado(false);
+    setProgresoPct(0);
+
+    const d = efectivo.startDate;
+    const t0utc = Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes()) / 60000);
+
+    try {
+      const res = await fetch(`${BFF}/api/simulacion/colapso`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          t0_utc: t0utc,
+          sa_seg: efectivo.saSeg ?? 120,
+          k: efectivo.k ?? 75,
+          max_dias: efectivo.maxDias ?? 540,
+          warmup: efectivo.warmUp ?? true,
+          criterio: efectivo.criterio ?? 'EDF',
+          umbral_colapso: efectivo.umbralColapso ?? 0.85,
+          umbral_rechazos_pct: efectivo.umbralRechazosPct ?? 0.30,
+          bloques_rojo_consecutivos: efectivo.bloquesRojoConsecutivos ?? 3,
+          umbrales: {
+            verde_hasta: 0.60,
+            ambar_hasta: 0.85,
+          },
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.mensaje ?? data.error ?? `HTTP ${res.status}`);
+
+      setJobId('colapso');
+      setFase('ejecutando');
+      setWarmupPct(0);
+      console.log(`[Colapso] iniciado | t0=${t0utc} k=${efectivo.k ?? 75} sa=${efectivo.saSeg ?? 120}s max_dias=${efectivo.maxDias ?? 540} warmup=${efectivo.warmUp ?? true}`);
+
+      if (esRef.current) esRef.current.close();
+      sseErroresRef.current = 0;
+      const es = new EventSource(`${BFF}/api/simulacion/eventos`);
+      esRef.current = es;
+      attachSimulationEventSourceListeners(es, 'collapse');
+    } catch (e: any) {
+      setFase('error');
+      setErrorMsg(e.message ?? 'Error al iniciar el colapso programado');
+    }
+  }, [config]);
+
   // ─── Iniciar simulación de PERIODO programada (esquema Sa/Sc) ──────────────
   // Un solo paso: lanza el orquestador del Ejecutor, que cada Sa consulta el
   // bloque [t0, H] a la BD, planifica (desde-datos) y emite el estado por SSE.
@@ -446,61 +587,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       sseErroresRef.current = 0;
       const es = new EventSource(`${BFF}/api/simulacion/eventos`);
       esRef.current = es;
-      es.addEventListener('open', () => { sseErroresRef.current = 0; });
-
-      es.addEventListener('tick', (e: MessageEvent) => {
-        sseErroresRef.current = 0;
-        const dd = JSON.parse(e.data);
-        setTiempoSimUTC(dd.tiempo_sim_utc);
-        setProgresoPct(parseFloat(dd.progreso_pct ?? '0'));
-        if (dd.contadores) setContadores(dd.contadores);
-        console.log(`[Periodo] bloque ${dd.bloque}/${dd.bloques} | Ta=${dd.ta_seg}s | ${dd.progreso_pct}%`, dd.contadores);
-      });
-
-      es.addEventListener('aeropuertos', (e: MessageEvent) => {
-        setAeropuertos(JSON.parse(e.data));
-      });
-
-      // Plan completo del bloque actual → el mapa anima los aviones con el reloj
-      // (cada 'tick' avanza el tiempo y getActiveFlightsFromPlan recalcula posiciones).
-      es.addEventListener('plan-tramos', (e: MessageEvent) => {
-        const arr = JSON.parse(e.data);
-        const tramos: PlanTramoVisual[] = (Array.isArray(arr) ? arr : []).map((v: any) => ({
-          envioIndice: Number(v.envioIndice ?? 0), tramoIndex: Number(v.tramoIndex ?? 0),
-          desde: String(v.desde ?? '').toUpperCase(),
-          hasta: String(v.hasta ?? '').toUpperCase(),
-          salidaUTC: Number(v.salidaUTC), llegadaUTC: Number(v.llegadaUTC),
-          maletas: Number(v.maletas ?? 1),
-        })).filter(t => Number.isFinite(t.salidaUTC) && Number.isFinite(t.llegadaUTC) && t.llegadaUTC > t.salidaUTC);
-        setPlanTramos(tramos);
-        setPlanVisualCargado(true);
-        console.log(`[Periodo] plan actualizado: ${tramos.length} tramos`);
-      });
-
-      es.addEventListener('completado', (e: MessageEvent) => {
-        const dd = JSON.parse(e.data);
-        if (dd.contadores) setContadores(dd.contadores);
-        setProgresoPct(100);
-        setFase('completado');
-        es.close(); esRef.current = null;
-        console.log('[Periodo] ✓ completado');
-      });
-
-      es.addEventListener('fallo', (e: MessageEvent) => {
-        try { const dd = JSON.parse(e.data); setErrorMsg(dd.mensaje ?? 'Fallo en la simulación'); } catch { /* */ }
-        setFase('error');
-        es.close(); esRef.current = null;
-      });
-
-      es.onerror = () => {
-        sseErroresRef.current += 1;
-        if (es.readyState === EventSource.CLOSED || sseErroresRef.current >= 5) {
-          es.close();
-          if (esRef.current === es) esRef.current = null;
-          setFase(prev => (prev === 'ejecutando' ? 'error' : prev));
-          setErrorMsg('Se perdió la conexión con la simulación (SSE).');
-        }
-      };
+      attachSimulationEventSourceListeners(es, 'period');
 
     } catch (e: any) {
       setFase('error');
@@ -623,8 +710,24 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const startSimulation = useCallback(() => {
     if (fase === 'listo')   iniciarSimulacion();
     else if (fase === 'pausado') reanudarSimulacion();
-    else if (fase === 'idle')    iniciarPlanificacion();
-  }, [fase, iniciarSimulacion, reanudarSimulacion, iniciarPlanificacion]);
+    else if (fase === 'idle') {
+      if (config.scenario === 'collapse') {
+        iniciarColapsoProgramado({
+          startDate: config.startDate,
+          criterio: config.criterio,
+          warmUp: config.warmUp,
+          k: config.speed > 1 ? config.speed : 75,
+          saSeg: 120,
+          maxDias: 540,
+          umbralColapso: 0.85,
+          umbralRechazosPct: 0.30,
+          bloquesRojoConsecutivos: 3,
+        });
+      } else {
+        iniciarPlanificacion();
+      }
+    }
+  }, [fase, iniciarSimulacion, reanudarSimulacion, iniciarPlanificacion, iniciarColapsoProgramado, config]);
 
   const pauseSimulation = useCallback(() => {
     pausarSimulacion();
@@ -659,6 +762,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       updateConfig,
       iniciarPlanificacion,
       iniciarPeriodoProgramado,
+      iniciarColapsoProgramado,
       iniciarSimulacion,
       pausarSimulacion,
       reanudarSimulacion,

@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 	"sync"
@@ -54,9 +55,9 @@ func (h *SimulacionHandler) limpiarActivos() {
 //	}
 func (h *SimulacionHandler) Iniciar(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		JobID          string  `json:"job_id"`
-		DuracionReal   float64 `json:"duracion_real_min"`
-		Umbrales struct {
+		JobID        string  `json:"job_id"`
+		DuracionReal float64 `json:"duracion_real_min"`
+		Umbrales     struct {
 			VerdeHasta float64 `json:"verde_hasta"`
 			AmbarHasta float64 `json:"ambar_hasta"`
 		} `json:"umbrales"`
@@ -116,13 +117,13 @@ func (h *SimulacionHandler) Iniciar(w http.ResponseWriter, r *http.Request) {
 	h.broker = broker
 
 	respond(w, 202, map[string]interface{}{
-		"simulacion_id":         sim.ID,
-		"estado":                sim.GetEstado(),
-		"ini_utc":               sim.IniUTC,
-		"fin_utc":               sim.FinUTC,
-		"avance_por_tick_min":   fmt.Sprintf("%.4f", sim.AvancePorTick),
-		"total_envios":          len(sim.Envios),
-		"mensaje":               "Simulación iniciada",
+		"simulacion_id":       sim.ID,
+		"estado":              sim.GetEstado(),
+		"ini_utc":             sim.IniUTC,
+		"fin_utc":             sim.FinUTC,
+		"avance_por_tick_min": fmt.Sprintf("%.4f", sim.AvancePorTick),
+		"total_envios":        len(sim.Envios),
+		"mensaje":             "Simulación iniciada",
 	})
 }
 
@@ -206,6 +207,111 @@ func (h *SimulacionHandler) PeriodoProgramado(w http.ResponseWriter, r *http.Req
 		"bloques": (finUTC - req.T0UTC) / req.Sc,
 		"warmup":  req.WarmUp,
 		"mensaje": "Simulación de periodo (programada) iniciada",
+	})
+}
+
+// ── POST /api/simulacion/colapso ─────────────────────────────────────────────
+
+func (h *SimulacionHandler) Colapso(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		T0UTC                   int64   `json:"t0_utc"`
+		SaSeg                   float64 `json:"sa_seg"`
+		K                       float64 `json:"k"`
+		MaxDias                 int     `json:"max_dias"`
+		WarmUp                  bool    `json:"warmup"`
+		Criterio                string  `json:"criterio"`
+		UmbralColapso           float64 `json:"umbral_colapso"`
+		UmbralRechazosPct       float64 `json:"umbral_rechazos_pct"`
+		BloquesRojoConsecutivos int     `json:"bloques_rojo_consecutivos"`
+		Umbrales                struct {
+			VerdeHasta float64 `json:"verde_hasta"`
+			AmbarHasta float64 `json:"ambar_hasta"`
+		} `json:"umbrales"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		errResp(w, 400, "BODY_INVALIDO", err.Error())
+		return
+	}
+	if req.T0UTC <= 0 {
+		errResp(w, 400, "PARAM_INVALIDO", "Se requiere 't0_utc' válido")
+		return
+	}
+	if req.SaSeg <= 0 {
+		req.SaSeg = 120
+	}
+	if req.K <= 0 {
+		req.K = 75
+	}
+	if req.MaxDias <= 0 {
+		req.MaxDias = 540
+	}
+	if req.Criterio == "" {
+		req.Criterio = "EDF"
+	}
+	if req.UmbralColapso == 0 {
+		req.UmbralColapso = 0.85
+	}
+	if req.UmbralRechazosPct == 0 {
+		req.UmbralRechazosPct = 0.30
+	}
+	if req.BloquesRojoConsecutivos <= 0 {
+		req.BloquesRojoConsecutivos = 3
+	}
+
+	umbrales := engine.Umbrales{VerdeHasta: req.Umbrales.VerdeHasta, AmbarHasta: req.Umbrales.AmbarHasta}
+	if umbrales.VerdeHasta == 0 {
+		umbrales.VerdeHasta = 0.60
+	}
+	if umbrales.AmbarHasta == 0 {
+		umbrales.AmbarHasta = 0.85
+	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if hayEnCurso(h.activa, h.orq) {
+		errResp(w, 409, "SIMULACION_ACTIVA", "Ya hay una simulación en curso. Deténgala antes.")
+		return
+	}
+	h.limpiarActivos()
+
+	finUTC := req.T0UTC + int64(req.MaxDias)*1440
+	sc := int64(math.Ceil(req.K * (req.SaSeg / 60.0)))
+	if sc < 1 {
+		sc = 1
+	}
+
+	var lookback int64
+	if req.WarmUp {
+		lookback = 3 * 1440
+	}
+	sa := time.Duration(req.SaSeg*1000) * time.Millisecond
+
+	broker := sse.Nuevo(h.MaxSSEClientes)
+	orq := engine.NuevoOrquestador("colapso", h.ConsultasURL, h.PlanificadorURL,
+		req.T0UTC, finUTC, sc, sa, lookback, req.Criterio, umbrales)
+	orq.Colapso = &engine.ConfigColapso{
+		Habilitado:               true,
+		UmbralOcupacion:          req.UmbralColapso,
+		UmbralRechazosPct:        req.UmbralRechazosPct,
+		BloquesRojosConsecutivos: req.BloquesRojoConsecutivos,
+		MaxDias:                  req.MaxDias,
+	}
+	orq.Broadcast = broker.Publicar
+	orq.Iniciar()
+
+	h.orq = orq
+	h.broker = broker
+
+	respond(w, 202, map[string]interface{}{
+		"estado":   orq.GetEstado(),
+		"t0_utc":   req.T0UTC,
+		"fin_utc":  finUTC,
+		"sc":       sc,
+		"sa_seg":   req.SaSeg,
+		"k":        req.K,
+		"max_dias": req.MaxDias,
+		"mensaje":  "Simulación de colapso iniciada",
 	})
 }
 
@@ -310,12 +416,12 @@ func (h *SimulacionHandler) Estado(w http.ResponseWriter, r *http.Request) {
 		progreso = 0
 	}
 	respond(w, 200, map[string]interface{}{
-		"simulacion_id":   sim.ID,
-		"estado":          sim.GetEstado(),
-		"tiempo_sim_utc":  int64(t),
-		"progreso_pct":    fmt.Sprintf("%.1f", progreso),
-		"contadores":      cont,
-		"clientes_sse":    h.broker.NumClientes(),
+		"simulacion_id":  sim.ID,
+		"estado":         sim.GetEstado(),
+		"tiempo_sim_utc": int64(t),
+		"progreso_pct":   fmt.Sprintf("%.1f", progreso),
+		"contadores":     cont,
+		"clientes_sse":   h.broker.NumClientes(),
 	})
 }
 
@@ -356,8 +462,8 @@ func (h *SimulacionHandler) Health(w http.ResponseWriter, r *http.Request) {
 	}
 	if activa != nil {
 		info["simulacion_id"] = activa.ID
-		info["estado"]        = activa.GetEstado()
-		info["total_envios"]  = len(activa.Envios)
+		info["estado"] = activa.GetEstado()
+		info["total_envios"] = len(activa.Envios)
 	}
 	respond(w, 200, info)
 }

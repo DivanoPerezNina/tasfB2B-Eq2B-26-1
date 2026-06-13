@@ -27,15 +27,17 @@ type Orquestador struct {
 	Sa         time.Duration
 	Criterio   string
 	Umbrales   Umbrales
+	Colapso    *ConfigColapso
 
 	Broadcast func(event string, data interface{})
 
-	mu       sync.RWMutex
-	estado   string // ejecutando|pausado|detenido|completado
-	pauseCh  chan struct{}
-	resumeCh chan struct{}
-	stopCh   chan struct{}
-	doneCh   chan struct{}
+	mu           sync.RWMutex
+	estado       string // ejecutando|pausado|detenido|completado
+	pauseCh      chan struct{}
+	resumeCh     chan struct{}
+	stopCh       chan struct{}
+	doneCh       chan struct{}
+	colapsoRojos map[string]int
 }
 
 // NuevoOrquestador construye el orquestador a partir de los parámetros del
@@ -65,6 +67,7 @@ func NuevoOrquestador(id, consultasURL, planificadorURL string,
 		resumeCh:        make(chan struct{}, 1),
 		stopCh:          make(chan struct{}),
 		doneCh:          make(chan struct{}),
+		colapsoRojos:    make(map[string]int),
 	}
 }
 
@@ -139,9 +142,16 @@ func (o *Orquestador) run() {
 	if finIni > o.FinUTC {
 		finIni = o.FinUTC
 	}
+	start := time.Now()
 	sim, err := o.planificarYcargar(finIni, o.T0UTC)
+	taSeg := time.Since(start).Seconds()
 	if err != nil {
 		o.Broadcast("fallo", map[string]interface{}{"mensaje": err.Error()})
+		return
+	}
+	if res, ok := o.detectarColapso(sim, taSeg, o.Sa.Seconds(), o.T0UTC); ok {
+		o.setEstado("completado")
+		o.Broadcast("colapso", res)
 		return
 	}
 	o.emitirTramos(sim)
@@ -175,12 +185,19 @@ func (o *Orquestador) run() {
 				if nuevoFin > o.FinUTC {
 					nuevoFin = o.FinUTC
 				}
+				start := time.Now()
 				nsim, err := o.planificarYcargar(nuevoFin, t)
+				taSeg := time.Since(start).Seconds()
 				if err != nil {
 					o.Broadcast("fallo", map[string]interface{}{"mensaje": err.Error()})
 					return
 				}
 				sim = nsim
+				if res, ok := o.detectarColapso(sim, taSeg, o.Sa.Seconds(), t); ok {
+					o.setEstado("completado")
+					o.Broadcast("colapso", res)
+					return
+				}
 				o.emitirTramos(sim)
 				proximoH += o.Sc
 			}
