@@ -48,12 +48,22 @@ if ! grep -q "^DB_USER=" "$ENV_FILE" || ! grep -q "^DB_PASS=" "$ENV_FILE"; then
 fi
 echo "      OK ($ENV_FILE → DB_HOST=127.0.0.1)"
 
+# ── 1.6 Liberar RAM antes de compilar (VM de 4 GB) ────────────────────────────
+# El build del frontend + la JVM (-Xmx2g) + MySQL no caben juntos en 4 GB y la
+# VM entra en swap-thrashing (se cuelga). Paramos los servicios durante el
+# build/compilación y se reinician en el paso [5]. MySQL se deja vivo.
+echo ""
+echo "[1.6] Parando servicios durante la compilación (libera RAM)..."
+sudo systemctl stop tasfb2b-planificador tasfb2b-bff tasfb2b-ejecutor tasfb2b-carga-masiva tasfb2b-consultas 2>/dev/null || true
+echo "      OK (se reinician al final)"
+
 # ── 2. Frontend ───────────────────────────────────────────────────────────────
 echo ""
 echo "[2/5] Frontend (npm build)..."
 cd "$REPO/Frontend"
 npm install --silent
-npm run build
+# Limitar el heap de Node para no agotar la RAM de la VM durante vite build.
+NODE_OPTIONS="--max-old-space-size=1024" npm run build
 echo "      OK → Frontend/dist/"
 
 # ── 3. Planificador Java ──────────────────────────────────────────────────────
