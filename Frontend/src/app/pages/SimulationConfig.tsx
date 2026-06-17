@@ -478,14 +478,24 @@ export function SimulationConfig() {
 
     // Colapso → inicia el nuevo endpoint de colapso del BFF/Ejecutor.
     iniciarColapsoProgramado({
-      startDate:              localConfig.startDate,
-      criterio:               localConfig.criterio,
-      warmUp:                 localConfig.warmUp,
-      k:                      localConfig.speed > 1 ? localConfig.speed : 75,
-      saSeg:                  120,
-      maxDias:                540,
-      umbralColapso:          0.85,
-      umbralRechazosPct:      0.30,
+      startDate: localConfig.startDate,
+      criterio: localConfig.criterio,
+
+      // Según lo indicado: tiempo = 0 desde la fecha elegida.
+      // No debe consumir datos pasados.
+      warmUp: false,
+
+      // Valores calibrados para demo.
+      // Sa = 120s = 2 min reales.
+      // MaxDias = 480 días.
+      // Objetivo = 60 min reales.
+      // K = (480 * 1440) / 60 = 11520.
+      saSeg: 120,
+      maxDias: 480,
+      duracionObjetivoMin: 60,
+
+      umbralColapso: 0.85,
+      umbralRechazosPct: 0.30,
       bloquesRojoConsecutivos: 3,
     });
   };
@@ -753,30 +763,61 @@ export function SimulationConfig() {
                   )}
 
                   {/* Velocidad — Colapso */}
-                  {localConfig.scenario === 'collapse' && (
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <Label className="text-sm font-medium">Velocidad</Label>
-                        <span className="rounded-md border border-panel-border bg-panel-section-bg px-2 py-0.5 text-sm font-semibold tabular-nums text-panel-text">
-                          {localConfig.speed}×
-                        </span>
+                  {localConfig.scenario === 'collapse' && (() => {
+                    const saSeg = 120;
+                    const maxDias = 480;
+                    const duracionObjetivoMin = 60;
+                    const kCalculado = Math.ceil((maxDias * 1440) / duracionObjetivoMin);
+                    const scCalculado = Math.ceil(kCalculado * (saSeg / 60));
+                    const bloquesEstimados = Math.ceil((maxDias * 1440) / scCalculado);
+
+                    return (
+                      <div className="space-y-2">
+                        <Label className="text-sm font-medium">Parámetros de colapso</Label>
+
+                        <div className="rounded-xl border border-orange-400/40 bg-orange-500/10 p-3 text-xs space-y-2">
+                          <div className="flex items-start gap-2">
+                            <TrendingUp className="h-4 w-4 text-orange-600 dark:text-orange-400 shrink-0 mt-0.5" />
+                            <div>
+                              <p className="font-semibold text-orange-700 dark:text-orange-300">
+                                K calculado automáticamente
+                              </p>
+                              <p className="text-orange-700/80 dark:text-orange-300/80">
+                                El sistema consume datos futuros desde la fecha elegida hasta alcanzar el colapso o el límite configurado.
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2 pt-1">
+                            <div className="rounded-md border border-panel-border bg-panel-bg px-3 py-2">
+                              <span className="block text-panel-text-faint">Sa</span>
+                              <strong className="text-panel-text">{saSeg}s</strong>
+                            </div>
+
+                            <div className="rounded-md border border-panel-border bg-panel-bg px-3 py-2">
+                              <span className="block text-panel-text-faint">K</span>
+                              <strong className="text-panel-text">{kCalculado}</strong>
+                            </div>
+
+                            <div className="rounded-md border border-panel-border bg-panel-bg px-3 py-2">
+                              <span className="block text-panel-text-faint">Sc</span>
+                              <strong className="text-panel-text">{scCalculado} min</strong>
+                            </div>
+
+                            <div className="rounded-md border border-panel-border bg-panel-bg px-3 py-2">
+                              <span className="block text-panel-text-faint">Bloques estimados</span>
+                              <strong className="text-panel-text">{bloquesEstimados}</strong>
+                            </div>
+                          </div>
+
+                          <p className="text-[10px] text-panel-text-faint">
+                            Fórmula usada: K = (maxDias × 1440) / duración objetivo. Luego, Sc = K × Sa.
+                            Con estos valores, el escenario recorre hasta {maxDias} días en aproximadamente {duracionObjetivoMin} minutos reales.
+                          </p>
+                        </div>
                       </div>
-                      <SliderPrimitive.Root
-                        min={1} max={200} step={1}
-                        value={[localConfig.speed]}
-                        onValueChange={([v]) => setLocalConfig({ ...localConfig, speed: v })}
-                        className="relative flex w-full touch-none select-none items-center"
-                      >
-                        <SliderPrimitive.Track className="bg-muted relative h-2 w-full grow overflow-hidden rounded-full">
-                          <SliderPrimitive.Range className="bg-primary absolute h-full" />
-                        </SliderPrimitive.Track>
-                        <SliderPrimitive.Thumb className="border-primary bg-background ring-ring/50 block h-4 w-4 rounded-full border shadow-sm transition-shadow hover:ring-4 focus-visible:ring-4 focus-visible:outline-none dark:bg-neutral-800" />
-                      </SliderPrimitive.Root>
-                      <div className="flex justify-between text-xs text-panel-text-faint">
-                        <span>1× (real)</span><span>200× (máximo)</span>
-                      </div>
-                    </div>
-                  )}
+                    );
+                  })()}
                 </div>
 
                 {/* Col 3 — Días (Periodo) / vacío (otros) */}

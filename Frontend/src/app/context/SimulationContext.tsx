@@ -78,8 +78,18 @@ interface SimulationContextType {
   updateConfig: (patch: Partial<SimulationConfig>) => void;
   iniciarPlanificacion: (overrides?: Partial<Pick<SimulationConfig, 'startDate' | 'dias' | 'criterio' | 'duracionRealMin' | 'warmUp'>>) => Promise<void>;
   iniciarPeriodoProgramado: (opts: { startDate: Date; dias: number; criterio?: CriterioOrden; warmUp?: boolean; scMin?: number; saSeg?: number }) => Promise<void>;
-  iniciarColapsoProgramado: (opts: { startDate: Date; criterio?: CriterioOrden; warmUp?: boolean; k?: number; saSeg?: number; maxDias?: number; umbralColapso?: number; umbralRechazosPct?: number; bloquesRojoConsecutivos?: number }) => Promise<void>;
-  iniciarSimulacion: () => Promise<void>;
+  iniciarColapsoProgramado: (opts: {
+    startDate: Date;
+    criterio?: CriterioOrden;
+    warmUp?: boolean;
+    k?: number;
+    saSeg?: number;
+    maxDias?: number;
+    duracionObjetivoMin?: number;
+    umbralColapso?: number;
+    umbralRechazosPct?: number;
+    bloquesRojoConsecutivos?: number;
+  }) => Promise<void>;  iniciarSimulacion: () => Promise<void>;
   pausarSimulacion: () => Promise<void>;
   reanudarSimulacion: () => Promise<void>;
   detenerSimulacion: () => Promise<void>;
@@ -488,7 +498,18 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   };
 
   const iniciarColapsoProgramado = useCallback(async (
-    opts: { startDate: Date; criterio?: CriterioOrden; warmUp?: boolean; k?: number; saSeg?: number; maxDias?: number; umbralColapso?: number; umbralRechazosPct?: number; bloquesRojoConsecutivos?: number }
+    opts: {
+      startDate: Date;
+      criterio?: CriterioOrden;
+      warmUp?: boolean;
+      k?: number;
+      saSeg?: number;
+      maxDias?: number;
+      duracionObjetivoMin?: number;
+      umbralColapso?: number;
+      umbralRechazosPct?: number;
+      bloquesRojoConsecutivos?: number;
+    }
   ) => {
     const efectivo = { ...config, ...opts };
     setErrorMsg(null);
@@ -500,16 +521,39 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const d = efectivo.startDate;
     const t0utc = Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes()) / 60000);
 
+    const saSeg = efectivo.saSeg ?? 120;
+    const maxDias = efectivo.maxDias ?? 480;
+    const duracionObjetivoMin = efectivo.duracionObjetivoMin ?? 60;
+
+    /**
+     * K = minutos de datos que deben consumirse / minutos reales disponibles.
+     * Para colapso:
+     * - maxDias indica hasta dónde se permite buscar el colapso.
+     * - duracionObjetivoMin indica cuánto debería durar la ejecución real.
+     */
+    const kCalculado =
+      efectivo.k ??
+      Math.ceil((maxDias * 1440) / duracionObjetivoMin);
+
+    const scCalculado = Math.ceil(kCalculado * (saSeg / 60));
+
     try {
       const res = await fetch(`${BFF}/api/simulacion/colapso`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           t0_utc: t0utc,
-          sa_seg: efectivo.saSeg ?? 120,
-          k: efectivo.k ?? 75,
-          max_dias: efectivo.maxDias ?? 540,
-          warmup: efectivo.warmUp ?? true,
+          sa_seg: saSeg,
+          k: kCalculado,
+          max_dias: maxDias,
+
+          /**
+           * Según la indicación del profesor:
+           * tiempo = 0 es la fecha elegida.
+           * Solo se consumen datos desde ese momento hacia adelante.
+           */
+          warmup: efectivo.warmUp ?? false,
+
           criterio: efectivo.criterio ?? 'EDF',
           umbral_colapso: efectivo.umbralColapso ?? 0.85,
           umbral_rechazos_pct: efectivo.umbralRechazosPct ?? 0.30,
@@ -527,8 +571,9 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       setJobId('colapso');
       setFase('ejecutando');
       setWarmupPct(0);
-      console.log(`[Colapso] iniciado | t0=${t0utc} k=${efectivo.k ?? 75} sa=${efectivo.saSeg ?? 120}s max_dias=${efectivo.maxDias ?? 540} warmup=${efectivo.warmUp ?? true}`);
-
+      console.log(
+        `[Colapso] iniciado | t0=${t0utc} sa=${saSeg}s k=${kCalculado} sc=${scCalculado}min max_dias=${maxDias} objetivo=${duracionObjetivoMin}min warmup=${efectivo.warmUp ?? false}`
+      );
       if (esRef.current) esRef.current.close();
       sseErroresRef.current = 0;
       const es = new EventSource(`${BFF}/api/simulacion/eventos`);
@@ -715,10 +760,16 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         iniciarColapsoProgramado({
           startDate: config.startDate,
           criterio: config.criterio,
-          warmUp: config.warmUp,
-          k: config.speed > 1 ? config.speed : 75,
+
+          // Para colapso y Sim5D, tiempo = 0 es la fecha elegida.
+          warmUp: false,
+
+          // Se calcula automáticamente:
+          // K = (maxDias * 1440) / duracionObjetivoMin
           saSeg: 120,
-          maxDias: 540,
+          maxDias: 480,
+          duracionObjetivoMin: 60,
+
           umbralColapso: 0.85,
           umbralRechazosPct: 0.30,
           bloquesRojoConsecutivos: 3,
