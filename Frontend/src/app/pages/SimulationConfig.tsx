@@ -351,25 +351,6 @@ const SCENARIO_LABELS: Record<SimulationScenario, string> = {
   collapse: 'Colapso',
 };
 
-const COLLAPSE_PRESETS = {
-  sla: {
-    label: 'Por rechazos/SLA',
-    description: 'Detiene la simulación cuando los rechazos superan el umbral operativo.',
-    k: 10800,
-    saSeg: 30,
-    maxDias: 450,
-    umbralRechazosPct: 0.33,
-  },
-  tecnico: {
-    label: 'Técnico (Ta ≥ Sa)',
-    description: 'Ignora rechazos tempranos para llegar cerca del día 450 y demostrar colapso técnico.',
-    k: 21600,
-    saSeg: 50,
-    maxDias: 450,
-    umbralRechazosPct: 0.99,
-  },
-} as const;
-
 // ─── Componente principal ─────────────────────────────────────────────────────
 
 export function SimulationConfig() {
@@ -383,7 +364,6 @@ export function SimulationConfig() {
   } = useSimulation();
 
   const [localConfig, setLocalConfig] = useState(config);
-  const [collapseMode, setCollapseMode] = useState<keyof typeof COLLAPSE_PRESETS>('sla');
   const [currentTime,    setCurrentTime]    = useState(new Date());
   const [history,        setHistory]        = useState<HistoryRecord[]>(loadHistory);
 
@@ -497,16 +477,15 @@ export function SimulationConfig() {
     }
 
     // Colapso → inicia el nuevo endpoint de colapso del BFF/Ejecutor.
-    const preset = COLLAPSE_PRESETS[collapseMode];
     iniciarColapsoProgramado({
       startDate:              localConfig.startDate,
       criterio:               localConfig.criterio,
       warmUp:                 localConfig.warmUp,
-      k:                      preset.k,
-      saSeg:                  preset.saSeg,
-      maxDias:                preset.maxDias,
+      k:                      localConfig.speed > 1 ? localConfig.speed : 75,
+      saSeg:                  120,
+      maxDias:                540,
       umbralColapso:          0.85,
-      umbralRechazosPct:      preset.umbralRechazosPct,
+      umbralRechazosPct:      0.30,
       bloquesRojoConsecutivos: 3,
     });
   };
@@ -732,39 +711,7 @@ export function SimulationConfig() {
                       <p className="text-xs text-panel-text-faint">Día a día: simula 1 día desde la fecha elegida</p>
                     )}
                     {localConfig.scenario === 'collapse' && (
-                      <>
-                        <p className="text-xs text-panel-text-faint">Solo editable en Periodo y Día a día</p>
-                        <div className="rounded-xl border border-panel-border bg-panel-section-bg p-4 mt-3">
-                          <div className="mb-3">
-                            <p className="text-sm font-semibold text-panel-text">Modo de colapso</p>
-                            <p className="text-xs text-panel-text-muted">Selecciona un preset para ajustar el comportamiento del colapso.</p>
-                          </div>
-                          <div className="grid gap-2 sm:grid-cols-2">
-                            {Object.entries(COLLAPSE_PRESETS).map(([key, preset]) => {
-                              const isActive = collapseMode === key;
-                              return (
-                                <button
-                                  key={key}
-                                  type="button"
-                                  onClick={() => setCollapseMode(key as keyof typeof COLLAPSE_PRESETS)}
-                                  className={`w-full rounded-2xl border-2 p-3 text-left transition-all ${
-                                    isActive
-                                      ? 'border-primary bg-primary/5 shadow-sm'
-                                      : 'border-panel-border bg-panel-bg hover:border-primary/40'
-                                  }`}
-                                >
-                                  <p className={`text-sm font-semibold ${isActive ? 'text-primary' : 'text-panel-text'}`}>
-                                    {preset.label}
-                                  </p>
-                                  <p className="mt-1 text-xs leading-5 text-panel-text-muted">
-                                    {preset.description}
-                                  </p>
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      </>
+                      <p className="text-xs text-panel-text-faint">Solo editable en Periodo y Día a día</p>
                     )}
                   </div>
 
