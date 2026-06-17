@@ -716,11 +716,11 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           startDate: config.startDate,
           criterio: config.criterio,
           warmUp: config.warmUp,
-          k: config.speed > 1 ? config.speed : 75,
-          saSeg: 120,
-          maxDias: 540,
+          k: 21600,
+          saSeg: 50,
+          maxDias: 450,
           umbralColapso: 0.85,
-          umbralRechazosPct: 0.30,
+          umbralRechazosPct: 0.99,
           bloquesRojoConsecutivos: 3,
         });
       } else {
