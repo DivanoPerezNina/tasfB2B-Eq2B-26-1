@@ -755,31 +755,40 @@ export function SimulationConfig() {
                   {/* Velocidad — Colapso */}
                   {localConfig.scenario === 'collapse' && (
                     <div className="space-y-4">
-                      <div className="rounded-xl border border-red-400/40 bg-red-500/10 p-4 text-sm text-panel-text">
+                      <div className="rounded-2xl border border-slate-300/70 bg-panel-section-bg p-4 text-sm text-panel-text shadow-sm">
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                           <div>
-                            <p className="text-sm font-semibold text-red-700 dark:text-red-300">Configuración de prueba de estrés</p>
+                            <p className="text-sm font-semibold text-panel-text">Preset oficial de prueba de estrés</p>
                             <p className="mt-1 text-xs text-panel-text-muted">
-                              Esta configuración reproduce la prueba oficial de colapso técnico. El slider 1x–200x se mantiene para modos normales, pero el escenario Colapso usa parámetros avanzados.
+                              Parámetros usados para acelerar la simulación hasta el límite técnico observado.
                             </p>
                           </div>
-                          <span className="inline-flex rounded-full bg-red-100 px-2.5 py-1 text-[10px] font-semibold text-red-700 dark:bg-red-900/30 dark:text-red-300">
+                          <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-semibold text-slate-700">
                             Preset oficial
                           </span>
                         </div>
                         <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
                           {[
-                            { label: 'K', value: '21600' },
-                            { label: 'Sa', value: '300 s' },
-                            { label: 'Sc', value: '108000 min' },
-                            { label: 'Equivalencia', value: '75 días por bloque' },
+                            { label: 'K', value: '21600', detail: '1 s real = 6 h simuladas' },
+                            { label: 'Sa', value: '300 s', detail: '5 min reales entre bloques' },
+                            { label: 'Sc', value: '108000 min', detail: '75 días simulados por bloque' },
                           ].map((item) => (
-                            <div key={item.label} className="rounded-2xl bg-panel-section-bg p-3">
+                            <div key={item.label} className="rounded-2xl bg-background p-3">
                               <p className="text-[10px] uppercase tracking-[0.18em] text-panel-text-faint">{item.label}</p>
                               <p className="mt-1 text-sm font-semibold text-panel-text">{item.value}</p>
+                              <p className="mt-1 text-[10px] text-panel-text-muted">{item.detail}</p>
                             </div>
                           ))}
                         </div>
+                        <details className="mt-4 rounded-2xl border border-panel-border bg-panel-bg p-3 text-sm text-panel-text-muted">
+                          <summary className="cursor-pointer font-medium text-panel-text">¿Qué significa cada valor?</summary>
+                          <ul className="mt-2 space-y-1 text-[11px]">
+                            <li><span className="font-semibold text-panel-text">K:</span> factor de aceleración del tiempo simulado.</li>
+                            <li><span className="font-semibold text-panel-text">Sa:</span> tiempo real disponible para procesar cada bloque.</li>
+                            <li><span className="font-semibold text-panel-text">Sc:</span> tamaño del bloque simulado calculado con K y Sa.</li>
+                            <li><span className="font-semibold text-panel-text">maxDias:</span> horizonte máximo de simulación.</li>
+                          </ul>
+                        </details>
                       </div>
                     </div>
                   )}

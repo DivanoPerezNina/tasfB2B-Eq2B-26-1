@@ -209,7 +209,7 @@ interface MapProps {
 }
 
 export const Map = memo(function Map({ selectedAirportId, onAirportSelect, onFlightSelect, selectedFlightKey }: MapProps) {
-  const { isRunning, aeropuertosState, tiempoSimUTC, contadores, planTramos, planVisualCargado } = useSimulation();
+  const { isRunning, aeropuertosState, tiempoSimUTC, contadores, planTramos, planVisualCargado, config } = useSimulation();
   const { airports, aeropuertosBackend } = useDomain();
 
   // Solo hay aviones reales cuando la simulación ha avanzado al menos un tick
@@ -401,13 +401,18 @@ export const Map = memo(function Map({ selectedAirportId, onAirportSelect, onFli
         </p>
         {showPlanes && simHasStarted && (activeFlightTotal > 0 || contadores.en_vuelo > 0) && (
           <p className="text-xs mt-0.5" style={{ color: '#fbbf24' }}>
-            {activeFlightTotal || contadores.en_vuelo} vuelos activos
+            {activeFlightTotal || contadores.en_vuelo} {config.scenario === 'collapse' ? 'envíos en tránsito' : 'vuelos activos'}
             {activeFlightTotal > activeFlights.length ? ` · ${activeFlights.length} visibles` : ''}
           </p>
         )}
         {!simHasStarted && (
           <p className="text-xs mt-0.5" style={{ color: 'var(--panel-text-faint)' }}>
             Sin simulación activa
+          </p>
+        )}
+        {config.scenario === 'collapse' && simHasStarted && (
+          <p className="text-[10px] mt-1 text-panel-text-faint max-w-xs">
+            Visualización acelerada: los vuelos se muestran de forma agregada por bloque.
           </p>
         )}
       </div>
@@ -662,7 +667,9 @@ export const Map = memo(function Map({ selectedAirportId, onAirportSelect, onFli
             </div>
           ))}
           <div className="border-t pt-1.5 mt-1.5" style={{ borderColor: 'var(--panel-border)' }}>
-            <p className="text-xs font-medium mb-1" style={{ color: 'var(--panel-text-faint)' }}>Vuelos activos</p>
+            <p className="text-xs font-medium mb-1" style={{ color: 'var(--panel-text-faint)' }}>
+              {config.scenario === 'collapse' ? 'Actividad en tránsito' : 'Vuelos activos'}
+            </p>
             <div className="flex items-center gap-3">
               <div className="flex items-center gap-1">
                 <div className="h-2 w-2 rounded-full bg-blue-400" />

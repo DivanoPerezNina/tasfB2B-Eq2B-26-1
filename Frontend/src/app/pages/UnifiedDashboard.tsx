@@ -84,7 +84,7 @@ export function UnifiedDashboard() {
   const {
     stats, getAirportStats,
     fase, contadores, progresoPct, warmupPct, simulationTime,
-    collapseFailure, lastValidTick,
+    collapseFailure, lastValidTick, config,
     pausarSimulacion, reanudarSimulacion, detenerSimulacion, resetear,
   } = useSimulation();
   const {
@@ -226,6 +226,16 @@ export function UnifiedDashboard() {
     idle:       { text: 'Inactivo',   color: 'text-panel-text-faint' },
   };
   const fl = faseLabel[fase] ?? faseLabel.idle;
+  const inicioSimMin = Math.floor(Date.UTC(
+    config.startDate.getFullYear(),
+    config.startDate.getMonth(),
+    config.startDate.getDate(),
+    config.startDate.getHours(),
+    config.startDate.getMinutes()
+  ) / 60000);
+  const finSimMin = lastValidTick?.tiempo_sim_utc ?? Math.floor(simulationTime.getTime() / 60000);
+  const fechaFinSim = new Date(finSimMin * 60 * 1000);
+  const diasSimulados = Math.max(0, Math.ceil((finSimMin - inicioSimMin) / 1440));
 
   return (
     <div className="relative flex h-full flex-col bg-background">
@@ -338,7 +348,7 @@ export function UnifiedDashboard() {
       {/* ── Completion overlay ── */}
       {showCompletion && fase === 'completado' && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-          <div className="relative mx-4 w-full max-w-xl rounded-2xl border border-panel-border bg-panel-bg p-8 shadow-2xl">
+          <div className="relative mx-4 w-full max-w-xl rounded-2xl border border-panel-border bg-panel-bg p-6 shadow-2xl max-h-[85vh] overflow-y-auto">
             <button
               onClick={() => setShowCompletion(false)}
               className="absolute right-4 top-4 text-panel-text-faint hover:text-panel-text transition-colors"
@@ -368,13 +378,15 @@ export function UnifiedDashboard() {
                   {collapseFailure.badge}
                 </span>
               )}
-              <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
                 {[
-                  { label: 'Fecha simulada', value: format(simulationTime, 'dd/MM/yyyy HH:mm') },
+                  { label: 'Fecha de inicio', value: format(config.startDate, 'dd/MM/yyyy HH:mm') },
+                  { label: 'Fecha de fin / límite técnico', value: format(fechaFinSim, 'dd/MM/yyyy HH:mm') },
+                  { label: 'Días simulados', value: diasSimulados },
                   { label: 'Total envíos', value: lastValidTick?.contadores.total ?? contadores.total },
                   { label: 'Entregados', value: lastValidTick?.contadores.entregado ?? contadores.entregado },
                   { label: 'Pendientes', value: lastValidTick?.contadores.pendiente ?? contadores.pendiente },
-                  { label: 'En vuelo', value: lastValidTick?.contadores.en_vuelo ?? contadores.en_vuelo },
+                  { label: config.scenario === 'collapse' ? 'En tránsito' : 'En vuelo', value: lastValidTick?.contadores.en_vuelo ?? contadores.en_vuelo },
                   { label: 'En escala', value: lastValidTick?.contadores.en_escala ?? contadores.en_escala },
                   { label: 'Rechazados SLA', value: lastValidTick?.contadores.rechazado ?? contadores.rechazado },
                 ].map((d) => (
@@ -634,6 +646,11 @@ export function UnifiedDashboard() {
                     {contadores.entregado} entregados
                   </span>
                 </div>
+                <p className="text-[10px] text-panel-text-faint mt-2">
+                  {config.scenario === 'collapse'
+                    ? 'El porcentaje puede variar al generarse nuevos bloques de planificación.'
+                    : 'Se recalcula con cada bloque de simulación.'}
+                </p>
               </div>
             </div>
           </Section>
