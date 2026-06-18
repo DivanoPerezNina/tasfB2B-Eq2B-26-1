@@ -480,9 +480,9 @@ export function SimulationConfig() {
     iniciarColapsoProgramado({
       startDate:              localConfig.startDate,
       criterio:               localConfig.criterio,
-      warmUp:                 localConfig.warmUp,
-      k:                      localConfig.speed > 1 ? localConfig.speed : 75,
-      saSeg:                  120,
+      warmUp:                 false,
+      k:                      21600,
+      saSeg:                  300,
       maxDias:                540,
       umbralColapso:          0.85,
       umbralRechazosPct:      0.30,
@@ -754,26 +754,32 @@ export function SimulationConfig() {
 
                   {/* Velocidad — Colapso */}
                   {localConfig.scenario === 'collapse' && (
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <Label className="text-sm font-medium">Velocidad</Label>
-                        <span className="rounded-md border border-panel-border bg-panel-section-bg px-2 py-0.5 text-sm font-semibold tabular-nums text-panel-text">
-                          {localConfig.speed}×
-                        </span>
-                      </div>
-                      <SliderPrimitive.Root
-                        min={1} max={200} step={1}
-                        value={[localConfig.speed]}
-                        onValueChange={([v]) => setLocalConfig({ ...localConfig, speed: v })}
-                        className="relative flex w-full touch-none select-none items-center"
-                      >
-                        <SliderPrimitive.Track className="bg-muted relative h-2 w-full grow overflow-hidden rounded-full">
-                          <SliderPrimitive.Range className="bg-primary absolute h-full" />
-                        </SliderPrimitive.Track>
-                        <SliderPrimitive.Thumb className="border-primary bg-background ring-ring/50 block h-4 w-4 rounded-full border shadow-sm transition-shadow hover:ring-4 focus-visible:ring-4 focus-visible:outline-none dark:bg-neutral-800" />
-                      </SliderPrimitive.Root>
-                      <div className="flex justify-between text-xs text-panel-text-faint">
-                        <span>1× (real)</span><span>200× (máximo)</span>
+                    <div className="space-y-4">
+                      <div className="rounded-xl border border-red-400/40 bg-red-500/10 p-4 text-sm text-panel-text">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <div>
+                            <p className="text-sm font-semibold text-red-700 dark:text-red-300">Configuración de prueba de estrés</p>
+                            <p className="mt-1 text-xs text-panel-text-muted">
+                              Esta configuración reproduce la prueba oficial de colapso técnico. El slider 1x–200x se mantiene para modos normales, pero el escenario Colapso usa parámetros avanzados.
+                            </p>
+                          </div>
+                          <span className="inline-flex rounded-full bg-red-100 px-2.5 py-1 text-[10px] font-semibold text-red-700 dark:bg-red-900/30 dark:text-red-300">
+                            Preset oficial
+                          </span>
+                        </div>
+                        <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                          {[
+                            { label: 'K', value: '21600' },
+                            { label: 'Sa', value: '300 s' },
+                            { label: 'Sc', value: '108000 min' },
+                            { label: 'Equivalencia', value: '75 días por bloque' },
+                          ].map((item) => (
+                            <div key={item.label} className="rounded-2xl bg-panel-section-bg p-3">
+                              <p className="text-[10px] uppercase tracking-[0.18em] text-panel-text-faint">{item.label}</p>
+                              <p className="mt-1 text-sm font-semibold text-panel-text">{item.value}</p>
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     </div>
                   )}

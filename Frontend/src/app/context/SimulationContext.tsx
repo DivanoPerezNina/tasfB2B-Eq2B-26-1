@@ -8,6 +8,7 @@ import React, {
 } from 'react';
 import {
   SimulationConfig,
+  SimulationScenario,
   CriterioOrden,
   FaseSimulacion,
   Contadores,
@@ -22,7 +23,7 @@ import { airports } from '../data/airports';
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
-const BFF = import.meta.env.VITE_BFF_URL ?? '';
+const BFF = ((import.meta as any).env?.VITE_BFF_URL ?? '') as string;
 
 const CONFIG_DEFAULT: SimulationConfig = {
   scenario:       'period',
@@ -59,6 +60,12 @@ interface SimulationContextType {
   progresoPct: number;    // 0-100 (ventana visible en tiempo real)
   warmupPct: number;      // 0-100 (progreso del pre-roll de warm-up)
   contadores: Contadores;
+  lastValidTick: { tiempo_sim_utc: number; contadores: Contadores; tick?: number; progreso_pct?: string } | null;
+  collapseFailure: {
+    technicalMessage: string;
+    badge: string;
+    type: 'limite_tecnico' | 'tecnico_memoria' | 'unknown';
+  } | null;
   aeropuertosState: AeropuertoEstado[];
   /** Tramos reales del plan generado por el planificador. Se usan solo para la visualización del mapa. */
   planTramos: PlanTramoVisual[];
@@ -124,6 +131,13 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [contadores, setContadores]         = useState<Contadores>({
     total: 0, pendiente: 0, en_vuelo: 0, en_escala: 0, entregado: 0, rechazado: 0,
   });
+  const [lastValidTick, setLastValidTick] = useState<{ tiempo_sim_utc: number; contadores: Contadores; tick?: number; progreso_pct?: string } | null>(null);
+  const lastValidTickRef = useRef<{ tiempo_sim_utc: number; contadores: Contadores; tick?: number; progreso_pct?: string } | null>(null);
+  const [collapseFailure, setCollapseFailure] = useState<{
+    technicalMessage: string;
+    badge: string;
+    type: 'limite_tecnico' | 'tecnico_memoria' | 'unknown';
+  } | null>(null);
   const [aeropuertosState, setAeropuertos]  = useState<AeropuertoEstado[]>([]);
   const [planTramos, setPlanTramos]          = useState<PlanTramoVisual[]>([]);
   const [planResumen, setPlanResumen]        = useState<PlanResumenVisual | null>(null);
@@ -227,6 +241,17 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       setPlanResumen(null);
     }
   }, []);
+
+  const classifyCollapseFailureType = (message: string) => {
+    const normalized = String(message).toLowerCase();
+    if (/outofmemory|java heap|heap space/.test(normalized)) {
+      return 'tecnico_memoria';
+    }
+    if (/memoria|planificador|desde-datos|http 500|no se puede|fallo|timeout|tiempo de espera/.test(normalized)) {
+      return 'limite_tecnico';
+    }
+    return 'unknown';
+  };
 
   // ─── Iniciar planificación ────────────────────────────────────────────────
   const iniciarPlanificacion = useCallback(async (
@@ -360,7 +385,10 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         const d = JSON.parse(e.data);
         setTiempoSimUTC(d.tiempo_sim_utc);
         setProgresoPct(parseFloat(d.progreso_pct ?? '0'));
-        if (d.contadores) setContadores(d.contadores);
+        if (d.contadores) {
+          setContadores(d.contadores);
+          setValidTick({ tiempo_sim_utc: d.tiempo_sim_utc, contadores: d.contadores, tick: d.tick, progreso_pct: d.progreso_pct });
+        }
         console.log(
           `[Sim] tick=${d.tick} | ${new Date(d.tiempo_sim_utc * 60 * 1000).toISOString().slice(0,16).replace('T',' ')} | ${d.progreso_pct}%`,
           d.contadores,
@@ -412,7 +440,10 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       const d = JSON.parse(e.data);
       setTiempoSimUTC(d.tiempo_sim_utc);
       setProgresoPct(parseFloat(d.progreso_pct ?? '0'));
-      if (d.contadores) setContadores(d.contadores);
+      if (d.contadores) {
+        setContadores(d.contadores);
+        setValidTick({ tiempo_sim_utc: d.tiempo_sim_utc, contadores: d.contadores, tick: d.tick, progreso_pct: d.progreso_pct });
+      }
       console.log(
         `[Sim:${scenario}] tick=${d.tick} | ${new Date(d.tiempo_sim_utc * 60 * 1000).toISOString().slice(0,16).replace('T',' ')} | ${d.progreso_pct}%`,
         d.contadores,
@@ -444,7 +475,38 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     });
 
     es.addEventListener('fallo', (e: MessageEvent) => {
-      try { const d = JSON.parse(e.data); setErrorMsg(d.mensaje ?? 'Fallo en la simulación'); } catch { /* */ }
+      const d = JSON.parse(e.data);
+      const rawMsg = String(d.mensaje ?? d.message ?? 'Fallo en la simulación');
+      if (scenario === 'collapse') {
+        const failureType = classifyCollapseFailureType(rawMsg);
+        const validTick = d.contadores ? {
+          tiempo_sim_utc: d.tiempo_sim_utc ?? tiempoSimUTC,
+          contadores: d.contadores,
+          tick: d.tick,
+          progreso_pct: d.progreso_pct,
+        } : lastValidTickRef.current;
+
+        if (validTick) {
+          setContadores(validTick.contadores);
+          setTiempoSimUTC(validTick.tiempo_sim_utc);
+          setValidTick(validTick);
+        }
+
+        setCollapseFailure({
+          technicalMessage: rawMsg,
+          badge: 'Límite técnico alcanzado',
+          type: failureType,
+        });
+        setPlanProgreso(100);
+        setProgresoPct(100);
+        setFase('completado');
+        setErrorMsg(null);
+        es.close();
+        if (esRef.current === es) esRef.current = null;
+        return;
+      }
+
+      setErrorMsg(rawMsg);
       setFase('error');
       es.close();
       if (esRef.current === es) esRef.current = null;
@@ -496,6 +558,8 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setPlanResumen(null);
     setPlanVisualCargado(false);
     setProgresoPct(0);
+    setValidTick(null);
+    setCollapseFailure(null);
 
     const d = efectivo.startDate;
     const t0utc = Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes()) / 60000);
@@ -506,10 +570,10 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           t0_utc: t0utc,
-          sa_seg: efectivo.saSeg ?? 120,
-          k: efectivo.k ?? 75,
+          sa_seg: efectivo.saSeg ?? 300,
+          k: efectivo.k ?? 21600,
           max_dias: efectivo.maxDias ?? 540,
-          warmup: efectivo.warmUp ?? true,
+          warmup: efectivo.warmUp ?? false,
           criterio: efectivo.criterio ?? 'EDF',
           umbral_colapso: efectivo.umbralColapso ?? 0.85,
           umbral_rechazos_pct: efectivo.umbralRechazosPct ?? 0.30,
@@ -612,6 +676,16 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }
   }, [fase]);
 
+  const setValidTick = useCallback((tick: { tiempo_sim_utc: number; contadores: Contadores; tick?: number; progreso_pct?: string } | null) => {
+    lastValidTickRef.current = tick;
+    setLastValidTick(tick);
+  }, []);
+
+  const clearCollapseState = useCallback(() => {
+    setValidTick(null);
+    setCollapseFailure(null);
+  }, [setValidTick]);
+
   // ─── Reanudar ─────────────────────────────────────────────────────────────
   const reanudarSimulacion = useCallback(async () => {
     if (fase !== 'pausado') return;
@@ -645,7 +719,8 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setPlanTramos([]);
     setPlanResumen(null);
     setPlanVisualCargado(false);
-  }, []);
+    clearCollapseState();
+  }, [clearCollapseState]);
 
   // ─── Resetear ─────────────────────────────────────────────────────────────
   const resetear = useCallback(() => {
@@ -664,7 +739,8 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setPlanResumen(null);
     setPlanVisualCargado(false);
     setErrorMsg(null);
-  }, []);
+    clearCollapseState();
+  }, [clearCollapseState]);
 
   // ─── updateConfig ─────────────────────────────────────────────────────────
   const updateConfig = useCallback((patch: Partial<SimulationConfig>) => {
@@ -715,9 +791,9 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         iniciarColapsoProgramado({
           startDate: config.startDate,
           criterio: config.criterio,
-          warmUp: config.warmUp,
-          k: config.speed > 1 ? config.speed : 75,
-          saSeg: 120,
+          warmUp: false,
+          k: 21600,
+          saSeg: 300,
           maxDias: 540,
           umbralColapso: 0.85,
           umbralRechazosPct: 0.30,
@@ -759,6 +835,8 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       stats,
       baggages,
       getAirportStats,
+      lastValidTick,
+      collapseFailure,
       updateConfig,
       iniciarPlanificacion,
       iniciarPeriodoProgramado,
