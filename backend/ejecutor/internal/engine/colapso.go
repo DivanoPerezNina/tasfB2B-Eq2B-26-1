@@ -15,6 +15,7 @@ func (o *Orquestador) detectarColapso(sim *Simulacion, taSeg, saSeg float64, tie
 	aeropuertos := sim.snapshotAeropuertos()
 	cont := sim.calcularContadores()
 	rechazosSLA := sim.contarRechazosSLA()
+	detalleSLA := sim.detalleRechazosSLA(3)
 	sim.mu.RUnlock()
 
 	// 1) Colapso técnico: la planificación tarda tanto o más que el intervalo Sa.
@@ -34,9 +35,13 @@ func (o *Orquestador) detectarColapso(sim *Simulacion, taSeg, saSeg float64, tie
 	// 2) Colapso por rechazos / SLA.
 	if cont.Total > 0 {
 		if rechazosSLA > 0 {
+			motivo := fmt.Sprintf("primer incumplimiento SLA detectado: %d envío(s) superan deadline 24/48h", rechazosSLA)
+			if detalleSLA != "" {
+				motivo = fmt.Sprintf("%s | detalle: %s", motivo, detalleSLA)
+			}
 			return o.nuevoResultadoColapso(
 				"rechazos",
-				fmt.Sprintf("primer incumplimiento SLA detectado: %d envío(s) superan deadline 24/48h", rechazosSLA),
+				motivo,
 				"",
 				0,
 				taSeg,

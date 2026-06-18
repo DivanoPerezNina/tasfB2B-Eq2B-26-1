@@ -6,6 +6,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -597,6 +598,35 @@ func (s *Simulacion) contarRechazosSLA() int {
 		}
 	}
 	return c
+}
+
+func (s *Simulacion) detalleRechazosSLA(limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+
+	parts := make([]string, 0, limit)
+	for _, e := range s.Envios {
+		if e.Estado == "rechazado" && e.MotivoRechazo == "sla" {
+			parts = append(parts, fmt.Sprintf(
+				"idx=%d %s->%s registro=%d deadline=%d tramos=%d tramoActual=%d estado=%s motivo=%s",
+				e.Indice,
+				e.Origen,
+				e.Destino,
+				e.RegistroUTC,
+				e.DeadlineUTC,
+				len(e.Tramos),
+				e.TramoActual,
+				e.Estado,
+				e.MotivoRechazo,
+			))
+			if len(parts) >= limit {
+				break
+			}
+		}
+	}
+
+	return strings.Join(parts, " | ")
 }
 
 func (s *Simulacion) snapshotAeropuertos() []map[string]interface{} {
