@@ -608,7 +608,16 @@ func (s *Simulacion) detalleRechazosSLA(limit int) string {
 	parts := make([]string, 0, limit)
 	for _, e := range s.Envios {
 		if e.Estado == "rechazado" && e.MotivoRechazo == "sla" {
-			parts = append(parts, fmt.Sprintf(
+			// Construir detalle de tramos
+			tramosParts := make([]string, 0, len(e.Tramos))
+			for i, tr := range e.Tramos {
+				tramoDet := fmt.Sprintf("%d:%s->%s salida=%d llegada=%d estado=%s",
+					i, tr.Desde, tr.Hasta, tr.SalidaUTC, tr.LlegadaUTC, tr.Estado)
+				tramosParts = append(tramosParts, tramoDet)
+			}
+			tramosStr := strings.Join(tramosParts, "|")
+
+			envioStr := fmt.Sprintf(
 				"idx=%d %s->%s registro=%d deadline=%d tramos=%d tramoActual=%d estado=%s motivo=%s",
 				e.Indice,
 				e.Origen,
@@ -619,7 +628,13 @@ func (s *Simulacion) detalleRechazosSLA(limit int) string {
 				e.TramoActual,
 				e.Estado,
 				e.MotivoRechazo,
-			))
+			)
+
+			if tramosStr != "" {
+				envioStr = fmt.Sprintf("%s | tramos=[%s]", envioStr, tramosStr)
+			}
+
+			parts = append(parts, envioStr)
 			if len(parts) >= limit {
 				break
 			}
