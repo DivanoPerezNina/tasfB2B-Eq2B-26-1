@@ -460,12 +460,14 @@ func (s *Simulacion) procesarEventos(t int64) {
 
 		// 2) Deadline: solo si el envío SIGUE sin entregarse tras procesar las
 		//    llegadas de este paso. Un envío todavía en tránsito cuando t ya pasó
-		//    su deadline es un incumplimiento de SLA real (24h/48h). Como el
-		//    Planificador solo asigna rutas que cumplen el deadline, en la práctica
-		//    esto solo dispara para envíos sin ruta factible (ya marcados al cargar).
-		if e.Estado != "entregado" && e.DeadlineUTC > 0 && t > e.DeadlineUTC {
+		//    su deadline es un incumplimiento de SLA real (24h/48h). Los envíos
+		//    que vienen sin tramos o como rechazos operativos permanecen pendientes
+		//    hasta que se supera el deadline y solo entonces se marcan como
+		//    "rechazado" por SLA.
+		if e.Estado != "entregado" && e.Estado != "rechazado" && e.DeadlineUTC > 0 && t > e.DeadlineUTC {
 			estadoPrevio := e.Estado
 			e.Estado = "rechazado"
+			e.MotivoRechazo = "sla"
 			// Liberar las maletas del almacén donde estaban esperando. Solo si
 			// seguían registradas y sin despegar (pendiente=origen) o en escala.
 			if e.Registrado && estadoPrevio == "pendiente" {
@@ -517,12 +519,10 @@ func (s *Simulacion) cargarPlan(plan PlanResponse) {
 			Maletas:     ep.Maletas,
 			RegistroUTC: ep.RegistroUTC,
 			DeadlineUTC: ep.DeadlineUTC,
+			Estado:      "pendiente",
 		}
 
-		if ep.Estado == "Rechazado" || len(ep.Tramos) == 0 {
-			e.Estado = "rechazado"
-		} else {
-			e.Estado = "pendiente"
+		if len(ep.Tramos) > 0 {
 			e.Tramos = make([]TramoSim, len(ep.Tramos))
 			for i, t := range ep.Tramos {
 				st := "pendiente"
@@ -545,6 +545,11 @@ func (s *Simulacion) cargarPlan(plan PlanResponse) {
 			for _, tr := range e.Tramos {
 				s.asegurarAeropuerto(tr.Hasta)
 			}
+		} else {
+			// Sin tramos o plan operativo rechazado: el envío se deja pendiente.
+			// Solo se marcará "rechazado" si luego supera el deadline sin entrega.
+			e.Tramos = nil
+			s.asegurarAeropuerto(e.Origen)
 		}
 		s.Envios = append(s.Envios, e)
 	}
@@ -577,6 +582,16 @@ func (s *Simulacion) calcularContadores() Contadores {
 			c.Entregado++
 		case "rechazado":
 			c.Rechazado++
+		}
+	}
+	return c
+}
+
+func (s *Simulacion) contarRechazosSLA() int {
+	c := 0
+	for _, e := range s.Envios {
+		if e.Estado == "rechazado" && e.MotivoRechazo == "sla" {
+			c++
 		}
 	}
 	return c

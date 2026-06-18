@@ -58,9 +58,10 @@ type EstadoEnvio struct {
 	RegistroUTC int64
 	DeadlineUTC int64
 	Tramos      []TramoSim
-	TramoActual int    // índice del tramo actual (0, 1, 2)
-	Estado      string // pendiente|en_vuelo|en_escala|entregado|rechazado
-	Registrado  bool   // true cuando el envío ya ingresó al almacén origen (t >= RegistroUTC)
+	TramoActual    int    // índice del tramo actual (0, 1, 2)
+	Estado         string // pendiente|en_vuelo|en_escala|entregado|rechazado
+	MotivoRechazo  string // sla
+	Registrado     bool   // true cuando el envío ya ingresó al almacén origen (t >= RegistroUTC)
 }
 
 // TramoSim es un tramo individual de la ruta de un envío.
