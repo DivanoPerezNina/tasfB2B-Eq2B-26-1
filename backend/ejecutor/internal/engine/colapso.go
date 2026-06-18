@@ -32,11 +32,10 @@ func (o *Orquestador) detectarColapso(sim *Simulacion, taSeg, saSeg float64, tie
 
 	// 2) Colapso por rechazos / SLA.
 	if cont.Total > 0 {
-		rechazosPct := float64(cont.Rechazado) / float64(cont.Total)
-		if rechazosPct >= o.Colapso.UmbralRechazosPct {
+		if cont.Rechazado > 0 {
 			return o.nuevoResultadoColapso(
 				"rechazos",
-				fmt.Sprintf("rechazos/total >= %.2f", o.Colapso.UmbralRechazosPct),
+				fmt.Sprintf("primer rechazo detectado: %d envío(s) incumplen SLA 24/48h", cont.Rechazado),
 				"",
 				0,
 				taSeg,
