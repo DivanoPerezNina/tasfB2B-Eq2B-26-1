@@ -460,10 +460,10 @@ func (s *Simulacion) procesarEventos(t int64) {
 
 		// 2) Deadline: solo si el envío SIGUE sin entregarse tras procesar las
 		//    llegadas de este paso. Un envío todavía en tránsito cuando t ya pasó
-		//    su deadline es un incumplimiento de SLA real (24h/48h). Los envíos
-		//    que vienen sin tramos o como rechazos operativos permanecen pendientes
-		//    hasta que se supera el deadline y solo entonces se marcan como
-		//    "rechazado" por SLA.
+		//    su deadline es un incumplimiento de SLA real (24h/48h). Los envíos que
+		//    vienen marcados como rechazados operativos o sin ruta ya están
+		//    rechazados desde la carga del plan; aquí solo se marca SLA cuando un
+		//    envío válido supera el deadline sin entregarse.
 		if e.Estado != "entregado" && e.Estado != "rechazado" && e.DeadlineUTC > 0 && t > e.DeadlineUTC {
 			estadoPrevio := e.Estado
 			e.Estado = "rechazado"
@@ -522,7 +522,14 @@ func (s *Simulacion) cargarPlan(plan PlanResponse) {
 			Estado:      "pendiente",
 		}
 
-		if len(ep.Tramos) > 0 {
+		if ep.Estado == "Rechazado" {
+			e.Estado = "rechazado"
+			e.MotivoRechazo = "planificador"
+		} else if len(ep.Tramos) == 0 {
+			e.Estado = "rechazado"
+			e.MotivoRechazo = "sin_ruta"
+		} else {
+			e.Estado = "pendiente"
 			e.Tramos = make([]TramoSim, len(ep.Tramos))
 			for i, t := range ep.Tramos {
 				st := "pendiente"
@@ -539,17 +546,12 @@ func (s *Simulacion) cargarPlan(plan PlanResponse) {
 				}
 			}
 			// Asegurar que el aeropuerto origen exista (si no vino en la lista de
-			// capacidades, se crea con la capacidad por defecto).
+			// capacidades, se crea con la capacidad por defecto.
 			s.asegurarAeropuerto(e.Origen)
 			// Asegurar también los aeropuertos de escala/destino de los tramos.
 			for _, tr := range e.Tramos {
 				s.asegurarAeropuerto(tr.Hasta)
 			}
-		} else {
-			// Sin tramos o plan operativo rechazado: el envío se deja pendiente.
-			// Solo se marcará "rechazado" si luego supera el deadline sin entrega.
-			e.Tramos = nil
-			s.asegurarAeropuerto(e.Origen)
 		}
 		s.Envios = append(s.Envios, e)
 	}

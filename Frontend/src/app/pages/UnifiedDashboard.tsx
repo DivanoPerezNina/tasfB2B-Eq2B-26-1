@@ -291,11 +291,6 @@ export function UnifiedDashboard() {
                   <span className="font-semibold text-indigo-500">{contadores.en_escala}</span> en escala
                 </span>
               )}
-              {contadores.rechazado > 0 && (
-                <span className="text-[11px] text-panel-text-muted">
-                  <span className="font-semibold text-red-500">{contadores.rechazado}</span> rechazados
-                </span>
-              )}
             </div>
           </>
         )}
@@ -363,7 +358,6 @@ export function UnifiedDashboard() {
                   { label: 'Entregados',    value: contadores.entregado, color: 'text-green-500' },
                   { label: 'En tránsito',   value: contadores.en_vuelo + contadores.en_escala, color: 'text-blue-500' },
                   { label: 'Pendientes',    value: contadores.pendiente, color: 'text-panel-text-muted' },
-                  { label: 'Incumplimientos SLA',    value: contadores.rechazado, color: contadores.rechazado > 0 ? 'text-amber-500' : 'text-panel-text-muted' },
                   { label: 'Tasa éxito',    value: `${stats.onTimeDeliveryRate.toFixed(1)}%`, color: 'text-green-500' },
                 ].map(d => (
                   <div key={d.label} className="rounded-xl bg-panel-section-bg p-3">
@@ -615,11 +609,6 @@ export function UnifiedDashboard() {
                   <span className="rounded bg-green-500/10 px-1.5 py-0.5 text-[9px] text-green-600 dark:text-green-400">
                     {contadores.entregado} entregados
                   </span>
-                  {contadores.rechazado > 0 && (
-                    <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[9px] text-amber-600 dark:text-amber-400">
-                      {contadores.rechazado} SLA
-                    </span>
-                  )}
                 </div>
               </div>
             </div>

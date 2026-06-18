@@ -60,7 +60,7 @@ type EstadoEnvio struct {
 	Tramos      []TramoSim
 	TramoActual    int    // índice del tramo actual (0, 1, 2)
 	Estado         string // pendiente|en_vuelo|en_escala|entregado|rechazado
-	MotivoRechazo  string // sla
+	MotivoRechazo  string // sla|planificador|sin_ruta
 	Registrado     bool   // true cuando el envío ya ingresó al almacén origen (t >= RegistroUTC)
 }
 
