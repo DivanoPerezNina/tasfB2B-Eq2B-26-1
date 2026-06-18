@@ -424,37 +424,38 @@ func (s *Simulacion) procesarEventos(t int64) {
 		for j := e.TramoActual; j < len(e.Tramos); j++ {
 			tr := &e.Tramos[j]
 
-			switch tr.Estado {
-			case "pendiente":
-				if t >= tr.SalidaUTC {
-					tr.Estado = "en_vuelo"
-					e.Estado = "en_vuelo"
-					e.TramoActual = j
-					// Sale del almacén origen
-					if aero, ok := s.Aeropuertos[tr.Desde]; ok {
-						aero.MaletasAlmacen -= e.Maletas
-						if aero.MaletasAlmacen < 0 {
-							aero.MaletasAlmacen = 0
-						}
+			// Decolaje: cambiar de pendiente a en_vuelo
+			if tr.Estado == "pendiente" && t >= tr.SalidaUTC {
+				tr.Estado = "en_vuelo"
+				e.Estado = "en_vuelo"
+				e.TramoActual = j
+				// Sale del almacén origen
+				if aero, ok := s.Aeropuertos[tr.Desde]; ok {
+					aero.MaletasAlmacen -= e.Maletas
+					if aero.MaletasAlmacen < 0 {
+						aero.MaletasAlmacen = 0
 					}
 				}
+			}
 
-			case "en_vuelo":
-				if t >= tr.LlegadaUTC {
-					tr.Estado = "completado"
-					// ¿Hay tramo siguiente?
-					if j+1 < len(e.Tramos) {
-						e.Tramos[j+1].Estado = "pendiente"
-						e.Estado = "en_escala"
-						e.TramoActual = j + 1
-						// Entra al almacén de escala
-						if aero, ok := s.Aeropuertos[tr.Hasta]; ok {
-							aero.MaletasAlmacen += e.Maletas
-						}
-					} else {
-						e.Estado = "entregado"
-						e.TramoActual = j
+			// Llegada: cambiar de en_vuelo a completado (y avanzar envío si aplica)
+			// Se evalúa en el mismo tick: si el tramo acaba de pasar a en_vuelo
+			// y t >= LlegadaUTC, se procesa la llegada inmediatamente.
+			if tr.Estado == "en_vuelo" && t >= tr.LlegadaUTC {
+				tr.Estado = "completado"
+				// ¿Hay tramo siguiente?
+				if j+1 < len(e.Tramos) {
+					e.Tramos[j+1].Estado = "pendiente"
+					e.Estado = "en_escala"
+					e.TramoActual = j + 1
+					// Entra al almacén de escala
+					if aero, ok := s.Aeropuertos[tr.Hasta]; ok {
+						aero.MaletasAlmacen += e.Maletas
 					}
+				} else {
+					// Es el último tramo; el envío se entrega
+					e.Estado = "entregado"
+					e.TramoActual = j
 				}
 			}
 		}
