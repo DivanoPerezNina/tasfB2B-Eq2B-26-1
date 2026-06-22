@@ -174,11 +174,11 @@ public class PlanificadorService {
      * archivos. Java no toca disco ni BD para los envíos → menos RAM/IO.
      */
     public List<EnvioAsignado> planificarConRutasDesdeLista(
-            List<Map<String, Object>> envios, CriterioOrden criterio, long semilla) {
+            List<EnvioDTO> envios, CriterioOrden criterio, long semilla) {
         GestorDatos datos = new GestorDatos();
         datos.cargarAeropuertos(rutaAeropuertos);
         datos.cargarVuelos(rutaVuelos);
-        datos.cargarEnviosDesdeLista(envios);
+        datos.cargarEnviosDesdeArray(envios);
         return construirRutas(datos, criterio, semilla);
     }
 
