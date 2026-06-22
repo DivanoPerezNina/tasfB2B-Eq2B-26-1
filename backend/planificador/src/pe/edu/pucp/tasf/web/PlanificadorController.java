@@ -4,6 +4,12 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
+
+import java.io.BufferedWriter;
+import java.io.OutputStreamWriter;
+import java.io.Writer;
+import java.nio.charset.StandardCharsets;
 
 import pe.edu.pucp.tasf.gvns.CriterioOrden;
 import pe.edu.pucp.tasf.gvns.EnvioAsignado;
@@ -256,9 +262,9 @@ public class PlanificadorController {
     }
 
     @PostMapping("/planificacion/desde-datos")
-    public ResponseEntity<String> desdeDatos(@RequestBody DesdeDatosRequest req) {
+    public ResponseEntity<StreamingResponseBody> desdeDatos(@RequestBody DesdeDatosRequest req) {
         if (req == null || req.envios() == null) {
-            return error(400, "PARAM_FALTANTE", "Se requiere 'envios' (lista)");
+            return streamError(400, "PARAM_FALTANTE", "Se requiere 'envios' (lista)");
         }
         long ini = req.iniUTC() != null ? req.iniUTC() : 0L;
         long fin = req.finUTC() != null ? req.finUTC() : 0L;
@@ -272,20 +278,41 @@ public class PlanificadorController {
                     : props.getCriterioDefault().toUpperCase();
             criterio = CriterioOrden.valueOf(c);
         } catch (IllegalArgumentException e) {
-            return error(400, "CRITERIO_INVALIDO", "ALEATORIO | EDF | FIFO");
+            return streamError(400, "CRITERIO_INVALIDO", "ALEATORIO | EDF | FIFO");
         }
 
+        // Planificación EAGER (aquí, no en el lambda) para que las excepciones se
+        // traduzcan a un status HTTP correcto antes de empezar a escribir el body.
+        final List<EnvioAsignado> asignados;
+        final ResultadoPlanificacion meta;
+        final Map<String, Integer> caps;
         try {
             PlanificadorService svc = new PlanificadorService(
                     props.getRutaAeropuertos(), props.getRutaVuelos(), props.getRutaEnvios());
-            List<EnvioAsignado> asignados = svc.planificarConRutasDesdeLista(req.envios(), criterio, semilla);
-            ResultadoPlanificacion meta = PlanificadorService.metaDesdeEnvios(asignados, ini, fin, criterio);
-            String json = PlanificadorService.serializarPlanJSON(
-                    asignados, meta, obs, svc.capacidadesAlmacen());
-            return ok(json);
+            asignados = svc.planificarConRutasDesdeLista(req.envios(), criterio, semilla);
+            meta = PlanificadorService.metaDesdeEnvios(asignados, ini, fin, criterio);
+            caps = svc.capacidadesAlmacen();
         } catch (Exception e) {
-            return error(500, "PLAN_ERROR", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+            return streamError(500, "PLAN_ERROR",
+                    e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
         }
+
+        // Streaming del plan al OutputStream de la respuesta: evita construir el
+        // String completo del plan en memoria (el mayor pico de heap a horizontes
+        // grandes). La lista 'asignados' se libera al cerrar el stream.
+        StreamingResponseBody body = os -> {
+            try (Writer w = new BufferedWriter(new OutputStreamWriter(os, StandardCharsets.UTF_8))) {
+                PlanificadorService.serializarPlanJSON(w, asignados, meta, obs, caps);
+            }
+        };
+        return ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON).body(body);
+    }
+
+    /** Error como cuerpo en streaming, para mantener el tipo de retorno del endpoint. */
+    private static ResponseEntity<StreamingResponseBody> streamError(int status, String codigo, String mensaje) {
+        String json = "{\"error\":\"" + codigo + "\",\"mensaje\":\"" + escapar(mensaje) + "\"}";
+        StreamingResponseBody body = os -> os.write(json.getBytes(StandardCharsets.UTF_8));
+        return ResponseEntity.status(status).contentType(MediaType.APPLICATION_JSON).body(body);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

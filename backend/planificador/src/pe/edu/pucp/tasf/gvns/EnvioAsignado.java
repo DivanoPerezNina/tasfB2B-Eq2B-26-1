@@ -1,5 +1,6 @@
 package pe.edu.pucp.tasf.gvns;
 
+import java.io.IOException;
 import java.util.List;
 
 /**
@@ -72,28 +73,30 @@ public final class EnvioAsignado {
 
     // ── Serialización JSON manual (sin Jackson) ───────────────────────────────
 
-    /** Escribe este envío como objeto JSON en el StringBuilder. */
-    public void appendJSON(StringBuilder sb) {
-        sb.append("{");
-        sb.append("\"indice\":").append(indice).append(',');
-        sb.append("\"origen\":\"").append(origen).append("\",");
-        sb.append("\"destino\":\"").append(destino).append("\",");
-        sb.append("\"maletas\":").append(maletas).append(',');
-        sb.append("\"registroUTC\":").append(registroUTC).append(',');
-        sb.append("\"deadlineUTC\":").append(deadlineUTC).append(',');
-        sb.append("\"estado\":\"").append(estado).append("\",");
-        sb.append("\"tramos\":[");
+    /**
+     * Escribe este envío como objeto JSON en un {@link Appendable} cualquiera.
+     *
+     * <p>Acepta {@code Appendable} (no solo {@code StringBuilder}) para poder
+     * escribir directo al {@code Writer} de la respuesta HTTP y evitar construir
+     * un String gigante del plan completo en memoria — el mayor pico de heap del
+     * esquema Sa/Sc a horizontes grandes.
+     */
+    public void appendJSON(Appendable out) throws IOException {
+        out.append("{\"indice\":").append(Integer.toString(indice));
+        out.append(",\"origen\":\"").append(origen).append("\",\"destino\":\"").append(destino);
+        out.append("\",\"maletas\":").append(Integer.toString(maletas));
+        out.append(",\"registroUTC\":").append(Long.toString(registroUTC));
+        out.append(",\"deadlineUTC\":").append(Long.toString(deadlineUTC));
+        out.append(",\"estado\":\"").append(estado).append("\",\"tramos\":[");
         for (int i = 0; i < tramos.size(); i++) {
-            if (i > 0) sb.append(',');
+            if (i > 0) out.append(',');
             Tramo t = tramos.get(i);
-            sb.append("{");
-            sb.append("\"vueloIdx\":").append(t.vueloIdx).append(',');
-            sb.append("\"desde\":\"").append(t.desde).append("\",");
-            sb.append("\"hasta\":\"").append(t.hasta).append("\",");
-            sb.append("\"salidaUTC\":").append(t.salidaUTC).append(',');
-            sb.append("\"llegadaUTC\":").append(t.llegadaUTC);
-            sb.append("}");
+            out.append("{\"vueloIdx\":").append(Integer.toString(t.vueloIdx));
+            out.append(",\"desde\":\"").append(t.desde).append("\",\"hasta\":\"").append(t.hasta);
+            out.append("\",\"salidaUTC\":").append(Long.toString(t.salidaUTC));
+            out.append(",\"llegadaUTC\":").append(Long.toString(t.llegadaUTC));
+            out.append('}');
         }
-        sb.append("]}");
+        out.append("]}");
     }
 }

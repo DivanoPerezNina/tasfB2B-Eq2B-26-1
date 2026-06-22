@@ -1,5 +1,7 @@
 package pe.edu.pucp.tasf.gvns;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -251,40 +253,59 @@ public class PlanificadorService {
                                              long observacionIniUTC,
                                              Map<String, Integer> capacidades) {
         StringBuilder sb = new StringBuilder(envios.size() * 200);
-        sb.append("{\"resumen\":{");
-        sb.append("\"totalEnvios\":").append(meta.totalEnvios).append(',');
-        sb.append("\"exitosos\":").append(meta.exitosos).append(',');
-        sb.append("\"rechazados\":").append(meta.rechazados).append(',');
-        sb.append("\"salvadosPorGVNS\":").append(meta.salvadosPorGVNS).append(',');
-        sb.append("\"tasaExito\":").append(String.format("%.4f", meta.tasaExito)).append(',');
-        sb.append("\"tiempoFase2Seg\":").append(String.format("%.3f", meta.tiempoFase2Seg)).append(',');
-        sb.append("\"tiempoFase3Seg\":").append(String.format("%.3f", meta.tiempoFase3Seg)).append(',');
-        sb.append("\"ventanaIniUTC\":").append(meta.ventanaIniUTC).append(',');
-        sb.append("\"ventanaFinUTC\":").append(meta.ventanaFinUTC).append(',');
-        sb.append("\"observacionIniUTC\":").append(observacionIniUTC);
-        sb.append("},");
+        try {
+            serializarPlanJSON(sb, envios, meta, observacionIniUTC, capacidades);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e); // StringBuilder no lanza IOException
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Igual que {@link #serializarPlanJSON(List, ResultadoPlanificacion, long, Map)}
+     * pero escribe el plan a un {@link Appendable} (ej. el {@code Writer} de la
+     * respuesta HTTP) en vez de materializar un String. A horizontes grandes el
+     * String del plan completo + su copia en {@code toString()} eran ~1 GB de pico
+     * transitorio; escribirlo en streaming los elimina. El JSON es byte-idéntico.
+     */
+    public static void serializarPlanJSON(Appendable out,
+                                          List<EnvioAsignado> envios,
+                                          ResultadoPlanificacion meta,
+                                          long observacionIniUTC,
+                                          Map<String, Integer> capacidades) throws IOException {
+        out.append("{\"resumen\":{");
+        out.append("\"totalEnvios\":").append(Integer.toString(meta.totalEnvios));
+        out.append(",\"exitosos\":").append(Integer.toString(meta.exitosos));
+        out.append(",\"rechazados\":").append(Integer.toString(meta.rechazados));
+        out.append(",\"salvadosPorGVNS\":").append(Integer.toString(meta.salvadosPorGVNS));
+        out.append(",\"tasaExito\":").append(String.format("%.4f", meta.tasaExito));
+        out.append(",\"tiempoFase2Seg\":").append(String.format("%.3f", meta.tiempoFase2Seg));
+        out.append(",\"tiempoFase3Seg\":").append(String.format("%.3f", meta.tiempoFase3Seg));
+        out.append(",\"ventanaIniUTC\":").append(Long.toString(meta.ventanaIniUTC));
+        out.append(",\"ventanaFinUTC\":").append(Long.toString(meta.ventanaFinUTC));
+        out.append(",\"observacionIniUTC\":").append(Long.toString(observacionIniUTC));
+        out.append("},");
 
         // Capacidades reales de almacén por aeropuerto (para que el Ejecutor
         // calcule ocupación y semáforo contra el valor correcto, no un default).
-        sb.append("\"aeropuertos\":[");
+        out.append("\"aeropuertos\":[");
         if (capacidades != null) {
             boolean first = true;
             for (Map.Entry<String, Integer> e : capacidades.entrySet()) {
-                if (!first) sb.append(',');
+                if (!first) out.append(',');
                 first = false;
-                sb.append("{\"iata\":\"").append(e.getKey())
-                  .append("\",\"capacidad\":").append(e.getValue()).append('}');
+                out.append("{\"iata\":\"").append(e.getKey())
+                   .append("\",\"capacidad\":").append(Integer.toString(e.getValue())).append('}');
             }
         }
-        sb.append("],");
+        out.append("],");
 
-        sb.append("\"envios\":[");
+        out.append("\"envios\":[");
         for (int i = 0; i < envios.size(); i++) {
-            if (i > 0) sb.append(',');
-            envios.get(i).appendJSON(sb);
+            if (i > 0) out.append(',');
+            envios.get(i).appendJSON(out);
         }
-        sb.append("]}");
-        return sb.toString();
+        out.append("]}");
     }
 
     /**
