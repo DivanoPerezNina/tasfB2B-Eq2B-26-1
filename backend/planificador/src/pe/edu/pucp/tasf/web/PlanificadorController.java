@@ -281,28 +281,17 @@ public class PlanificadorController {
             return streamError(400, "CRITERIO_INVALIDO", "ALEATORIO | EDF | FIFO");
         }
 
-        // Planificación EAGER (aquí, no en el lambda) para que las excepciones se
-        // traduzcan a un status HTTP correcto antes de empezar a escribir el body.
-        final List<EnvioAsignado> asignados;
-        final ResultadoPlanificacion meta;
-        final Map<String, Integer> caps;
-        try {
-            PlanificadorService svc = new PlanificadorService(
-                    props.getRutaAeropuertos(), props.getRutaVuelos(), props.getRutaEnvios());
-            asignados = svc.planificarConRutasDesdeLista(req.envios(), criterio, semilla);
-            meta = PlanificadorService.metaDesdeEnvios(asignados, ini, fin, criterio);
-            caps = svc.capacidadesAlmacen();
-        } catch (Exception e) {
-            return streamError(500, "PLAN_ERROR",
-                    e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
-        }
+        final PlanificadorService svc = new PlanificadorService(
+                props.getRutaAeropuertos(), props.getRutaVuelos(), props.getRutaEnvios());
+        final CriterioOrden crit = criterio;
 
-        // Streaming del plan al OutputStream de la respuesta: evita construir el
-        // String completo del plan en memoria (el mayor pico de heap a horizontes
-        // grandes). La lista 'asignados' se libera al cerrar el stream.
+        // Streaming directo desde el solver: ni lista de EnvioAsignado ni String
+        // del plan en memoria (los dos mayores picos de heap a horizontes grandes).
+        // El GVNS corre dentro del lambda; un OOM aquí trunca el body (el cliente lo
+        // ve como EOF), igual que el comportamiento anterior ante falta de memoria.
         StreamingResponseBody body = os -> {
             try (Writer w = new BufferedWriter(new OutputStreamWriter(os, StandardCharsets.UTF_8))) {
-                PlanificadorService.serializarPlanJSON(w, asignados, meta, obs, caps);
+                svc.planificarYStreamDesdeLista(req.envios(), crit, semilla, ini, fin, obs, w);
             }
         };
         return ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON).body(body);
