@@ -6,6 +6,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -423,49 +424,52 @@ func (s *Simulacion) procesarEventos(t int64) {
 		for j := e.TramoActual; j < len(e.Tramos); j++ {
 			tr := &e.Tramos[j]
 
-			switch tr.Estado {
-			case "pendiente":
-				if t >= tr.SalidaUTC {
-					tr.Estado = "en_vuelo"
-					e.Estado = "en_vuelo"
-					e.TramoActual = j
-					// Sale del almacén origen
-					if aero, ok := s.Aeropuertos[tr.Desde]; ok {
-						aero.MaletasAlmacen -= e.Maletas
-						if aero.MaletasAlmacen < 0 {
-							aero.MaletasAlmacen = 0
-						}
+			// Decolaje: cambiar de pendiente a en_vuelo
+			if tr.Estado == "pendiente" && t >= tr.SalidaUTC {
+				tr.Estado = "en_vuelo"
+				e.Estado = "en_vuelo"
+				e.TramoActual = j
+				// Sale del almacén origen
+				if aero, ok := s.Aeropuertos[tr.Desde]; ok {
+					aero.MaletasAlmacen -= e.Maletas
+					if aero.MaletasAlmacen < 0 {
+						aero.MaletasAlmacen = 0
 					}
 				}
+			}
 
-			case "en_vuelo":
-				if t >= tr.LlegadaUTC {
-					tr.Estado = "completado"
-					// ¿Hay tramo siguiente?
-					if j+1 < len(e.Tramos) {
-						e.Tramos[j+1].Estado = "pendiente"
-						e.Estado = "en_escala"
-						e.TramoActual = j + 1
-						// Entra al almacén de escala
-						if aero, ok := s.Aeropuertos[tr.Hasta]; ok {
-							aero.MaletasAlmacen += e.Maletas
-						}
-					} else {
-						e.Estado = "entregado"
-						e.TramoActual = j
+			// Llegada: cambiar de en_vuelo a completado (y avanzar envío si aplica)
+			// Se evalúa en el mismo tick: si el tramo acaba de pasar a en_vuelo
+			// y t >= LlegadaUTC, se procesa la llegada inmediatamente.
+			if tr.Estado == "en_vuelo" && t >= tr.LlegadaUTC {
+				tr.Estado = "completado"
+				// ¿Hay tramo siguiente?
+				if j+1 < len(e.Tramos) {
+					e.Tramos[j+1].Estado = "pendiente"
+					e.Estado = "en_escala"
+					e.TramoActual = j + 1
+					// Entra al almacén de escala
+					if aero, ok := s.Aeropuertos[tr.Hasta]; ok {
+						aero.MaletasAlmacen += e.Maletas
 					}
+				} else {
+					// Es el último tramo; el envío se entrega
+					e.Estado = "entregado"
+					e.TramoActual = j
 				}
 			}
 		}
 
 		// 2) Deadline: solo si el envío SIGUE sin entregarse tras procesar las
 		//    llegadas de este paso. Un envío todavía en tránsito cuando t ya pasó
-		//    su deadline es un incumplimiento de SLA real (24h/48h). Como el
-		//    Planificador solo asigna rutas que cumplen el deadline, en la práctica
-		//    esto solo dispara para envíos sin ruta factible (ya marcados al cargar).
-		if e.Estado != "entregado" && e.DeadlineUTC > 0 && t > e.DeadlineUTC {
+		//    su deadline es un incumplimiento de SLA real (24h/48h). Los envíos que
+		//    vienen marcados como rechazados operativos o sin ruta ya están
+		//    rechazados desde la carga del plan; aquí solo se marca SLA cuando un
+		//    envío válido supera el deadline sin entregarse.
+		if e.Estado != "entregado" && e.Estado != "rechazado" && e.DeadlineUTC > 0 && t > e.DeadlineUTC {
 			estadoPrevio := e.Estado
 			e.Estado = "rechazado"
+			e.MotivoRechazo = "sla"
 			// Liberar las maletas del almacén donde estaban esperando. Solo si
 			// seguían registradas y sin despegar (pendiente=origen) o en escala.
 			if e.Registrado && estadoPrevio == "pendiente" {
@@ -517,10 +521,15 @@ func (s *Simulacion) cargarPlan(plan PlanResponse) {
 			Maletas:     ep.Maletas,
 			RegistroUTC: ep.RegistroUTC,
 			DeadlineUTC: ep.DeadlineUTC,
+			Estado:      "pendiente",
 		}
 
-		if ep.Estado == "Rechazado" || len(ep.Tramos) == 0 {
+		if ep.Estado == "Rechazado" {
 			e.Estado = "rechazado"
+			e.MotivoRechazo = "planificador"
+		} else if len(ep.Tramos) == 0 {
+			e.Estado = "rechazado"
+			e.MotivoRechazo = "sin_ruta"
 		} else {
 			e.Estado = "pendiente"
 			e.Tramos = make([]TramoSim, len(ep.Tramos))
@@ -539,7 +548,7 @@ func (s *Simulacion) cargarPlan(plan PlanResponse) {
 				}
 			}
 			// Asegurar que el aeropuerto origen exista (si no vino en la lista de
-			// capacidades, se crea con la capacidad por defecto).
+			// capacidades, se crea con la capacidad por defecto.
 			s.asegurarAeropuerto(e.Origen)
 			// Asegurar también los aeropuertos de escala/destino de los tramos.
 			for _, tr := range e.Tramos {
@@ -582,6 +591,60 @@ func (s *Simulacion) calcularContadores() Contadores {
 	return c
 }
 
+func (s *Simulacion) contarRechazosSLA() int {
+	c := 0
+	for _, e := range s.Envios {
+		if e.Estado == "rechazado" && e.MotivoRechazo == "sla" {
+			c++
+		}
+	}
+	return c
+}
+
+func (s *Simulacion) detalleRechazosSLA(limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+
+	parts := make([]string, 0, limit)
+	for _, e := range s.Envios {
+		if e.Estado == "rechazado" && e.MotivoRechazo == "sla" {
+			// Construir detalle de tramos
+			tramosParts := make([]string, 0, len(e.Tramos))
+			for i, tr := range e.Tramos {
+				tramoDet := fmt.Sprintf("%d:%s->%s salida=%d llegada=%d estado=%s",
+					i, tr.Desde, tr.Hasta, tr.SalidaUTC, tr.LlegadaUTC, tr.Estado)
+				tramosParts = append(tramosParts, tramoDet)
+			}
+			tramosStr := strings.Join(tramosParts, "|")
+
+			envioStr := fmt.Sprintf(
+				"idx=%d %s->%s registro=%d deadline=%d tramos=%d tramoActual=%d estado=%s motivo=%s",
+				e.Indice,
+				e.Origen,
+				e.Destino,
+				e.RegistroUTC,
+				e.DeadlineUTC,
+				len(e.Tramos),
+				e.TramoActual,
+				e.Estado,
+				e.MotivoRechazo,
+			)
+
+			if tramosStr != "" {
+				envioStr = fmt.Sprintf("%s | tramos=[%s]", envioStr, tramosStr)
+			}
+
+			parts = append(parts, envioStr)
+			if len(parts) >= limit {
+				break
+			}
+		}
+	}
+
+	return strings.Join(parts, " | ")
+}
+
 func (s *Simulacion) snapshotAeropuertos() []map[string]interface{} {
 	out := make([]map[string]interface{}, 0, len(s.Aeropuertos))
 	for _, a := range s.Aeropuertos {
@@ -596,6 +659,59 @@ func (s *Simulacion) snapshotAeropuertos() []map[string]interface{} {
 			"ocupacion":         math.Round(ocup*1000) / 1000, // número 0..1 (3 decimales)
 			"semaforo":          a.Semaforo,
 		})
+	}
+	return out
+}
+
+// todosLosTramos devuelve todos los tramos del plan (para que el mapa los anime
+// con el reloj continuo). Debe llamarse bajo s.mu.
+func (s *Simulacion) todosLosTramos() []map[string]interface{} {
+	out := make([]map[string]interface{}, 0, 1024)
+	for i := range s.Envios {
+		e := &s.Envios[i]
+		for j := range e.Tramos {
+			tr := &e.Tramos[j]
+			out = append(out, map[string]interface{}{
+				"envioIndice": e.Indice,
+				"tramoIndex":  j,
+				"desde":       tr.Desde,
+				"hasta":       tr.Hasta,
+				"salidaUTC":   tr.SalidaUTC,
+				"llegadaUTC":  tr.LlegadaUTC,
+				"maletas":     e.Maletas,
+			})
+		}
+	}
+	return out
+}
+
+// vuelosActivos devuelve los tramos EN VUELO en el instante t (salida ≤ t <
+// llegada), para que el mapa dibuje los aviones. Debe llamarse bajo s.mu.
+func (s *Simulacion) vuelosActivos(t int64) []map[string]interface{} {
+	out := make([]map[string]interface{}, 0, 256)
+	for i := range s.Envios {
+		e := &s.Envios[i]
+		if e.Estado != "en_vuelo" {
+			continue
+		}
+		for j := range e.Tramos {
+			tr := &e.Tramos[j]
+			if tr.Estado == "en_vuelo" && t >= tr.SalidaUTC && t < tr.LlegadaUTC {
+				dur := tr.LlegadaUTC - tr.SalidaUTC
+				prog := 0.0
+				if dur > 0 {
+					prog = float64(t-tr.SalidaUTC) / float64(dur)
+				}
+				out = append(out, map[string]interface{}{
+					"desde":      tr.Desde,
+					"hasta":      tr.Hasta,
+					"salidaUTC":  tr.SalidaUTC,
+					"llegadaUTC": tr.LlegadaUTC,
+					"maletas":    e.Maletas,
+					"progreso":   prog,
+				})
+			}
+		}
 	}
 	return out
 }

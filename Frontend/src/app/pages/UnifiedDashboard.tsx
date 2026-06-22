@@ -84,6 +84,7 @@ export function UnifiedDashboard() {
   const {
     stats, getAirportStats,
     fase, contadores, progresoPct, warmupPct, simulationTime,
+    collapseFailure, lastValidTick, config,
     pausarSimulacion, reanudarSimulacion, detenerSimulacion, resetear,
   } = useSimulation();
   const {
@@ -225,6 +226,16 @@ export function UnifiedDashboard() {
     idle:       { text: 'Inactivo',   color: 'text-panel-text-faint' },
   };
   const fl = faseLabel[fase] ?? faseLabel.idle;
+  const inicioSimMin = Math.floor(Date.UTC(
+    config.startDate.getFullYear(),
+    config.startDate.getMonth(),
+    config.startDate.getDate(),
+    config.startDate.getHours(),
+    config.startDate.getMinutes()
+  ) / 60000);
+  const finSimMin = lastValidTick?.tiempo_sim_utc ?? Math.floor(simulationTime.getTime() / 60000);
+  const fechaFinSim = new Date(finSimMin * 60 * 1000);
+  const diasSimulados = Math.max(0, Math.ceil((finSimMin - inicioSimMin) / 1440));
 
   return (
     <div className="relative flex h-full flex-col bg-background">
@@ -291,11 +302,6 @@ export function UnifiedDashboard() {
                   <span className="font-semibold text-indigo-500">{contadores.en_escala}</span> en escala
                 </span>
               )}
-              {contadores.rechazado > 0 && (
-                <span className="text-[11px] text-panel-text-muted">
-                  <span className="font-semibold text-red-500">{contadores.rechazado}</span> rechazados
-                </span>
-              )}
             </div>
           </>
         )}
@@ -342,7 +348,7 @@ export function UnifiedDashboard() {
       {/* ── Completion overlay ── */}
       {showCompletion && fase === 'completado' && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-          <div className="relative mx-4 w-full max-w-md rounded-2xl border border-panel-border bg-panel-bg p-8 shadow-2xl">
+          <div className="relative mx-4 w-full max-w-xl rounded-2xl border border-panel-border bg-panel-bg p-6 shadow-2xl max-h-[85vh] overflow-y-auto">
             <button
               onClick={() => setShowCompletion(false)}
               className="absolute right-4 top-4 text-panel-text-faint hover:text-panel-text transition-colors"
@@ -350,28 +356,52 @@ export function UnifiedDashboard() {
               <X className="h-4 w-4" />
             </button>
             <div className="flex flex-col items-center text-center gap-4">
-              <div className="flex h-16 w-16 items-center justify-center rounded-full bg-green-500/15">
-                <Trophy className="h-8 w-8 text-green-500" />
+              <div className={`flex h-16 w-16 items-center justify-center rounded-full ${collapseFailure ? 'bg-red-500/10' : 'bg-green-500/15'}`}>
+                {collapseFailure ? (
+                  <AlertCircle className="h-8 w-8 text-red-500" />
+                ) : (
+                  <Trophy className="h-8 w-8 text-green-500" />
+                )}
               </div>
               <div>
-                <h2 className="text-lg font-bold text-panel-text">Simulación completada</h2>
-                <p className="mt-1 text-sm text-panel-text-muted">Resultados finales del período</p>
+                <h2 className="text-lg font-bold text-panel-text">
+                  {collapseFailure ? 'No se llegó al colapso SLA' : 'Simulación completada'}
+                </h2>
+                <p className="mt-1 text-sm text-panel-text-muted">
+                  {collapseFailure
+                    ? 'La simulación se detuvo por un límite técnico del planificador antes de registrar rechazos SLA.'
+                    : 'Resultados finales del período'}
+                </p>
               </div>
-              <div className="grid w-full grid-cols-2 gap-3">
+              {collapseFailure && (
+                <span className="rounded-full bg-red-100 px-3 py-1 text-xs font-semibold text-red-700 dark:bg-red-900/30 dark:text-red-300">
+                  {collapseFailure.badge}
+                </span>
+              )}
+              <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
                 {[
-                  { label: 'Total envíos',  value: contadores.total,     color: 'text-panel-text' },
-                  { label: 'Entregados',    value: contadores.entregado, color: 'text-green-500' },
-                  { label: 'En tránsito',   value: contadores.en_vuelo + contadores.en_escala, color: 'text-blue-500' },
-                  { label: 'Pendientes',    value: contadores.pendiente, color: 'text-panel-text-muted' },
-                  { label: 'Rechazados',    value: contadores.rechazado, color: contadores.rechazado > 0 ? 'text-red-500' : 'text-panel-text-muted' },
-                  { label: 'Tasa éxito',    value: `${stats.onTimeDeliveryRate.toFixed(1)}%`, color: 'text-green-500' },
-                ].map(d => (
-                  <div key={d.label} className="rounded-xl bg-panel-section-bg p-3">
+                  { label: 'Fecha de inicio', value: format(config.startDate, 'dd/MM/yyyy HH:mm') },
+                  { label: 'Fecha de fin / límite técnico', value: format(fechaFinSim, 'dd/MM/yyyy HH:mm') },
+                  { label: 'Días simulados', value: diasSimulados },
+                  { label: 'Total envíos', value: lastValidTick?.contadores.total ?? contadores.total },
+                  { label: 'Entregados', value: lastValidTick?.contadores.entregado ?? contadores.entregado },
+                  { label: 'Pendientes', value: lastValidTick?.contadores.pendiente ?? contadores.pendiente },
+                  { label: config.scenario === 'collapse' ? 'En tránsito' : 'En vuelo', value: lastValidTick?.contadores.en_vuelo ?? contadores.en_vuelo },
+                  { label: 'En escala', value: lastValidTick?.contadores.en_escala ?? contadores.en_escala },
+                  { label: 'Rechazados SLA', value: lastValidTick?.contadores.rechazado ?? contadores.rechazado },
+                ].map((d) => (
+                  <div key={d.label} className="rounded-2xl bg-panel-section-bg p-3 text-left">
                     <p className="text-[10px] text-panel-text-faint">{d.label}</p>
-                    <p className={`mt-0.5 text-xl font-bold ${d.color}`}>{d.value}</p>
+                    <p className="mt-1 text-sm font-semibold text-panel-text">{d.value}</p>
                   </div>
                 ))}
               </div>
+              {collapseFailure && (
+                <details className="w-full rounded-2xl border border-panel-border bg-background p-3 text-left text-sm text-panel-text-muted">
+                  <summary className="cursor-pointer text-sm font-medium text-panel-text">Ver detalle técnico</summary>
+                  <p className="mt-2 whitespace-pre-wrap">{collapseFailure.technicalMessage}</p>
+                </details>
+              )}
               <button
                 onClick={() => setShowCompletion(false)}
                 className="w-full rounded-xl bg-blue-500 py-2.5 text-sm font-semibold text-white hover:bg-blue-600 transition-colors"
@@ -615,12 +645,12 @@ export function UnifiedDashboard() {
                   <span className="rounded bg-green-500/10 px-1.5 py-0.5 text-[9px] text-green-600 dark:text-green-400">
                     {contadores.entregado} entregados
                   </span>
-                  {contadores.rechazado > 0 && (
-                    <span className="rounded bg-red-500/10 px-1.5 py-0.5 text-[9px] text-red-600 dark:text-red-400">
-                      {contadores.rechazado} rech.
-                    </span>
-                  )}
                 </div>
+                <p className="text-[10px] text-panel-text-faint mt-2">
+                  {config.scenario === 'collapse'
+                    ? 'El porcentaje puede variar al generarse nuevos bloques de planificación.'
+                    : 'Se recalcula con cada bloque de simulación.'}
+                </p>
               </div>
             </div>
           </Section>

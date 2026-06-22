@@ -92,17 +92,18 @@ func InsertarEnviosBatch(tx *sql.Tx, rows []parser.Envio) error {
 		return nil
 	}
 	placeholders := make([]string, len(rows))
-	args := make([]interface{}, 0, len(rows)*7)
+	args := make([]interface{}, 0, len(rows)*10)
 	for i, e := range rows {
-		placeholders[i] = "(?, ?, ?, ?, ?, ?, ?, ?)"
+		placeholders[i] = "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 		args = append(args,
 			e.IDEnvio, e.OrigenIATA, e.FechaRegistro,
 			e.Hora, e.Minuto, e.DestinoIATA,
 			e.CantidadMaletas, e.IDCliente,
+			e.RegistroUTC, e.DeadlineUTC,
 		)
 	}
 	q := `INSERT IGNORE INTO envios
-		(id_envio, origen_iata, fecha_registro, hora, minuto, destino_iata, cantidad_maletas, id_cliente)
+		(id_envio, origen_iata, fecha_registro, hora, minuto, destino_iata, cantidad_maletas, id_cliente, registro_utc, deadline_utc)
 		VALUES ` + strings.Join(placeholders, ",")
 	_, err := tx.Exec(q, args...)
 	return err

@@ -34,4 +34,7 @@ type Envio struct {
 	DestinoIATA     string
 	CantidadMaletas int
 	IDCliente       int
+	// Precalculados en la carga (0 hasta que se calculan con el GMT/continente).
+	RegistroUTC int64 // minutos UTC absolutos desde Epoch
+	DeadlineUTC int64 // registro_utc + SLA (24h/48h)
 }

@@ -1,0 +1,315 @@
+package engine
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"sync"
+	"time"
+)
+
+// Orquestador implementa la PLANIFICACIÓN PROGRAMADA (esquema Sa/Sc):
+// cada Sa segundos reales planifica el bloque acumulado [iniPlan, H] consultando
+// los envíos a la BD (servicio de Consultas) y al Planificador (desde-datos),
+// avanza el horizonte H += Sc y emite el estado por SSE. El reloj de la
+// simulación avanza Sc minutos de datos por cada Sa segundos reales (K = Sc/Sa).
+type Orquestador struct {
+	ID              string
+	ConsultasURL    string
+	PlanificadorURL string
+
+	IniPlanUTC int64 // inicio de PLANIFICACIÓN (t0, o t0−lookback si warm-up)
+	T0UTC      int64 // inicio VISIBLE (la fecha/hora elegida)
+	FinUTC     int64 // fin visible (t0 + días·1440)
+	Sc         int64 // minutos de datos consumidos por bloque
+	Sa         time.Duration
+	Criterio   string
+	Umbrales   Umbrales
+	Colapso    *ConfigColapso
+
+	Broadcast func(event string, data interface{})
+
+	mu           sync.RWMutex
+	estado       string // ejecutando|pausado|detenido|completado
+	pauseCh      chan struct{}
+	resumeCh     chan struct{}
+	stopCh       chan struct{}
+	doneCh       chan struct{}
+	colapsoRojos map[string]int
+}
+
+// NuevoOrquestador construye el orquestador a partir de los parámetros del
+// esquema. `lookbackMin` > 0 activa el warm-up (planifica desde t0−lookback).
+func NuevoOrquestador(id, consultasURL, planificadorURL string,
+	t0, finUTC, sc int64, sa time.Duration, lookbackMin int64,
+	criterio string, umbrales Umbrales) *Orquestador {
+
+	iniPlan := t0
+	if lookbackMin > 0 {
+		iniPlan = t0 - lookbackMin
+	}
+	return &Orquestador{
+		ID:              id,
+		ConsultasURL:    consultasURL,
+		PlanificadorURL: planificadorURL,
+		IniPlanUTC:      iniPlan,
+		T0UTC:           t0,
+		FinUTC:          finUTC,
+		Sc:              sc,
+		Sa:              sa,
+		Criterio:        criterio,
+		Umbrales:        umbrales,
+		Broadcast:       func(string, interface{}) {},
+		estado:          "listo",
+		pauseCh:         make(chan struct{}, 1),
+		resumeCh:        make(chan struct{}, 1),
+		stopCh:          make(chan struct{}),
+		doneCh:          make(chan struct{}),
+		colapsoRojos:    make(map[string]int),
+	}
+}
+
+func (o *Orquestador) GetEstado() string {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+	return o.estado
+}
+
+func (o *Orquestador) setEstado(e string) {
+	o.mu.Lock()
+	o.estado = e
+	o.mu.Unlock()
+}
+
+// Iniciar lanza el bucle Sa/Sc en una goroutine.
+func (o *Orquestador) Iniciar() {
+	o.setEstado("ejecutando")
+	go o.run()
+}
+
+func (o *Orquestador) Pausar() {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.estado != "ejecutando" {
+		return
+	}
+	o.estado = "pausado"
+	select {
+	case o.pauseCh <- struct{}{}:
+	default:
+	}
+}
+
+func (o *Orquestador) Reanudar() {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.estado != "pausado" {
+		return
+	}
+	o.estado = "ejecutando"
+	select {
+	case o.resumeCh <- struct{}{}:
+	default:
+	}
+}
+
+func (o *Orquestador) Detener() {
+	o.mu.Lock()
+	if o.estado == "detenido" || o.estado == "completado" {
+		o.mu.Unlock()
+		return
+	}
+	o.estado = "detenido"
+	o.mu.Unlock()
+	close(o.stopCh)
+	<-o.doneCh
+}
+
+// ─── Bucle principal ─────────────────────────────────────────────────────────
+
+func (o *Orquestador) run() {
+	defer close(o.doneCh)
+
+	// Reloj de VISUALIZACIÓN continuo: avanza Sc minutos de datos por cada Sa
+	// segundos reales → avance por segundo = Sc / Sa (min-dato/seg).
+	avance := float64(o.Sc) / o.Sa.Seconds()
+	proximoH := o.T0UTC + o.Sc // se re-planifica cuando el reloj cruza este umbral
+
+	// Plan inicial: bloque [iniPlan, t0+Sc].
+	finIni := o.T0UTC + o.Sc
+	if finIni > o.FinUTC {
+		finIni = o.FinUTC
+	}
+	start := time.Now()
+	sim, err := o.planificarYcargar(finIni, o.T0UTC)
+	taSeg := time.Since(start).Seconds()
+	if err != nil {
+		o.Broadcast("fallo", map[string]interface{}{"mensaje": err.Error()})
+		return
+	}
+	if res, ok := o.detectarColapso(sim, taSeg, o.Sa.Seconds(), o.T0UTC); ok {
+		o.setEstado("completado")
+		o.Broadcast("colapso", res)
+		return
+	}
+	o.emitirTramos(sim)
+
+	tiempo := float64(o.T0UTC)
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-o.stopCh:
+			return
+		case <-o.pauseCh:
+			select {
+			case <-o.resumeCh:
+			case <-o.stopCh:
+				return
+			}
+		case <-ticker.C:
+			tiempo += avance
+			if tiempo > float64(o.FinUTC) {
+				tiempo = float64(o.FinUTC)
+			}
+			t := int64(tiempo)
+
+			// Re-planificación PROGRAMADA: cada vez que el reloj cruza un bloque
+			// (Sc), se consulta+planifica el siguiente tramo de datos y se manda
+			// el plan completo al mapa. Aquí está el delay (Ta) del esquema.
+			for t >= proximoH && proximoH < o.FinUTC {
+				nuevoFin := proximoH + o.Sc
+				if nuevoFin > o.FinUTC {
+					nuevoFin = o.FinUTC
+				}
+				start := time.Now()
+				nsim, err := o.planificarYcargar(nuevoFin, t)
+				taSeg := time.Since(start).Seconds()
+				if err != nil {
+					o.Broadcast("fallo", map[string]interface{}{"mensaje": err.Error()})
+					return
+				}
+				sim = nsim
+				if res, ok := o.detectarColapso(sim, taSeg, o.Sa.Seconds(), t); ok {
+					o.setEstado("completado")
+					o.Broadcast("colapso", res)
+					return
+				}
+				o.emitirTramos(sim)
+				proximoH += o.Sc
+			}
+
+			// Avanzar el estado al instante actual y emitir (cada segundo).
+			sim.mu.Lock()
+			sim.TiempoSimUTC = tiempo
+			sim.procesarEventos(t)
+			aeropuertos := sim.snapshotAeropuertos()
+			cont := sim.calcularContadores()
+			sim.mu.Unlock()
+
+			progreso := (tiempo - float64(o.T0UTC)) / float64(o.FinUTC-o.T0UTC) * 100.0
+			if progreso > 100 {
+				progreso = 100
+			}
+			o.Broadcast("tick", map[string]interface{}{
+				"tiempo_sim_utc": t,
+				"progreso_pct":   fmt.Sprintf("%.1f", progreso),
+				"contadores":     cont,
+			})
+			o.Broadcast("aeropuertos", aeropuertos)
+
+			if t >= o.FinUTC {
+				o.setEstado("completado")
+				o.Broadcast("completado", map[string]interface{}{
+					"mensaje": "Simulación de periodo completada", "contadores": cont,
+				})
+				return
+			}
+		}
+	}
+}
+
+// planificarYcargar consulta [iniPlan, fin], planifica (desde-datos) y carga el
+// plan en una Simulacion posicionada en el instante t.
+func (o *Orquestador) planificarYcargar(fin, t int64) (*Simulacion, error) {
+	envios, err := o.consultar(o.IniPlanUTC, fin)
+	if err != nil {
+		return nil, fmt.Errorf("consultas: %w", err)
+	}
+	planJSON, err := o.planificar(envios, o.IniPlanUTC, fin)
+	if err != nil {
+		return nil, fmt.Errorf("desde-datos: %w", err)
+	}
+	sim, err := Nueva("blk", planJSON, 0, o.Umbrales, time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("estado: %w", err)
+	}
+	sim.mu.Lock()
+	sim.TiempoSimUTC = float64(t)
+	sim.procesarEventos(t)
+	sim.mu.Unlock()
+	return sim, nil
+}
+
+// emitirTramos envía TODOS los tramos del plan actual para que el mapa anime
+// los aviones de forma continua (con cada tick el reloj avanza y los mueve).
+func (o *Orquestador) emitirTramos(sim *Simulacion) {
+	sim.mu.RLock()
+	tramos := sim.todosLosTramos()
+	sim.mu.RUnlock()
+	o.Broadcast("plan-tramos", tramos)
+}
+
+// ─── Llamadas a los servicios ────────────────────────────────────────────────
+
+type envioConsulta struct {
+	Origen      string `json:"origen"`
+	Destino     string `json:"destino"`
+	Maletas     int    `json:"maletas"`
+	RegistroUTC int64  `json:"registroUTC"`
+	DeadlineUTC int64  `json:"deadlineUTC"`
+}
+
+func (o *Orquestador) consultar(ini, fin int64) ([]envioConsulta, error) {
+	url := fmt.Sprintf("%s/envios?ini=%d&fin=%d", o.ConsultasURL, ini, fin)
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, b)
+	}
+	var r struct {
+		Envios []envioConsulta `json:"envios"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
+		return nil, err
+	}
+	return r.Envios, nil
+}
+
+func (o *Orquestador) planificar(envios []envioConsulta, ini, fin int64) (string, error) {
+	body, _ := json.Marshal(map[string]interface{}{
+		"iniUTC":            ini,
+		"finUTC":            fin,
+		"observacionIniUTC": o.T0UTC,
+		"criterio":          o.Criterio,
+		"envios":            envios,
+	})
+	resp, err := http.Post(o.PlanificadorURL+"/api/planificacion/desde-datos",
+		"application/json", bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, raw)
+	}
+	return string(raw), nil
+}

@@ -357,7 +357,7 @@ export function SimulationConfig() {
   const {
     config, updateConfig, datasetInfo,
     fase, planProgreso, planMensaje,
-    iniciarPlanificacion, iniciarSimulacion, pausarSimulacion,
+    iniciarPlanificacion, iniciarPeriodoProgramado, iniciarColapsoProgramado, iniciarSimulacion, pausarSimulacion,
     reanudarSimulacion, resetear,
     contadores,
     resetSimulation,
@@ -451,17 +451,42 @@ export function SimulationConfig() {
       return;
     }
     updateConfig(localConfig);
-    iniciarPlanificacion({
-      startDate:       localConfig.startDate,
-      dias:            diasEfectivos,
-      criterio:        localConfig.criterio,
-      // Realtime = tiempo real → duracion 0 (el backend usa avance 1 seg sim/seg real)
-      duracionRealMin: esRealtime ? 0 : localConfig.duracionRealMin,
-      // En Tiempo Real el warm-up es IMPLÍCITO y siempre activo: la idea es ver el
-      // estado de la red (aviones en vuelo, almacenes ocupados) en la fecha/hora
-      // elegida, lo que requiere reproducir el tramo previo (lookback). En Periodo
-      // el usuario decide con el toggle "Estado inicial de la red".
-      warmUp:          esRealtime ? true : localConfig.warmUp,
+
+    // Periodo → orquestador Sa/Sc: 30 bloques, Sa=120s, Sc=dias·48 (~60 min).
+    if (esPeriodo) {
+      iniciarPeriodoProgramado({
+        startDate: localConfig.startDate,
+        dias:      localConfig.dias,
+        criterio:  localConfig.criterio,
+        warmUp:    localConfig.warmUp,  // el usuario decide el estado inicial
+      });
+      return;
+    }
+
+    // Tiempo Real → orquestador con K=60 (1 min-dato/seg-real): 1 día en ~24 min.
+    if (esRealtime) {
+      iniciarPeriodoProgramado({
+        startDate: localConfig.startDate,
+        dias:      1,
+        criterio:  localConfig.criterio,
+        warmUp:    localConfig.warmUp,
+        scMin:     60,   // Sc = 60 min de datos por bloque
+        saSeg:     60,   // cada 60 s reales  → K = 60
+      });
+      return;
+    }
+
+    // Colapso → inicia el nuevo endpoint de colapso del BFF/Ejecutor.
+    iniciarColapsoProgramado({
+      startDate:              localConfig.startDate,
+      criterio:               localConfig.criterio,
+      warmUp:                 false,
+      k:                      21600,
+      saSeg:                  300,
+      maxDias:                540,
+      umbralColapso:          0.85,
+      umbralRechazosPct:      0.30,
+      bloquesRojoConsecutivos: 3,
     });
   };
 
@@ -705,42 +730,23 @@ export function SimulationConfig() {
                     </div>
                   )}
 
-                  {/* Duración real — solo Periodo */}
+                  {/* Duración — FIJA y calibrada (ya no editable por el usuario) */}
                   {esPeriodo && (
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <Label className="text-sm font-medium">Duración real</Label>
-                        <span className="rounded-md border border-panel-border bg-panel-section-bg px-2 py-0.5 text-sm font-semibold tabular-nums text-panel-text">
-                          {localConfig.duracionRealMin} min
-                        </span>
-                      </div>
-                      <SliderPrimitive.Root
-                        min={30} max={90} step={5}
-                        value={[localConfig.duracionRealMin]}
-                        onValueChange={([v]) => setLocalConfig({ ...localConfig, duracionRealMin: v })}
-                        className="relative flex w-full touch-none select-none items-center"
-                      >
-                        <SliderPrimitive.Track className="bg-muted relative h-2 w-full grow overflow-hidden rounded-full">
-                          <SliderPrimitive.Range className="bg-primary absolute h-full" />
-                        </SliderPrimitive.Track>
-                        <SliderPrimitive.Thumb className="border-primary bg-background ring-ring/50 block h-4 w-4 rounded-full border shadow-sm transition-shadow hover:ring-4 focus-visible:ring-4 focus-visible:outline-none dark:bg-neutral-800" />
-                      </SliderPrimitive.Root>
-                      <div className="flex justify-between text-xs text-panel-text-faint">
-                        <span>30 min</span><span>90 min</span>
-                      </div>
-                      <div className="rounded-md border border-panel-border bg-panel-section-bg px-3 py-2 text-xs space-y-1">
+                    <div className="space-y-2">
+                      <Label className="text-sm font-medium">Duración de la simulación</Label>
+                      <div className="rounded-md border border-panel-border bg-panel-section-bg px-3 py-2.5 text-xs space-y-1.5">
                         <div className="flex items-center justify-between">
-                          <span className="text-panel-text-muted">Duración real estimada</span>
-                          <span className="font-semibold text-panel-text tabular-nums">
-                            ~{localConfig.duracionRealMin} min
-                          </span>
+                          <span className="text-panel-text-muted">Duración real (fija, calibrada)</span>
+                          <span className="font-semibold text-panel-text tabular-nums">{localConfig.duracionRealMin} min</span>
                         </div>
                         <div className="flex items-center justify-between">
                           <span className="text-panel-text-muted">Velocidad efectiva</span>
-                          <span className="font-semibold text-panel-text tabular-nums">{velocidad.toFixed(2)}×</span>
+                          <span className="font-semibold text-panel-text tabular-nums">{velocidad.toFixed(2)}× ({Math.round(velocidad * 60)}× K)</span>
                         </div>
                         <p className="text-[10px] text-panel-text-faint pt-0.5">
-                          {diasEfectivos} {diasEfectivos === 1 ? 'día simulado se comprime' : 'días simulados se comprimen'} en {localConfig.duracionRealMin} minutos reales.
+                          Los saltos del algoritmo (Sa) y de datos (Sc) están calibrados para que
+                          la simulación dure ~{localConfig.duracionRealMin} min (dentro de 30–90).
+                          {' '}{diasEfectivos} {diasEfectivos === 1 ? 'día se comprime' : 'días se comprimen'} en {localConfig.duracionRealMin} min reales.
                         </p>
                       </div>
                     </div>
@@ -748,26 +754,41 @@ export function SimulationConfig() {
 
                   {/* Velocidad — Colapso */}
                   {localConfig.scenario === 'collapse' && (
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <Label className="text-sm font-medium">Velocidad</Label>
-                        <span className="rounded-md border border-panel-border bg-panel-section-bg px-2 py-0.5 text-sm font-semibold tabular-nums text-panel-text">
-                          {localConfig.speed}×
-                        </span>
-                      </div>
-                      <SliderPrimitive.Root
-                        min={1} max={200} step={1}
-                        value={[localConfig.speed]}
-                        onValueChange={([v]) => setLocalConfig({ ...localConfig, speed: v })}
-                        className="relative flex w-full touch-none select-none items-center"
-                      >
-                        <SliderPrimitive.Track className="bg-muted relative h-2 w-full grow overflow-hidden rounded-full">
-                          <SliderPrimitive.Range className="bg-primary absolute h-full" />
-                        </SliderPrimitive.Track>
-                        <SliderPrimitive.Thumb className="border-primary bg-background ring-ring/50 block h-4 w-4 rounded-full border shadow-sm transition-shadow hover:ring-4 focus-visible:ring-4 focus-visible:outline-none dark:bg-neutral-800" />
-                      </SliderPrimitive.Root>
-                      <div className="flex justify-between text-xs text-panel-text-faint">
-                        <span>1× (real)</span><span>200× (máximo)</span>
+                    <div className="space-y-4">
+                      <div className="rounded-2xl border border-slate-300/70 bg-panel-section-bg p-4 text-sm text-panel-text shadow-sm">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <div>
+                            <p className="text-sm font-semibold text-panel-text">Preset oficial de prueba de estrés</p>
+                            <p className="mt-1 text-xs text-panel-text-muted">
+                              Parámetros usados para acelerar la simulación hasta el límite técnico observado.
+                            </p>
+                          </div>
+                          <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-semibold text-slate-700">
+                            Preset oficial
+                          </span>
+                        </div>
+                        <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                          {[
+                            { label: 'K', value: '21600', detail: '1 s real = 6 h simuladas' },
+                            { label: 'Sa', value: '300 s', detail: '5 min reales entre bloques' },
+                            { label: 'Sc', value: '108000 min', detail: '75 días simulados por bloque' },
+                          ].map((item) => (
+                            <div key={item.label} className="rounded-2xl bg-background p-3">
+                              <p className="text-[10px] uppercase tracking-[0.18em] text-panel-text-faint">{item.label}</p>
+                              <p className="mt-1 text-sm font-semibold text-panel-text">{item.value}</p>
+                              <p className="mt-1 text-[10px] text-panel-text-muted">{item.detail}</p>
+                            </div>
+                          ))}
+                        </div>
+                        <details className="mt-4 rounded-2xl border border-panel-border bg-panel-bg p-3 text-sm text-panel-text-muted">
+                          <summary className="cursor-pointer font-medium text-panel-text">¿Qué significa cada valor?</summary>
+                          <ul className="mt-2 space-y-1 text-[11px]">
+                            <li><span className="font-semibold text-panel-text">K:</span> factor de aceleración del tiempo simulado.</li>
+                            <li><span className="font-semibold text-panel-text">Sa:</span> tiempo real disponible para procesar cada bloque.</li>
+                            <li><span className="font-semibold text-panel-text">Sc:</span> tamaño del bloque simulado calculado con K y Sa.</li>
+                            <li><span className="font-semibold text-panel-text">maxDias:</span> horizonte máximo de simulación.</li>
+                          </ul>
+                        </details>
                       </div>
                     </div>
                   )}

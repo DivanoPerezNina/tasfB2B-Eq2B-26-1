@@ -223,6 +223,20 @@ func (h *UploadHandler) Envios(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// GMT y continente del aeropuerto ORIGEN (constantes para todo el archivo,
+	// que es de un solo aeropuerto) + mapa de continentes para el destino.
+	// Se usan para precalcular registro_utc y deadline_utc al insertar.
+	gmtOrigen, contOrigen, metaErr := h.metaAeropuerto(iata)
+	if metaErr != nil {
+		errResp(w, 500, "DB_ERROR", metaErr.Error())
+		return
+	}
+	contMap, contErr := h.buildContinenteMap()
+	if contErr != nil {
+		errResp(w, 500, "DB_ERROR", contErr.Error())
+		return
+	}
+
 	token := uuid.NewString()
 	db.InsertarSesion(h.DB, db.Sesion{Token: token, Tipo: "envios", Archivo: header.Filename})
 
@@ -254,6 +268,15 @@ func (h *UploadHandler) Envios(w http.ResponseWriter, r *http.Request) {
 		totalOK := 0
 		parseTotal, parseErr := parser.ParseEnvios(bytes.NewReader(buf.Bytes()), iata, h.BatchSize,
 			func(batch []parser.Envio) error {
+				// Precalcular registro_utc y deadline_utc por envío (réplica de
+				// la conversión horaria que hacía el Planificador).
+				for i := range batch {
+					e := &batch[i]
+					anio, mes, dia := parsearFechaISO(e.FechaRegistro)
+					e.RegistroUTC = parser.EpochMinutosUTC(anio, mes, dia, e.Hora, e.Minuto, gmtOrigen)
+					contDest := contMap[e.DestinoIATA]
+					e.DeadlineUTC = parser.DeadlineUTC(e.RegistroUTC, contOrigen, contDest)
+				}
 				if err := db.InsertarEnviosBatch(tx, batch); err != nil {
 					return err
 				}
@@ -343,6 +366,38 @@ func (h *UploadHandler) EliminarDatos(w http.ResponseWriter, r *http.Request) {
 			"envios":      ne,
 		},
 	})
+}
+
+// ── helper: GMT + continente de un aeropuerto por IATA ──────────────────────
+
+func (h *UploadHandler) metaAeropuerto(iata string) (gmt int, continente int, err error) {
+	err = h.DB.QueryRow(
+		"SELECT gmt_offset, continente FROM aeropuertos WHERE iata = ?", iata,
+	).Scan(&gmt, &continente)
+	return
+}
+
+// parsearFechaISO parsea "YYYY-MM-DD" → (anio, mes, dia). Sin validación pesada:
+// el parser ya garantizó el formato.
+func parsearFechaISO(s string) (anio, mes, dia int) {
+	if len(s) < 10 {
+		return 0, 0, 0
+	}
+	anio = atoiSafe(s[0:4])
+	mes = atoiSafe(s[5:7])
+	dia = atoiSafe(s[8:10])
+	return
+}
+
+func atoiSafe(s string) int {
+	n := 0
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return n
+		}
+		n = n*10 + int(c-'0')
+	}
+	return n
 }
 
 // ── helper: construir mapa IATA → continente desde MySQL ────────────────────

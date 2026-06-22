@@ -24,12 +24,46 @@ cd "$REPO"
 git pull
 echo "      OK — rama: $(git branch --show-current) @ $(git log -1 --format='%h %s')"
 
+# ── 1.5 Apuntar a la BD LOCAL de la VM ────────────────────────────────────────
+# Forzamos el host/puerto/nombre de la BD local en el .env (idempotente). Las
+# credenciales DB_USER/DB_PASS NO se tocan aquí (son secretos): déjalas puestas
+# en el .env apuntando a un usuario de la BD MySQL local.
+ENV_FILE="$REPO/.env"
+ensure_env() {
+  local key="$1" val="$2"
+  touch "$ENV_FILE"
+  if grep -q "^${key}=" "$ENV_FILE"; then
+    sed -i "s|^${key}=.*|${key}=${val}|" "$ENV_FILE"
+  else
+    echo "${key}=${val}" >> "$ENV_FILE"
+  fi
+}
+echo ""
+echo "[1.5] Apuntando servicios a la BD local (127.0.0.1)..."
+ensure_env DB_HOST 127.0.0.1
+ensure_env DB_PORT 3306
+ensure_env DB_NAME tasfb2b
+if ! grep -q "^DB_USER=" "$ENV_FILE" || ! grep -q "^DB_PASS=" "$ENV_FILE"; then
+  echo "      ⚠ Falta DB_USER/DB_PASS en $ENV_FILE — añádelos (usuario de la BD local)."
+fi
+echo "      OK ($ENV_FILE → DB_HOST=127.0.0.1)"
+
+# ── 1.6 Liberar RAM antes de compilar (VM de 4 GB) ────────────────────────────
+# El build del frontend + la JVM (-Xmx2g) + MySQL no caben juntos en 4 GB y la
+# VM entra en swap-thrashing (se cuelga). Paramos los servicios durante el
+# build/compilación y se reinician en el paso [5]. MySQL se deja vivo.
+echo ""
+echo "[1.6] Parando servicios durante la compilación (libera RAM)..."
+sudo systemctl stop tasfb2b-planificador tasfb2b-bff tasfb2b-ejecutor tasfb2b-carga-masiva tasfb2b-consultas 2>/dev/null || true
+echo "      OK (se reinician al final)"
+
 # ── 2. Frontend ───────────────────────────────────────────────────────────────
 echo ""
 echo "[2/5] Frontend (npm build)..."
 cd "$REPO/Frontend"
 npm install --silent
-npm run build
+# Limitar el heap de Node para no agotar la RAM de la VM durante vite build.
+NODE_OPTIONS="--max-old-space-size=1024" npm run build
 echo "      OK → Frontend/dist/"
 
 # ── 3. Planificador Java ──────────────────────────────────────────────────────
@@ -42,7 +76,7 @@ echo "      OK → target/planificador-gvns-1.0.0.jar"
 # ── 4. Servicios Go ───────────────────────────────────────────────────────────
 echo ""
 echo "[4/5] Servicios Go (build nativo Linux)..."
-for SVC in bff carga-masiva ejecutor; do
+for SVC in bff carga-masiva ejecutor consultas; do
   cd "$REPO/backend/$SVC"
   mkdir -p bin
   go build -o bin/$SVC ./cmd/$SVC
@@ -53,6 +87,8 @@ done
 echo ""
 echo "[5/5] Reiniciando servicios..."
 sudo systemctl restart tasfb2b-planificador tasfb2b-bff tasfb2b-ejecutor tasfb2b-carga-masiva
+# El servicio de consultas es opcional (puede no existir el unit aún)
+sudo systemctl restart tasfb2b-consultas 2>/dev/null || echo "      (tasfb2b-consultas sin unit — créalo si vas a usar el esquema Sa/Sc)"
 sleep 4
 
 echo ""

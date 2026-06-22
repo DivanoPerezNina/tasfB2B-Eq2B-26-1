@@ -165,7 +165,26 @@ public class PlanificadorService {
         datos.cargarAeropuertos(rutaAeropuertos);
         datos.cargarVuelos(rutaVuelos);
         datos.cargarTodosLosEnvios(rutaEnvios, ventanaIniUTC, ventanaFinUTC);
+        return construirRutas(datos, criterio, semilla);
+    }
 
+    /**
+     * Igual que {@link #planificarConRutas} pero los envíos vienen en una LISTA
+     * (consultados de la BD por el servicio de Consultas) en vez de leerse de
+     * archivos. Java no toca disco ni BD para los envíos → menos RAM/IO.
+     */
+    public List<EnvioAsignado> planificarConRutasDesdeLista(
+            List<Map<String, Object>> envios, CriterioOrden criterio, long semilla) {
+        GestorDatos datos = new GestorDatos();
+        datos.cargarAeropuertos(rutaAeropuertos);
+        datos.cargarVuelos(rutaVuelos);
+        datos.cargarEnviosDesdeLista(envios);
+        return construirRutas(datos, criterio, semilla);
+    }
+
+    /** Corre el GVNS sobre datos ya cargados y construye la lista de rutas. */
+    private List<EnvioAsignado> construirRutas(GestorDatos datos,
+                                               CriterioOrden criterio, long semilla) {
         int total = datos.numEnvios;
         List<EnvioAsignado> resultado = new ArrayList<>(total);
 

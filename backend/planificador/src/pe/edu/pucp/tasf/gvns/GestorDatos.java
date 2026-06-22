@@ -6,6 +6,7 @@ import java.io.FileInputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -332,6 +333,48 @@ public class GestorDatos {
      * @param gmtHoras offset UTC del aeropuerto de origen (ej. +2 o -5)
      * @return minutos desde Epoch (1970-01-01 00:00 UTC)
      */
+    /**
+     * Carga los envíos desde una LISTA ya consultada (servicio de Consultas /
+     * BD) en vez de leer los archivos. Los IATA se resuelven con mapaIataAId
+     * (requiere aeropuertos cargados). registroUTC y deadlineUTC vienen
+     * PRECALCULADOS (la ingesta ya los calculó), así que aquí NO se recalculan.
+     *
+     * @param envios lista de mapas con claves: origen, destino, maletas,
+     *               registroUTC, deadlineUTC
+     */
+    public void cargarEnviosDesdeLista(List<Map<String, Object>> envios) {
+        if (numAeropuertos == 0) {
+            throw new IllegalStateException("Cargue aeropuertos antes de los envíos");
+        }
+        // Dimensionar los arrays al volumen REAL de esta ventana en vez de los
+        // 20 M fijos (~560 MB). Clave para escalar a horizontes grandes sin OOM:
+        // libera los arrays gigantes por defecto y reserva solo lo necesario.
+        int n = envios.size();
+        envioOrigen      = new int [n];
+        envioDestino     = new int [n];
+        envioMaletas     = new int [n];
+        envioRegistroUTC = new long[n];
+        envioDeadlineUTC = new long[n];
+        numEnvios = 0;
+        for (Map<String, Object> e : envios) {
+            String origen  = (String) e.get("origen");
+            String destino = (String) e.get("destino");
+            if (origen == null || destino == null) continue;
+            Integer idO = mapaIataAId.get(origen);
+            Integer idD = mapaIataAId.get(destino);
+            if (idO == null || idD == null) continue;
+            if (numEnvios >= envioOrigen.length) break;
+
+            envioOrigen     [numEnvios] = idO;
+            envioDestino    [numEnvios] = idD;
+            envioMaletas    [numEnvios] = ((Number) e.get("maletas")).intValue();
+            envioRegistroUTC[numEnvios] = ((Number) e.get("registroUTC")).longValue();
+            envioDeadlineUTC[numEnvios] = ((Number) e.get("deadlineUTC")).longValue();
+            numEnvios++;
+        }
+        System.out.println("Envíos cargados desde lista: " + numEnvios);
+    }
+
     /**
      * Deadline de entrega según regla de continentes:
      *   mismo continente → registro + 1440 min (24 h)

@@ -9,6 +9,7 @@ import (
 type Config struct {
 	Port            string
 	PlanificadorURL string
+	ConsultasURL    string
 	TickIntervalMs  int
 	SSEMaxClientes  int
 }
@@ -17,6 +18,7 @@ func Load() *Config {
 	return &Config{
 		Port:            env("PORT", "8083"),
 		PlanificadorURL: env("PLANIFICADOR_URL", "http://localhost:8084"),
+		ConsultasURL:    env("CONSULTAS_URL", "http://localhost:8085"),
 		TickIntervalMs:  envInt("TICK_INTERVAL_MS", 1000),
 		SSEMaxClientes:  envInt("SSE_MAX_CLIENTES", 50),
 	}

@@ -3,9 +3,9 @@ package engine
 // ── Tipos del plan recibido desde el Planificador ────────────────────────────
 
 type PlanResponse struct {
-	Resumen     ResumenPlan       `json:"resumen"`
-	Envios      []EnvioPlan       `json:"envios"`
-	Aeropuertos []AeropuertoPlan  `json:"aeropuertos"` // capacidades reales de almacén
+	Resumen     ResumenPlan      `json:"resumen"`
+	Envios      []EnvioPlan      `json:"envios"`
+	Aeropuertos []AeropuertoPlan `json:"aeropuertos"` // capacidades reales de almacén
 }
 
 // AeropuertoPlan trae la capacidad real de almacén de cada aeropuerto, para que
@@ -58,9 +58,10 @@ type EstadoEnvio struct {
 	RegistroUTC int64
 	DeadlineUTC int64
 	Tramos      []TramoSim
-	TramoActual int    // índice del tramo actual (0, 1, 2)
-	Estado      string // pendiente|en_vuelo|en_escala|entregado|rechazado
-	Registrado  bool   // true cuando el envío ya ingresó al almacén origen (t >= RegistroUTC)
+	TramoActual    int    // índice del tramo actual (0, 1, 2)
+	Estado         string // pendiente|en_vuelo|en_escala|entregado|rechazado
+	MotivoRechazo  string // sla|planificador|sin_ruta
+	Registrado     bool   // true cuando el envío ya ingresó al almacén origen (t >= RegistroUTC)
 }
 
 // TramoSim es un tramo individual de la ruta de un envío.
@@ -85,6 +86,26 @@ type EstadoAeropuerto struct {
 type Umbrales struct {
 	VerdeHasta float64 // porcentaje de ocupación máxima para verde (ej. 0.60)
 	AmbarHasta float64 // porcentaje de ocupación máxima para ámbar (ej. 0.85)
+}
+
+type ConfigColapso struct {
+	Habilitado               bool    `json:"habilitado"`
+	UmbralOcupacion          float64 `json:"umbral_ocupacion"`
+	UmbralRechazosPct        float64 `json:"umbral_rechazos_pct"`
+	BloquesRojosConsecutivos int     `json:"bloques_rojos_consecutivos"`
+	MaxDias                  int     `json:"max_dias"`
+}
+
+type ResultadoColapso struct {
+	Tipo         string     `json:"tipo"`
+	Motivo       string     `json:"motivo"`
+	Aeropuerto   string     `json:"aeropuerto,omitempty"`
+	Ocupacion    float64    `json:"ocupacion"`
+	TaSeg        float64    `json:"ta_seg"`
+	SaSeg        float64    `json:"sa_seg"`
+	TiempoSimUTC int64      `json:"tiempo_sim_utc"`
+	DiaSimulado  int        `json:"dia_simulado"`
+	Contadores   Contadores `json:"contadores"`
 }
 
 // Contadores globales de estado de envíos.
