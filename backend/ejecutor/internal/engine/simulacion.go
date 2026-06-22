@@ -50,9 +50,18 @@ type Simulacion struct {
 // Nueva crea e inicializa una simulación a partir del JSON del Planificador.
 func Nueva(id string, planJSON string, duracionRealMin float64,
 	umbrales Umbrales, tickInterval time.Duration) (*Simulacion, error) {
+	return nuevaDesdeReader(id, strings.NewReader(planJSON), duracionRealMin, umbrales, tickInterval)
+}
+
+// nuevaDesdeReader es como Nueva pero parsea el plan en STREAMING desde un
+// io.Reader (ej. el body de la respuesta del Planificador), evitando cargar el
+// plan completo en memoria como string + copia []byte — clave a horizontes
+// grandes donde el plan pesa cientos de MB.
+func nuevaDesdeReader(id string, r io.Reader, duracionRealMin float64,
+	umbrales Umbrales, tickInterval time.Duration) (*Simulacion, error) {
 
 	var plan PlanResponse
-	if err := json.Unmarshal([]byte(planJSON), &plan); err != nil {
+	if err := json.NewDecoder(r).Decode(&plan); err != nil {
 		return nil, fmt.Errorf("parsear plan: %w", err)
 	}
 
