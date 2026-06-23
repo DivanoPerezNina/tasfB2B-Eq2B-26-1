@@ -741,23 +741,17 @@ export function SimulationConfig() {
                     </div>
                   )}
 
-                  {/* Duración — FIJA y calibrada (ya no editable por el usuario) */}
+                  {/* Duración de la simulación */}
                   {esPeriodo && (
                     <div className="space-y-2">
                       <Label className="text-sm font-medium">Duración de la simulación</Label>
                       <div className="rounded-md border border-panel-border bg-panel-section-bg px-3 py-2.5 text-xs space-y-1.5">
                         <div className="flex items-center justify-between">
-                          <span className="text-panel-text-muted">Duración real (fija, calibrada)</span>
+                          <span className="text-panel-text-muted">Duración real</span>
                           <span className="font-semibold text-panel-text tabular-nums">{localConfig.duracionRealMin} min</span>
                         </div>
-                        <div className="flex items-center justify-between">
-                          <span className="text-panel-text-muted">Velocidad efectiva</span>
-                          <span className="font-semibold text-panel-text tabular-nums">{velocidad.toFixed(2)}× ({Math.round(velocidad * 60)}× K)</span>
-                        </div>
                         <p className="text-[10px] text-panel-text-faint pt-0.5">
-                          Los saltos del algoritmo (Sa) y de datos (Sc) están calibrados para que
-                          la simulación dure ~{localConfig.duracionRealMin} min (dentro de 30–90).
-                          {' '}{diasEfectivos} {diasEfectivos === 1 ? 'día se comprime' : 'días se comprimen'} en {localConfig.duracionRealMin} min reales.
+                          {diasEfectivos} {diasEfectivos === 1 ? 'día se comprime' : 'días se comprimen'} en {localConfig.duracionRealMin} min reales.
                         </p>
                       </div>
                     </div>
@@ -782,22 +776,19 @@ export function SimulationConfig() {
                         <div className="mt-4 grid grid-cols-3 gap-2">
                           {VELOCIDADES_COLAPSO.map((v) => {
                             const activo = kColapso === v.k;
-                            const diasBloque = Math.round((v.k * SA_COLAPSO) / 60 / 1440);
                             return (
                               <button
                                 key={v.k}
                                 type="button"
                                 onClick={() => setLocalConfig({ ...localConfig, velocidadColapsoK: v.k })}
                                 aria-pressed={activo}
-                                className={`flex flex-col items-center rounded-2xl border-2 p-3 transition-all ${
+                                className={`flex items-center justify-center rounded-2xl border-2 p-4 transition-all ${
                                   activo
                                     ? 'border-primary bg-primary/10 text-panel-text'
                                     : 'border-slate-300/70 bg-background text-panel-text-muted hover:border-primary/50'
                                 }`}
                               >
                                 <span className="text-sm font-semibold">{v.label}</span>
-                                <span className="mt-1 text-[10px] uppercase tracking-[0.14em] text-panel-text-faint">K {v.k.toLocaleString()}</span>
-                                <span className="mt-1 text-[10px] text-panel-text-muted">~{diasBloque} días/bloque</span>
                               </button>
                             );
                           })}
