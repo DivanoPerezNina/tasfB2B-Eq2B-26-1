@@ -367,6 +367,17 @@ export function SimulationConfig() {
   const [currentTime,    setCurrentTime]    = useState(new Date());
   const [history,        setHistory]        = useState<HistoryRecord[]>(loadHistory);
 
+  // Velocidad del colapso: K = min-dato por minuto-real. avance = K/60 min-dato
+  // por segundo real → fija cuántas horas simuladas pasan en 1 s. Solo afecta la
+  // velocidad visible (no la lógica): 1h/s=3600, 5h/s=18000, 10h/s=36000.
+  const VELOCIDADES_COLAPSO = [
+    { k: 3600,  horas: 1,  label: '1 s = 1 h' },
+    { k: 18000, horas: 5,  label: '1 s = 5 h' },
+    { k: 36000, horas: 10, label: '1 s = 10 h' },
+  ] as const;
+  const SA_COLAPSO = 300; // s reales entre bloques (Sc = K·Sa/60 = días/bloque)
+  const kColapso = localConfig.velocidadColapsoK ?? VELOCIDADES_COLAPSO[0].k;
+
   useEffect(() => {
     const id = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(id);
@@ -481,8 +492,8 @@ export function SimulationConfig() {
       startDate:              localConfig.startDate,
       criterio:               localConfig.criterio,
       warmUp:                 false,
-      k:                      21600,
-      saSeg:                  300,
+      k:                      kColapso,
+      saSeg:                  SA_COLAPSO,
       maxDias:                540,
       umbralColapso:          0.85,
       umbralRechazosPct:      0.30,
@@ -758,27 +769,38 @@ export function SimulationConfig() {
                       <div className="rounded-2xl border border-slate-300/70 bg-panel-section-bg p-4 text-sm text-panel-text shadow-sm">
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                           <div>
-                            <p className="text-sm font-semibold text-panel-text">Preset oficial de prueba de estrés</p>
+                            <p className="text-sm font-semibold text-panel-text">Velocidad de la simulación</p>
                             <p className="mt-1 text-xs text-panel-text-muted">
-                              Parámetros usados para acelerar la simulación hasta el límite técnico observado.
+                              Cuántas horas simuladas avanzan por segundo real. Solo cambia la
+                              velocidad visible; la lógica del colapso no se altera.
                             </p>
                           </div>
                           <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-semibold text-slate-700">
-                            Preset oficial
+                            Colapso
                           </span>
                         </div>
-                        <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                          {[
-                            { label: 'K', value: '21600', detail: '1 s real = 6 h simuladas' },
-                            { label: 'Sa', value: '300 s', detail: '5 min reales entre bloques' },
-                            { label: 'Sc', value: '108000 min', detail: '75 días simulados por bloque' },
-                          ].map((item) => (
-                            <div key={item.label} className="rounded-2xl bg-background p-3">
-                              <p className="text-[10px] uppercase tracking-[0.18em] text-panel-text-faint">{item.label}</p>
-                              <p className="mt-1 text-sm font-semibold text-panel-text">{item.value}</p>
-                              <p className="mt-1 text-[10px] text-panel-text-muted">{item.detail}</p>
-                            </div>
-                          ))}
+                        <div className="mt-4 grid grid-cols-3 gap-2">
+                          {VELOCIDADES_COLAPSO.map((v) => {
+                            const activo = kColapso === v.k;
+                            const diasBloque = Math.round((v.k * SA_COLAPSO) / 60 / 1440);
+                            return (
+                              <button
+                                key={v.k}
+                                type="button"
+                                onClick={() => setLocalConfig({ ...localConfig, velocidadColapsoK: v.k })}
+                                aria-pressed={activo}
+                                className={`flex flex-col items-center rounded-2xl border-2 p-3 transition-all ${
+                                  activo
+                                    ? 'border-primary bg-primary/10 text-panel-text'
+                                    : 'border-slate-300/70 bg-background text-panel-text-muted hover:border-primary/50'
+                                }`}
+                              >
+                                <span className="text-sm font-semibold">{v.label}</span>
+                                <span className="mt-1 text-[10px] uppercase tracking-[0.14em] text-panel-text-faint">K {v.k.toLocaleString()}</span>
+                                <span className="mt-1 text-[10px] text-panel-text-muted">~{diasBloque} días/bloque</span>
+                              </button>
+                            );
+                          })}
                         </div>
                         <details className="mt-4 rounded-2xl border border-panel-border bg-panel-bg p-3 text-sm text-panel-text-muted">
                           <summary className="cursor-pointer font-medium text-panel-text">¿Qué significa cada valor?</summary>

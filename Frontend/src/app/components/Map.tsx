@@ -227,9 +227,10 @@ export const Map = memo(function Map({ selectedAirportId, onAirportSelect, onFli
     return () => observer.disconnect();
   }, []);
 
-  // ── Animación suave: extrapolación 10fps entre ticks SSE ──────────────────
+  // ── Animación suave: extrapolación 30fps entre ticks SSE ──────────────────
   // Guardamos el último tick conocido y la tasa de avance inferida,
-  // luego interpolamos cada 100ms para evitar saltos bruscos.
+  // luego interpolamos cada 33ms para evitar saltos bruscos (clave a 5-10 h/s,
+  // donde un vuelo cruza en <1 s y a 10fps se vería escalonado).
   const lastTickRef = React.useRef({ utcMin: 0, wallMs: 0, advancePerMs: 0 });
   const [smoothMinute, setSmoothMinute] = React.useState(0);
 
@@ -256,7 +257,7 @@ export const Map = memo(function Map({ selectedAirportId, onAirportSelect, onFli
     setSmoothMinute(newUtcMin);
   }, [tiempoSimUTC, simHasStarted]);
 
-  // Loop a 10fps: extrapola posición entre ticks
+  // Loop a 30fps: extrapola posición entre ticks
   React.useEffect(() => {
     if (!isRunning || !showPlanes || !simHasStarted) return;
     // Al (re)arrancar el bucle —incluido tras una PAUSA o al terminar el
@@ -271,7 +272,7 @@ export const Map = memo(function Map({ selectedAirportId, onAirportSelect, onFli
       if (ref.advancePerMs <= 0) return;
       const extrapolated = ref.utcMin + (now - ref.wallMs) * ref.advancePerMs;
       setSmoothMinute(extrapolated);
-    }, 100);
+    }, 33);
     return () => clearInterval(id);
   }, [isRunning, showPlanes, simHasStarted]);
 

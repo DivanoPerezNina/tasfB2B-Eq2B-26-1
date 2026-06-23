@@ -792,7 +792,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           startDate: config.startDate,
           criterio: config.criterio,
           warmUp: false,
-          k: 21600,
+          k: config.velocidadColapsoK ?? 3600,
           saSeg: 300,
           maxDias: 540,
           umbralColapso: 0.85,
