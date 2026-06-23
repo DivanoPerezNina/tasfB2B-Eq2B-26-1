@@ -802,15 +802,6 @@ export function SimulationConfig() {
                             );
                           })}
                         </div>
-                        <details className="mt-4 rounded-2xl border border-panel-border bg-panel-bg p-3 text-sm text-panel-text-muted">
-                          <summary className="cursor-pointer font-medium text-panel-text">¿Qué significa cada valor?</summary>
-                          <ul className="mt-2 space-y-1 text-[11px]">
-                            <li><span className="font-semibold text-panel-text">K:</span> factor de aceleración del tiempo simulado.</li>
-                            <li><span className="font-semibold text-panel-text">Sa:</span> tiempo real disponible para procesar cada bloque.</li>
-                            <li><span className="font-semibold text-panel-text">Sc:</span> tamaño del bloque simulado calculado con K y Sa.</li>
-                            <li><span className="font-semibold text-panel-text">maxDias:</span> horizonte máximo de simulación.</li>
-                          </ul>
-                        </details>
                       </div>
                     </div>
                   )}
