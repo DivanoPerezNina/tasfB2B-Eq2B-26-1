@@ -75,6 +75,8 @@ export interface SimulationConfig {
    * maletas desde ese momento — comportamiento requerido por Sim5D.
    */
   warmUp: boolean;
+  /** Velocidad del escenario Colapso: K = min-dato/min-real (avance = K/60 h por seg). 3600=1h/s, 18000=5h/s, 36000=10h/s. */
+  velocidadColapsoK?: number;
   /** @deprecated Derivado de duracionRealMin — sólo para compatibilidad con componentes legacy */
   speed: number;
   thresholds: {

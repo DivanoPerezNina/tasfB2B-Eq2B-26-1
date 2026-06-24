@@ -1,5 +1,7 @@
 package pe.edu.pucp.tasf.gvns;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -174,12 +176,56 @@ public class PlanificadorService {
      * archivos. Java no toca disco ni BD para los envíos → menos RAM/IO.
      */
     public List<EnvioAsignado> planificarConRutasDesdeLista(
-            List<Map<String, Object>> envios, CriterioOrden criterio, long semilla) {
+            List<EnvioDTO> envios, CriterioOrden criterio, long semilla) {
         GestorDatos datos = new GestorDatos();
         datos.cargarAeropuertos(rutaAeropuertos);
         datos.cargarVuelos(rutaVuelos);
-        datos.cargarEnviosDesdeLista(envios);
+        datos.cargarEnviosDesdeArray(envios);
         return construirRutas(datos, criterio, semilla);
+    }
+
+    /** Corre el GVNS sobre datos ya cargados (Fase 2 + GVNS si quedan rechazos). */
+    private static PlanificadorGVNSConcurrente correrSolver(GestorDatos datos,
+                                                            CriterioOrden criterio, long semilla) {
+        PlanificadorGVNSConcurrente plan =
+                new PlanificadorGVNSConcurrente(datos, semilla, criterio);
+        plan.construirSolucionInicial();
+        if (plan.enviosExitosos.get() < datos.numEnvios) {
+            plan.ejecutarMejoraGVNS();
+        }
+        return plan;
+    }
+
+    /** Construye el {@link EnvioAsignado} del envío {@code e} a partir de la solución del solver. */
+    static EnvioAsignado construirUno(GestorDatos datos, PlanificadorGVNSConcurrente plan, int e) {
+        String origen  = datos.iataAeropuerto[datos.envioOrigen[e]];
+        String destino = datos.iataAeropuerto[datos.envioDestino[e]];
+        long   regUTC  = datos.envioRegistroUTC[e];
+        long   dlUTC   = datos.envioDeadlineUTC[e];
+
+        if (plan.solucionVuelos[e][0] == -1) {
+            return new EnvioAsignado(e, origen, destino, datos.envioMaletas[e],
+                    regUTC, dlUTC, "Rechazado", new ArrayList<>());
+        }
+
+        List<EnvioAsignado.Tramo> tramos = new ArrayList<>(3);
+        for (int s = 0; s < plan.MAX_SALTOS; s++) {
+            int v = plan.solucionVuelos[e][s];
+            if (v == -1) break;
+
+            long salida  = plan.solucionDias[e][s];
+            long durMin  = datos.vueloLlegadaUTC[v] - datos.vueloSalidaUTC[v];
+            if (durMin < 0) durMin += 1440;
+            long llegada = salida + durMin;
+
+            tramos.add(new EnvioAsignado.Tramo(
+                    v,
+                    datos.iataAeropuerto[datos.vueloOrigen[v]],
+                    datos.iataAeropuerto[datos.vueloDestino[v]],
+                    salida, llegada));
+        }
+        return new EnvioAsignado(e, origen, destino, datos.envioMaletas[e],
+                regUTC, dlUTC, "Exitoso", tramos);
     }
 
     /** Corre el GVNS sobre datos ya cargados y construye la lista de rutas. */
@@ -187,48 +233,11 @@ public class PlanificadorService {
                                                CriterioOrden criterio, long semilla) {
         int total = datos.numEnvios;
         List<EnvioAsignado> resultado = new ArrayList<>(total);
-
         if (total == 0) return resultado;
 
-        PlanificadorGVNSConcurrente plan =
-                new PlanificadorGVNSConcurrente(datos, semilla, criterio);
-        plan.construirSolucionInicial();
-        if (plan.enviosExitosos.get() < total) {
-            plan.ejecutarMejoraGVNS();
-        }
-
+        PlanificadorGVNSConcurrente plan = correrSolver(datos, criterio, semilla);
         for (int e = 0; e < total; e++) {
-            String origen  = datos.iataAeropuerto[datos.envioOrigen[e]];
-            String destino = datos.iataAeropuerto[datos.envioDestino[e]];
-            long   regUTC  = datos.envioRegistroUTC[e];
-            long   dlUTC   = datos.envioDeadlineUTC[e];
-
-            if (plan.solucionVuelos[e][0] == -1) {
-                resultado.add(new EnvioAsignado(
-                        e, origen, destino, datos.envioMaletas[e],
-                        regUTC, dlUTC, "Rechazado", new ArrayList<>()));
-                continue;
-            }
-
-            List<EnvioAsignado.Tramo> tramos = new ArrayList<>(3);
-            for (int s = 0; s < plan.MAX_SALTOS; s++) {
-                int v = plan.solucionVuelos[e][s];
-                if (v == -1) break;
-
-                long salida  = plan.solucionDias[e][s];
-                long durMin  = datos.vueloLlegadaUTC[v] - datos.vueloSalidaUTC[v];
-                if (durMin < 0) durMin += 1440;
-                long llegada = salida + durMin;
-
-                tramos.add(new EnvioAsignado.Tramo(
-                        v,
-                        datos.iataAeropuerto[datos.vueloOrigen[v]],
-                        datos.iataAeropuerto[datos.vueloDestino[v]],
-                        salida, llegada));
-            }
-            resultado.add(new EnvioAsignado(
-                    e, origen, destino, datos.envioMaletas[e],
-                    regUTC, dlUTC, "Exitoso", tramos));
+            resultado.add(construirUno(datos, plan, e));
         }
         return resultado;
     }
@@ -251,40 +260,122 @@ public class PlanificadorService {
                                              long observacionIniUTC,
                                              Map<String, Integer> capacidades) {
         StringBuilder sb = new StringBuilder(envios.size() * 200);
-        sb.append("{\"resumen\":{");
-        sb.append("\"totalEnvios\":").append(meta.totalEnvios).append(',');
-        sb.append("\"exitosos\":").append(meta.exitosos).append(',');
-        sb.append("\"rechazados\":").append(meta.rechazados).append(',');
-        sb.append("\"salvadosPorGVNS\":").append(meta.salvadosPorGVNS).append(',');
-        sb.append("\"tasaExito\":").append(String.format("%.4f", meta.tasaExito)).append(',');
-        sb.append("\"tiempoFase2Seg\":").append(String.format("%.3f", meta.tiempoFase2Seg)).append(',');
-        sb.append("\"tiempoFase3Seg\":").append(String.format("%.3f", meta.tiempoFase3Seg)).append(',');
-        sb.append("\"ventanaIniUTC\":").append(meta.ventanaIniUTC).append(',');
-        sb.append("\"ventanaFinUTC\":").append(meta.ventanaFinUTC).append(',');
-        sb.append("\"observacionIniUTC\":").append(observacionIniUTC);
-        sb.append("},");
+        try {
+            serializarPlanJSON(sb, envios, meta, observacionIniUTC, capacidades);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e); // StringBuilder no lanza IOException
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Igual que {@link #serializarPlanJSON(List, ResultadoPlanificacion, long, Map)}
+     * pero escribe el plan a un {@link Appendable} (ej. el {@code Writer} de la
+     * respuesta HTTP) en vez de materializar un String. A horizontes grandes el
+     * String del plan completo + su copia en {@code toString()} eran ~1 GB de pico
+     * transitorio; escribirlo en streaming los elimina. El JSON es byte-idéntico.
+     */
+    public static void serializarPlanJSON(Appendable out,
+                                          List<EnvioAsignado> envios,
+                                          ResultadoPlanificacion meta,
+                                          long observacionIniUTC,
+                                          Map<String, Integer> capacidades) throws IOException {
+        appendCabecera(out, meta, observacionIniUTC, capacidades);
+        for (int i = 0; i < envios.size(); i++) {
+            if (i > 0) out.append(',');
+            envios.get(i).appendJSON(out);
+        }
+        out.append("]}");
+    }
+
+    /** Escribe {@code {"resumen":{...},"aeropuertos":[...],"envios":[} — sin cerrar el array. */
+    private static void appendCabecera(Appendable out, ResultadoPlanificacion meta,
+                                       long observacionIniUTC,
+                                       Map<String, Integer> capacidades) throws IOException {
+        out.append("{\"resumen\":{");
+        out.append("\"totalEnvios\":").append(Integer.toString(meta.totalEnvios));
+        out.append(",\"exitosos\":").append(Integer.toString(meta.exitosos));
+        out.append(",\"rechazados\":").append(Integer.toString(meta.rechazados));
+        out.append(",\"salvadosPorGVNS\":").append(Integer.toString(meta.salvadosPorGVNS));
+        out.append(",\"tasaExito\":").append(String.format("%.4f", meta.tasaExito));
+        out.append(",\"tiempoFase2Seg\":").append(String.format("%.3f", meta.tiempoFase2Seg));
+        out.append(",\"tiempoFase3Seg\":").append(String.format("%.3f", meta.tiempoFase3Seg));
+        out.append(",\"ventanaIniUTC\":").append(Long.toString(meta.ventanaIniUTC));
+        out.append(",\"ventanaFinUTC\":").append(Long.toString(meta.ventanaFinUTC));
+        out.append(",\"observacionIniUTC\":").append(Long.toString(observacionIniUTC));
+        out.append("},");
 
         // Capacidades reales de almacén por aeropuerto (para que el Ejecutor
         // calcule ocupación y semáforo contra el valor correcto, no un default).
-        sb.append("\"aeropuertos\":[");
+        out.append("\"aeropuertos\":[");
         if (capacidades != null) {
             boolean first = true;
             for (Map.Entry<String, Integer> e : capacidades.entrySet()) {
-                if (!first) sb.append(',');
+                if (!first) out.append(',');
                 first = false;
-                sb.append("{\"iata\":\"").append(e.getKey())
-                  .append("\",\"capacidad\":").append(e.getValue()).append('}');
+                out.append("{\"iata\":\"").append(e.getKey())
+                   .append("\",\"capacidad\":").append(Integer.toString(e.getValue())).append('}');
             }
         }
-        sb.append("],");
+        out.append("],");
+        out.append("\"envios\":[");
+    }
 
-        sb.append("\"envios\":[");
-        for (int i = 0; i < envios.size(); i++) {
-            if (i > 0) sb.append(',');
-            envios.get(i).appendJSON(sb);
+    /**
+     * Planifica desde una lista de envíos y escribe el plan en streaming al
+     * {@code out}, <b>sin materializar la lista de {@link EnvioAsignado}</b>: cada
+     * envío se construye, se serializa y se descarta. A horizontes grandes esa
+     * lista era ~600 MB; eliminarla (junto al String del plan, ya en streaming)
+     * baja el pico de heap lo suficiente para alcanzar volúmenes mayores antes del
+     * colapso. El JSON es byte-idéntico al de {@link #serializarPlanJSON}.
+     */
+    public void planificarYStreamDesdeLista(List<EnvioDTO> envios, CriterioOrden criterio,
+                                            long semilla, long iniUTC, long finUTC,
+                                            long observacionIniUTC, Appendable out) throws IOException {
+        GestorDatos datos = new GestorDatos();
+        datos.cargarAeropuertos(rutaAeropuertos);
+        datos.cargarVuelos(rutaVuelos);
+        datos.cargarEnviosDesdeArray(envios);
+
+        int total = datos.numEnvios;
+        Map<String, Integer> caps = capacidadesDe(datos);
+
+        if (total == 0) {
+            ResultadoPlanificacion meta = new ResultadoPlanificacion(
+                    iniUTC, finUTC, criterio, 0, 0, 0, 0, 0L, 0, 0, 0, 0.0, 0.0, 0, true);
+            appendCabecera(out, meta, observacionIniUTC, caps);
+            out.append("]}");
+            return;
         }
-        sb.append("]}");
-        return sb.toString();
+
+        PlanificadorGVNSConcurrente plan = correrSolver(datos, criterio, semilla);
+
+        // Pasada 1: contar exitosos (envío con al menos un tramo asignado).
+        int exitosos = 0;
+        for (int e = 0; e < total; e++) {
+            if (plan.solucionVuelos[e][0] != -1) exitosos++;
+        }
+        // meta espejo de metaDesdeEnvios: salvados/tiempos en 0 (no se serializan los demás).
+        ResultadoPlanificacion meta = new ResultadoPlanificacion(
+                iniUTC, finUTC, criterio, total, exitosos, total - exitosos, 0,
+                0L, 0, 0, 0, 0.0, 0.0, 0, true);
+
+        // Pasada 2: escribir cada envío sin retenerlo.
+        appendCabecera(out, meta, observacionIniUTC, caps);
+        for (int e = 0; e < total; e++) {
+            if (e > 0) out.append(',');
+            construirUno(datos, plan, e).appendJSON(out);
+        }
+        out.append("]}");
+    }
+
+    /** Capacidades IATA → almacén a partir de un GestorDatos ya con aeropuertos cargados. */
+    private static Map<String, Integer> capacidadesDe(GestorDatos datos) {
+        Map<String, Integer> m = new LinkedHashMap<>();
+        for (int i = 1; i <= datos.numAeropuertos; i++) {
+            m.put(datos.iataAeropuerto[i], datos.capacidadAlmacen[i]);
+        }
+        return m;
     }
 
     /**

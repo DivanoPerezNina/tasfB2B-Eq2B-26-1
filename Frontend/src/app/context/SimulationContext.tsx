@@ -451,7 +451,15 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     });
 
     es.addEventListener('plan-tramos', (e: MessageEvent) => {
-      const arr = JSON.parse(e.data);
+      let arr: unknown;
+      try {
+        arr = JSON.parse(e.data);
+      } catch (err) {
+        // Un evento truncado/parcial no debe dejar el mapa sin aviones:
+        // conservamos el último plan válido en vez de romper el handler.
+        console.warn(`[Sim:${scenario}] plan-tramos ilegible (${(e.data ?? '').length} bytes), se mantiene el anterior`);
+        return;
+      }
       const tramos: PlanTramoVisual[] = (Array.isArray(arr) ? arr : []).map((v: any) => ({
         envioIndice: Number(v.envioIndice ?? 0), tramoIndex: Number(v.tramoIndex ?? 0),
         desde: String(v.desde ?? '').toUpperCase(),
@@ -792,7 +800,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           startDate: config.startDate,
           criterio: config.criterio,
           warmUp: false,
-          k: 21600,
+          k: config.velocidadColapsoK ?? 3600,
           saSeg: 300,
           maxDias: 540,
           umbralColapso: 0.85,

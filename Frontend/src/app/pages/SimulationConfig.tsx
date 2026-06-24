@@ -367,6 +367,17 @@ export function SimulationConfig() {
   const [currentTime,    setCurrentTime]    = useState(new Date());
   const [history,        setHistory]        = useState<HistoryRecord[]>(loadHistory);
 
+  // Velocidad del colapso: K = min-dato por minuto-real. avance = K/60 min-dato
+  // por segundo real → fija cuántas horas simuladas pasan en 1 s. Solo afecta la
+  // velocidad visible (no la lógica): 1h/s=3600, 5h/s=18000, 10h/s=36000.
+  const VELOCIDADES_COLAPSO = [
+    { k: 3600,  horas: 1,  label: '1 s = 1 h' },
+    { k: 18000, horas: 5,  label: '1 s = 5 h' },
+    { k: 36000, horas: 10, label: '1 s = 10 h' },
+  ] as const;
+  const SA_COLAPSO = 300; // s reales entre bloques (Sc = K·Sa/60 = días/bloque)
+  const kColapso = localConfig.velocidadColapsoK ?? VELOCIDADES_COLAPSO[0].k;
+
   useEffect(() => {
     const id = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(id);
@@ -481,8 +492,8 @@ export function SimulationConfig() {
       startDate:              localConfig.startDate,
       criterio:               localConfig.criterio,
       warmUp:                 false,
-      k:                      21600,
-      saSeg:                  300,
+      k:                      kColapso,
+      saSeg:                  SA_COLAPSO,
       maxDias:                540,
       umbralColapso:          0.85,
       umbralRechazosPct:      0.30,
@@ -730,23 +741,17 @@ export function SimulationConfig() {
                     </div>
                   )}
 
-                  {/* Duración — FIJA y calibrada (ya no editable por el usuario) */}
+                  {/* Duración de la simulación */}
                   {esPeriodo && (
                     <div className="space-y-2">
                       <Label className="text-sm font-medium">Duración de la simulación</Label>
                       <div className="rounded-md border border-panel-border bg-panel-section-bg px-3 py-2.5 text-xs space-y-1.5">
                         <div className="flex items-center justify-between">
-                          <span className="text-panel-text-muted">Duración real (fija, calibrada)</span>
+                          <span className="text-panel-text-muted">Duración real</span>
                           <span className="font-semibold text-panel-text tabular-nums">{localConfig.duracionRealMin} min</span>
                         </div>
-                        <div className="flex items-center justify-between">
-                          <span className="text-panel-text-muted">Velocidad efectiva</span>
-                          <span className="font-semibold text-panel-text tabular-nums">{velocidad.toFixed(2)}× ({Math.round(velocidad * 60)}× K)</span>
-                        </div>
                         <p className="text-[10px] text-panel-text-faint pt-0.5">
-                          Los saltos del algoritmo (Sa) y de datos (Sc) están calibrados para que
-                          la simulación dure ~{localConfig.duracionRealMin} min (dentro de 30–90).
-                          {' '}{diasEfectivos} {diasEfectivos === 1 ? 'día se comprime' : 'días se comprimen'} en {localConfig.duracionRealMin} min reales.
+                          {diasEfectivos} {diasEfectivos === 1 ? 'día se comprime' : 'días se comprimen'} en {localConfig.duracionRealMin} min reales.
                         </p>
                       </div>
                     </div>
@@ -758,37 +763,36 @@ export function SimulationConfig() {
                       <div className="rounded-2xl border border-slate-300/70 bg-panel-section-bg p-4 text-sm text-panel-text shadow-sm">
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                           <div>
-                            <p className="text-sm font-semibold text-panel-text">Preset oficial de prueba de estrés</p>
+                            <p className="text-sm font-semibold text-panel-text">Velocidad de la simulación</p>
                             <p className="mt-1 text-xs text-panel-text-muted">
-                              Parámetros usados para acelerar la simulación hasta el límite técnico observado.
+                              Cuántas horas simuladas avanzan por segundo real. Solo cambia la
+                              velocidad visible; la lógica del colapso no se altera.
                             </p>
                           </div>
                           <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-semibold text-slate-700">
-                            Preset oficial
+                            Colapso
                           </span>
                         </div>
-                        <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                          {[
-                            { label: 'K', value: '21600', detail: '1 s real = 6 h simuladas' },
-                            { label: 'Sa', value: '300 s', detail: '5 min reales entre bloques' },
-                            { label: 'Sc', value: '108000 min', detail: '75 días simulados por bloque' },
-                          ].map((item) => (
-                            <div key={item.label} className="rounded-2xl bg-background p-3">
-                              <p className="text-[10px] uppercase tracking-[0.18em] text-panel-text-faint">{item.label}</p>
-                              <p className="mt-1 text-sm font-semibold text-panel-text">{item.value}</p>
-                              <p className="mt-1 text-[10px] text-panel-text-muted">{item.detail}</p>
-                            </div>
-                          ))}
+                        <div className="mt-4 grid grid-cols-3 gap-2">
+                          {VELOCIDADES_COLAPSO.map((v) => {
+                            const activo = kColapso === v.k;
+                            return (
+                              <button
+                                key={v.k}
+                                type="button"
+                                onClick={() => setLocalConfig({ ...localConfig, velocidadColapsoK: v.k })}
+                                aria-pressed={activo}
+                                className={`flex items-center justify-center rounded-2xl border-2 p-4 transition-all ${
+                                  activo
+                                    ? 'border-primary bg-primary/10 text-panel-text'
+                                    : 'border-slate-300/70 bg-background text-panel-text-muted hover:border-primary/50'
+                                }`}
+                              >
+                                <span className="text-sm font-semibold">{v.label}</span>
+                              </button>
+                            );
+                          })}
                         </div>
-                        <details className="mt-4 rounded-2xl border border-panel-border bg-panel-bg p-3 text-sm text-panel-text-muted">
-                          <summary className="cursor-pointer font-medium text-panel-text">¿Qué significa cada valor?</summary>
-                          <ul className="mt-2 space-y-1 text-[11px]">
-                            <li><span className="font-semibold text-panel-text">K:</span> factor de aceleración del tiempo simulado.</li>
-                            <li><span className="font-semibold text-panel-text">Sa:</span> tiempo real disponible para procesar cada bloque.</li>
-                            <li><span className="font-semibold text-panel-text">Sc:</span> tamaño del bloque simulado calculado con K y Sa.</li>
-                            <li><span className="font-semibold text-panel-text">maxDias:</span> horizonte máximo de simulación.</li>
-                          </ul>
-                        </details>
                       </div>
                     </div>
                   )}

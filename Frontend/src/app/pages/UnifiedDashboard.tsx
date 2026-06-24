@@ -271,8 +271,9 @@ export function UnifiedDashboard() {
             </div>
           </>
         )}
-        {/* Progress bar (ventana visible en tiempo real) */}
-        {fase !== 'calentando' && contadores.total > 0 && (
+        {/* Progress bar — solo cuando hay un fin conocido (periodo/tiempo real).
+            En Colapso no se sabe cuándo colapsa → la barra no tiene sentido. */}
+        {fase !== 'calentando' && contadores.total > 0 && config.scenario !== 'collapse' && (
           <>
             <div className="h-4 w-px bg-panel-border" />
             <div className="flex items-center gap-2 min-w-[120px]">
@@ -613,16 +614,20 @@ export function UnifiedDashboard() {
           {/* Cumplimiento */}
           <Section title="Cumplimiento de Plazos" icon={<Clock className="h-3.5 w-3.5" />}>
             <div className="flex items-center gap-4">
-              <div className="relative h-16 w-16 flex-shrink-0">
-                <svg className="h-full w-full" viewBox="0 0 100 100">
-                  <circle cx="50" cy="50" r="38" fill="none" stroke="var(--panel-border)" strokeWidth="8" />
-                  <circle cx="50" cy="50" r="38" fill="none" stroke="#10b981" strokeWidth="8"
-                    strokeDasharray={`${stats.onTimeDeliveryRate * 2.39} 239`} strokeLinecap="round" transform="rotate(-90 50 50)" />
-                </svg>
-                <div className="absolute inset-0 flex flex-col items-center justify-center">
-                  <span className="text-xs font-bold text-green-600 dark:text-green-400">{stats.onTimeDeliveryRate.toFixed(0)}%</span>
+              {/* El % de cumplimiento solo aplica con un fin conocido. En Colapso
+                  no se sabe cuándo colapsa, así que se muestran solo los conteos. */}
+              {config.scenario !== 'collapse' && (
+                <div className="relative h-16 w-16 flex-shrink-0">
+                  <svg className="h-full w-full" viewBox="0 0 100 100">
+                    <circle cx="50" cy="50" r="38" fill="none" stroke="var(--panel-border)" strokeWidth="8" />
+                    <circle cx="50" cy="50" r="38" fill="none" stroke="#10b981" strokeWidth="8"
+                      strokeDasharray={`${stats.onTimeDeliveryRate * 2.39} 239`} strokeLinecap="round" transform="rotate(-90 50 50)" />
+                  </svg>
+                  <div className="absolute inset-0 flex flex-col items-center justify-center">
+                    <span className="text-xs font-bold text-green-600 dark:text-green-400">{stats.onTimeDeliveryRate.toFixed(0)}%</span>
+                  </div>
                 </div>
-              </div>
+              )}
               <div className="space-y-1 flex-1">
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] text-panel-text-muted">Entregados</span>
@@ -646,11 +651,11 @@ export function UnifiedDashboard() {
                     {contadores.entregado} entregados
                   </span>
                 </div>
-                <p className="text-[10px] text-panel-text-faint mt-2">
-                  {config.scenario === 'collapse'
-                    ? 'El porcentaje puede variar al generarse nuevos bloques de planificación.'
-                    : 'Se recalcula con cada bloque de simulación.'}
-                </p>
+                {config.scenario !== 'collapse' && (
+                  <p className="text-[10px] text-panel-text-faint mt-2">
+                    Se recalcula con cada bloque de simulación.
+                  </p>
+                )}
               </div>
             </div>
           </Section>
@@ -674,7 +679,7 @@ export function UnifiedDashboard() {
                 </div>
               ))}
             </div>
-            {stats.totalBaggage > 0 && (
+            {stats.totalBaggage > 0 && config.scenario !== 'collapse' && (
               <div className="mt-2">
                 <div className="flex h-2 w-full rounded-full overflow-hidden bg-panel-section-bg">
                   {statusData.map(s => (

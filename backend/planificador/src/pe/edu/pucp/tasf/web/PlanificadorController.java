@@ -4,9 +4,16 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
+
+import java.io.BufferedWriter;
+import java.io.OutputStreamWriter;
+import java.io.Writer;
+import java.nio.charset.StandardCharsets;
 
 import pe.edu.pucp.tasf.gvns.CriterioOrden;
 import pe.edu.pucp.tasf.gvns.EnvioAsignado;
+import pe.edu.pucp.tasf.gvns.EnvioDTO;
 import pe.edu.pucp.tasf.gvns.GestorDatos;
 import pe.edu.pucp.tasf.gvns.PlanificadorService;
 import pe.edu.pucp.tasf.gvns.ResultadoPlanificacion;
@@ -243,42 +250,58 @@ public class PlanificadorController {
     //         "envios":[{"origen","destino","maletas","registroUTC","deadlineUTC"}, ...] }
     // ═══════════════════════════════════════════════════════════════════════════
 
-    @SuppressWarnings("unchecked")
-    @PostMapping("/planificacion/desde-datos")
-    public ResponseEntity<String> desdeDatos(@RequestBody Map<String, Object> body) {
-        Object enviosObj = body.get("envios");
-        if (!(enviosObj instanceof List)) {
-            return error(400, "PARAM_FALTANTE", "Se requiere 'envios' (lista)");
-        }
-        List<Map<String, Object>> envios = (List<Map<String, Object>>) enviosObj;
+    /**
+     * Body tipado de {@code desde-datos}. Jackson lo deserializa a un record de
+     * campos primitivos (vía {@link EnvioDTO}) en vez de un {@code Map<String,Object>}
+     * — evita el HashMap + boxing por envío que disparaba el OOM en ventanas grandes.
+     */
+    public record DesdeDatosRequest(
+            Long iniUTC, Long finUTC, Long observacionIniUTC,
+            String criterio, Long semilla,
+            List<EnvioDTO> envios) {
+    }
 
-        long ini = body.containsKey("iniUTC") ? ((Number) body.get("iniUTC")).longValue() : 0L;
-        long fin = body.containsKey("finUTC") ? ((Number) body.get("finUTC")).longValue() : 0L;
-        long obs = body.containsKey("observacionIniUTC")
-                ? ((Number) body.get("observacionIniUTC")).longValue() : ini;
+    @PostMapping("/planificacion/desde-datos")
+    public ResponseEntity<StreamingResponseBody> desdeDatos(@RequestBody DesdeDatosRequest req) {
+        if (req == null || req.envios() == null) {
+            return streamError(400, "PARAM_FALTANTE", "Se requiere 'envios' (lista)");
+        }
+        long ini = req.iniUTC() != null ? req.iniUTC() : 0L;
+        long fin = req.finUTC() != null ? req.finUTC() : 0L;
+        long obs = req.observacionIniUTC() != null ? req.observacionIniUTC() : ini;
+        long semilla = req.semilla() != null ? req.semilla() : 42L;
 
         CriterioOrden criterio;
         try {
-            String c = body.containsKey("criterio")
-                    ? ((String) body.get("criterio")).toUpperCase()
+            String c = req.criterio() != null
+                    ? req.criterio().toUpperCase()
                     : props.getCriterioDefault().toUpperCase();
             criterio = CriterioOrden.valueOf(c);
         } catch (IllegalArgumentException e) {
-            return error(400, "CRITERIO_INVALIDO", "ALEATORIO | EDF | FIFO");
+            return streamError(400, "CRITERIO_INVALIDO", "ALEATORIO | EDF | FIFO");
         }
-        long semilla = body.containsKey("semilla") ? ((Number) body.get("semilla")).longValue() : 42L;
 
-        try {
-            PlanificadorService svc = new PlanificadorService(
-                    props.getRutaAeropuertos(), props.getRutaVuelos(), props.getRutaEnvios());
-            List<EnvioAsignado> asignados = svc.planificarConRutasDesdeLista(envios, criterio, semilla);
-            ResultadoPlanificacion meta = PlanificadorService.metaDesdeEnvios(asignados, ini, fin, criterio);
-            String json = PlanificadorService.serializarPlanJSON(
-                    asignados, meta, obs, svc.capacidadesAlmacen());
-            return ok(json);
-        } catch (Exception e) {
-            return error(500, "PLAN_ERROR", e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
-        }
+        final PlanificadorService svc = new PlanificadorService(
+                props.getRutaAeropuertos(), props.getRutaVuelos(), props.getRutaEnvios());
+        final CriterioOrden crit = criterio;
+
+        // Streaming directo desde el solver: ni lista de EnvioAsignado ni String
+        // del plan en memoria (los dos mayores picos de heap a horizontes grandes).
+        // El GVNS corre dentro del lambda; un OOM aquí trunca el body (el cliente lo
+        // ve como EOF), igual que el comportamiento anterior ante falta de memoria.
+        StreamingResponseBody body = os -> {
+            try (Writer w = new BufferedWriter(new OutputStreamWriter(os, StandardCharsets.UTF_8))) {
+                svc.planificarYStreamDesdeLista(req.envios(), crit, semilla, ini, fin, obs, w);
+            }
+        };
+        return ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON).body(body);
+    }
+
+    /** Error como cuerpo en streaming, para mantener el tipo de retorno del endpoint. */
+    private static ResponseEntity<StreamingResponseBody> streamError(int status, String codigo, String mensaje) {
+        String json = "{\"error\":\"" + codigo + "\",\"mensaje\":\"" + escapar(mensaje) + "\"}";
+        StreamingResponseBody body = os -> os.write(json.getBytes(StandardCharsets.UTF_8));
+        return ResponseEntity.status(status).contentType(MediaType.APPLICATION_JSON).body(body);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

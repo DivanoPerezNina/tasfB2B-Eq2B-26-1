@@ -48,6 +48,8 @@
     <build>
         <!-- Fuentes Java en src/ (layout plano heredado del motor GVNS) -->
         <sourceDirectory>src</sourceDirectory>
+        <!-- Tests en test/ (fuera de src/ para no entrar en la compilación main) -->
+        <testSourceDirectory>test</testSourceDirectory>
 
         <!-- Recursos en resources/ (application.properties, etc.) -->
         <resources>

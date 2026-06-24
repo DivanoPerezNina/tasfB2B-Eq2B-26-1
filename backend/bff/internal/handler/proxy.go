@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -91,10 +90,22 @@ func NuevoProxySSE(baseURL, stripPrefix string) http.HandlerFunc {
 		// Access-Control-Allow-Origin lo pone el middleware CORS del BFF; no duplicar aquí.
 		w.WriteHeader(http.StatusOK)
 
-		scanner := bufio.NewScanner(resp.Body)
-		for scanner.Scan() {
-			fmt.Fprintln(w, scanner.Text())
-			flusher.Flush()
+		// Passthrough por chunks (NO line-by-line): un evento SSE como plan-tramos
+		// puede tener una línea `data:` de cientos de KB / varios MB. bufio.Scanner
+		// corta líneas >64 KB (bufio.MaxScanTokenSize) → truncaba el plan y el mapa
+		// se quedaba sin aviones. Copiamos bytes tal cual y flush tras cada lectura.
+		buf := make([]byte, 32*1024)
+		for {
+			n, err := resp.Body.Read(buf)
+			if n > 0 {
+				if _, werr := w.Write(buf[:n]); werr != nil {
+					return
+				}
+				flusher.Flush()
+			}
+			if err != nil {
+				return
+			}
 		}
 	}
 }

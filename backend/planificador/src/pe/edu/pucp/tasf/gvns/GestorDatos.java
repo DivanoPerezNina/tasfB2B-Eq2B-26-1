@@ -38,15 +38,22 @@ public class GestorDatos {
     public int[] vueloLlegadaUTC= new int[5000];   // minutos dentro del día UTC
     public int[] vueloCapacidad = new int[5000];
 
-    // ── ENVÍOS (9.5 M) ───────────────────────────────────────────────────────
+    // ── ENVÍOS ────────────────────────────────────────────────────────────────
     // Arrays primitivos: ~80 MB cada int[], ~160 MB cada long[].
     // NO usar List<Object> — colapsa el Heap a esta escala.
+    //
+    // Se inician VACÍOS y se dimensionan al volumen real en cada carga:
+    //  - file-path  (cargarTodosLosEnvios): reserva CAP_FILE antes de leer.
+    //  - desde-lista (cargarEnviosDesdeArray): reserva el tamaño exacto del bloque.
+    // Antes se reservaban 20 M fijos (~560 MB) en cada `new GestorDatos()`, que el
+    // GC tenía que reciclar en cada bloque del esquema Sa/Sc → presión inútil.
+    static final int CAP_FILE = 20_000_000; // tope del file-path (carga masiva)
     public int    numEnvios         = 0;
-    public int[]  envioOrigen       = new int [20_000_000];
-    public int[]  envioDestino      = new int [20_000_000];
-    public int[]  envioMaletas      = new int [20_000_000];
-    public long[] envioRegistroUTC  = new long[20_000_000];
-    public long[] envioDeadlineUTC  = new long[20_000_000];
+    public int[]  envioOrigen       = new int [0];
+    public int[]  envioDestino      = new int [0];
+    public int[]  envioMaletas      = new int [0];
+    public long[] envioRegistroUTC  = new long[0];
+    public long[] envioDeadlineUTC  = new long[0];
 
     // =========================================================================
     // CARGA DE AEROPUERTOS
@@ -218,6 +225,16 @@ public class GestorDatos {
             return;
         }
 
+        // El file-path escribe directo en los arrays por índice, así que reserva
+        // el tope aquí (los campos arrancan vacíos para no costar 560 MB por defecto).
+        if (envioOrigen.length < CAP_FILE) {
+            envioOrigen      = new int [CAP_FILE];
+            envioDestino     = new int [CAP_FILE];
+            envioMaletas     = new int [CAP_FILE];
+            envioRegistroUTC = new long[CAP_FILE];
+            envioDeadlineUTC = new long[CAP_FILE];
+        }
+
         File[] archivos = carpeta.listFiles();
         if (archivos != null) {
             for (File archivo : archivos) {
@@ -342,13 +359,12 @@ public class GestorDatos {
      * @param envios lista de mapas con claves: origen, destino, maletas,
      *               registroUTC, deadlineUTC
      */
-    public void cargarEnviosDesdeLista(List<Map<String, Object>> envios) {
+    public void cargarEnviosDesdeArray(List<EnvioDTO> envios) {
         if (numAeropuertos == 0) {
             throw new IllegalStateException("Cargue aeropuertos antes de los envíos");
         }
-        // Dimensionar los arrays al volumen REAL de esta ventana en vez de los
-        // 20 M fijos (~560 MB). Clave para escalar a horizontes grandes sin OOM:
-        // libera los arrays gigantes por defecto y reserva solo lo necesario.
+        // Dimensionar los arrays al volumen REAL de esta ventana (no 20 M fijos).
+        // Clave para escalar a horizontes grandes sin OOM: reserva solo lo necesario.
         int n = envios.size();
         envioOrigen      = new int [n];
         envioDestino     = new int [n];
@@ -356,20 +372,17 @@ public class GestorDatos {
         envioRegistroUTC = new long[n];
         envioDeadlineUTC = new long[n];
         numEnvios = 0;
-        for (Map<String, Object> e : envios) {
-            String origen  = (String) e.get("origen");
-            String destino = (String) e.get("destino");
-            if (origen == null || destino == null) continue;
-            Integer idO = mapaIataAId.get(origen);
-            Integer idD = mapaIataAId.get(destino);
+        for (EnvioDTO e : envios) {
+            if (e.origen() == null || e.destino() == null) continue;
+            Integer idO = mapaIataAId.get(e.origen());
+            Integer idD = mapaIataAId.get(e.destino());
             if (idO == null || idD == null) continue;
-            if (numEnvios >= envioOrigen.length) break;
 
             envioOrigen     [numEnvios] = idO;
             envioDestino    [numEnvios] = idD;
-            envioMaletas    [numEnvios] = ((Number) e.get("maletas")).intValue();
-            envioRegistroUTC[numEnvios] = ((Number) e.get("registroUTC")).longValue();
-            envioDeadlineUTC[numEnvios] = ((Number) e.get("deadlineUTC")).longValue();
+            envioMaletas    [numEnvios] = e.maletas();
+            envioRegistroUTC[numEnvios] = e.registroUTC();
+            envioDeadlineUTC[numEnvios] = e.deadlineUTC();
             numEnvios++;
         }
         System.out.println("Envíos cargados desde lista: " + numEnvios);

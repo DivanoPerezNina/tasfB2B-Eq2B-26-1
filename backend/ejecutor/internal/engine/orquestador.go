@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -239,11 +238,18 @@ func (o *Orquestador) planificarYcargar(fin, t int64) (*Simulacion, error) {
 	if err != nil {
 		return nil, fmt.Errorf("consultas: %w", err)
 	}
-	planJSON, err := o.planificar(envios, o.IniPlanUTC, fin)
+	resp, err := o.planificar(envios, o.IniPlanUTC, fin)
 	if err != nil {
 		return nil, fmt.Errorf("desde-datos: %w", err)
 	}
-	sim, err := Nueva("blk", planJSON, 0, o.Umbrales, time.Second)
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return nil, fmt.Errorf("desde-datos HTTP %d: %s", resp.StatusCode, b)
+	}
+	// Parseo del plan en STREAMING desde el body de la respuesta: evita cargar el
+	// plan completo (cientos de MB a horizontes grandes) como string + copia []byte.
+	sim, err := nuevaDesdeReader("blk", resp.Body, 0, o.Umbrales, time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("estado: %w", err)
 	}
@@ -293,23 +299,32 @@ func (o *Orquestador) consultar(ini, fin int64) ([]envioConsulta, error) {
 	return r.Envios, nil
 }
 
-func (o *Orquestador) planificar(envios []envioConsulta, ini, fin int64) (string, error) {
-	body, _ := json.Marshal(map[string]interface{}{
-		"iniUTC":            ini,
-		"finUTC":            fin,
-		"observacionIniUTC": o.T0UTC,
-		"criterio":          o.Criterio,
-		"envios":            envios,
-	})
-	resp, err := http.Post(o.PlanificadorURL+"/api/planificacion/desde-datos",
-		"application/json", bytes.NewReader(body))
+// planificar hace POST /desde-datos con el body en STREAMING vía io.Pipe: el
+// cuerpo de la petición (cabecera + array de envíos) se genera y envía por
+// chunks en una goroutine, en vez de materializar el JSON completo (~cientos de
+// MB a horizontes grandes) con json.Marshal antes de enviarlo. Devuelve la
+// respuesta SIN consumir su body, para que el caller la parsee en streaming.
+func (o *Orquestador) planificar(envios []envioConsulta, ini, fin int64) (*http.Response, error) {
+	pr, pw := io.Pipe()
+	go func() {
+		var werr error
+		defer func() { pw.CloseWithError(werr) }()
+		if _, werr = fmt.Fprintf(pw,
+			`{"iniUTC":%d,"finUTC":%d,"observacionIniUTC":%d,"criterio":%q,"envios":`,
+			ini, fin, o.T0UTC, o.Criterio); werr != nil {
+			return
+		}
+		if werr = json.NewEncoder(pw).Encode(envios); werr != nil {
+			return
+		}
+		_, werr = io.WriteString(pw, "}")
+	}()
+
+	req, err := http.NewRequest(http.MethodPost,
+		o.PlanificadorURL+"/api/planificacion/desde-datos", pr)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, raw)
-	}
-	return string(raw), nil
+	req.Header.Set("Content-Type", "application/json")
+	return http.DefaultClient.Do(req)
 }
