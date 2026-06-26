@@ -554,7 +554,8 @@ export function UnifiedDashboard() {
               const orig = getAeropuertoById(selectedVuelo.idOrigen);
               const dest = getAeropuertoById(selectedVuelo.idDestino);
               const occ = selectedVuelo.ocupacionActual ?? 0;
-              const pct = selectedVuelo.capacidadMaxima > 0 ? (occ / selectedVuelo.capacidadMaxima) * 100 : 0;
+              const cap = selectedVuelo.capacidadMaxima ?? 0;
+              const pct = cap > 0 ? (occ / cap) * 100 : 0;
               return (
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
@@ -588,14 +589,20 @@ export function UnifiedDashboard() {
                     <div className="flex justify-between text-[11px] mb-1">
                       <span className="text-panel-text-muted">Ocupación</span>
                       <span className="font-semibold text-panel-text">
-                        {occ}/{selectedVuelo.capacidadMaxima}
-                        <span className="ml-1 text-panel-text-faint">({pct.toFixed(0)}%)</span>
+                        {cap > 0 ? (
+                          <>
+                            {occ}/{cap}
+                            <span className="ml-1 text-panel-text-faint">({pct.toFixed(0)}%)</span>
+                          </>
+                        ) : (
+                          <span className="text-panel-text-faint">{occ}/—</span>
+                        )}
                       </span>
                     </div>
                     <div className="h-1.5 w-full rounded-full bg-panel-section-bg overflow-hidden">
                       <div
                         className={`h-full rounded-full transition-all ${pct > 90 ? 'bg-red-500' : pct > 70 ? 'bg-yellow-500' : 'bg-green-500'}`}
-                        style={{ width: `${Math.min(pct, 100)}%` }}
+                        style={{ width: `${cap > 0 ? Math.min(pct, 100) : 0}%` }}
                       />
                     </div>
                   </div>

@@ -131,11 +131,18 @@ function airportContinentFromBackend(a?: Aeropuerto): Continent | undefined {
   return undefined;
 }
 
+// Normaliza duración de vuelo en minutos del día, manejando cruces de medianoche
+function duracionMinutosDia(salidaMin: number, llegadaMin: number): number {
+  const diff = llegadaMin - salidaMin;
+  return diff >= 0 ? diff : diff + 1440;
+}
+
 function getActiveFlightsFromPlan(
   simMinuteUTC: number,
   planTramos: PlanTramoVisual[],
   airports: Airport[],
   aeropuertosBackend: Aeropuerto[],
+  vuelosBackend: Vuelo[],
   filter: Continent | 'all',
 ): ActiveFlightResult {
   const flights: ActiveFlight[] = [];
@@ -174,13 +181,35 @@ function getActiveFlightsFromPlan(
     // el rastro ni hacia una posición anterior.
     const angle = getPlaneRotationToDestination(lat, lng, destFront.lat, destFront.lng);
 
+    // Buscar el vuelo real correspondiente en vuelosBackend para obtener la capacidad
+    const tramoSalidaDia = ((tramo.salidaUTC % 1440) + 1440) % 1440;
+    const tramoLlegadaDia = ((tramo.llegadaUTC % 1440) + 1440) % 1440;
+    const tramoDuracionNormalizada = duracionMinutosDia(tramoSalidaDia, tramoLlegadaDia);
+    
+    let vueloReal = vuelosBackend.find(v =>
+      v.idOrigen === origBack?.id &&
+      v.idDestino === destBack?.id &&
+      Math.abs(v.salidaUTC - tramoSalidaDia) < 2 && // tolerancia de ±1 minuto
+      Math.abs(duracionMinutosDia(v.salidaUTC, v.llegadaUTC) - tramoDuracionNormalizada) < 5 // tolerancia de ±4 min
+    );
+    
+    // Fallback: si no hay match exacto, buscar por ruta con capacidadMaxima válida
+    if (!vueloReal) {
+      vueloReal = vuelosBackend.find(v =>
+        v.idOrigen === origBack?.id &&
+        v.idDestino === destBack?.id &&
+        v.capacidadMaxima > 0
+      );
+    }
+
     flights.push({
       vuelo: {
         idOrigen: origBack?.id ?? 0,
         idDestino: destBack?.id ?? 0,
         salidaUTC: tramo.salidaUTC,
         llegadaUTC: tramo.llegadaUTC,
-        capacidadMaxima: tramo.maletas,
+        capacidadMaxima: vueloReal?.capacidadMaxima ?? 0,
+        ocupacionActual: tramo.maletas,
       },
       envioIndice: tramo.envioIndice,
       tramoIndex: tramo.tramoIndex,
@@ -210,7 +239,7 @@ interface MapProps {
 
 export const Map = memo(function Map({ selectedAirportId, onAirportSelect, onFlightSelect, selectedFlightKey }: MapProps) {
   const { isRunning, aeropuertosState, tiempoSimUTC, contadores, planTramos, planVisualCargado, config } = useSimulation();
-  const { airports, aeropuertosBackend } = useDomain();
+  const { airports, aeropuertosBackend, vuelosBackend } = useDomain();
 
   // Solo hay aviones reales cuando la simulación ha avanzado al menos un tick
   const simHasStarted = tiempoSimUTC > 0;
@@ -304,8 +333,8 @@ export const Map = memo(function Map({ selectedAirportId, onAirportSelect, onFli
     if (!showPlanes || !simHasStarted || !planVisualCargado || planTramos.length === 0) {
       return { flights: [], totalActive: 0 };
     }
-    return getActiveFlightsFromPlan(smoothMinute, planTramos, airports, aeropuertosBackend, filter);
-  }, [smoothMinute, showPlanes, simHasStarted, planVisualCargado, planTramos, airports, aeropuertosBackend, filter]);
+    return getActiveFlightsFromPlan(smoothMinute, planTramos, airports, aeropuertosBackend, vuelosBackend, filter);
+  }, [smoothMinute, showPlanes, simHasStarted, planVisualCargado, planTramos, airports, aeropuertosBackend, vuelosBackend, filter]);
 
   const activeFlights = activeFlightResult.flights;
   const activeFlightTotal = activeFlightResult.totalActive;
