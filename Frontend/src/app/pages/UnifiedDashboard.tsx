@@ -81,10 +81,21 @@ interface SearchResult {
 
 
 const SCENARIO_DISPLAY: Record<string, string> = {
-  period: 'Simulación 5D',
   realtime: 'Operación día a día',
   collapse: 'Simulación hasta el colapso',
 };
+
+function formatFechaInicioTexto(date: Date) {
+  const meses = [
+    'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+    'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre',
+  ];
+
+  const dia = date.getDate();
+  const diaTexto = dia === 1 ? '1ro' : String(dia);
+
+  return `${diaTexto} de ${meses[date.getMonth()]} del ${date.getFullYear()}`;
+}
 
 function normalizarMinutoDia(min: number) {
   return ((min % 1440) + 1440) % 1440;
@@ -252,8 +263,13 @@ export function UnifiedDashboard() {
   const finSimMin = lastValidTick?.tiempo_sim_utc ?? Math.floor(simulationTime.getTime() / 60000);
   const fechaFinSim = new Date(finSimMin * 60 * 1000);
   const diasSimulados = Math.max(0, Math.ceil((finSimMin - inicioSimMin) / 1440));
-  const fechaInicioSim = format(config.startDate, 'dd/MM/yyyy HH:mm');
-  const tipoSimulacionActual = SCENARIO_DISPLAY[config.scenario] ?? config.scenario;
+  const esPeriodoSimulado = config.scenario === 'period';
+  const fechaInicioSim = esPeriodoSimulado
+    ? formatFechaInicioTexto(config.startDate)
+    : format(config.startDate, 'dd/MM/yyyy HH:mm');
+  const tipoSimulacionActual = esPeriodoSimulado
+    ? `Simulación ${config.dias}D`
+    : (SCENARIO_DISPLAY[config.scenario] ?? config.scenario);
 
   const selectedFlightMeta = useMemo(() => {
     if (!selectedVuelo) return null;
@@ -299,12 +315,16 @@ export function UnifiedDashboard() {
             {tipoSimulacionActual}
           </span>
         </div>
-        <div className="h-4 w-px bg-panel-border" />
-        {/* Fecha de inicio */}
-        <div className="flex items-center gap-1.5">
-          <span className="text-[11px] text-panel-text-muted">Inicio:</span>
-          <span className="font-mono text-xs text-panel-text">{fechaInicioSim}</span>
-        </div>
+        {esPeriodoSimulado && (
+          <>
+            <div className="h-4 w-px bg-panel-border" />
+            {/* Fecha de inicio: en simulaciones de 3, 5 y 7 días se muestra como texto */}
+            <div className="flex items-center gap-1.5">
+              <span className="text-[11px] text-panel-text-muted">Inicio:</span>
+              <span className="text-xs font-semibold text-panel-text">{fechaInicioSim}</span>
+            </div>
+          </>
+        )}
         <div className="h-4 w-px bg-panel-border" />
         {/* Tiempo simulado actual */}
         <div className="flex items-center gap-1.5">
