@@ -80,6 +80,22 @@ interface SearchResult {
 }
 
 
+const SCENARIO_DISPLAY: Record<string, string> = {
+  period: 'Simulación 5D',
+  realtime: 'Operación día a día',
+  collapse: 'Simulación hasta el colapso',
+};
+
+function normalizarMinutoDia(min: number) {
+  return ((min % 1440) + 1440) % 1440;
+}
+
+function duracionMinDia(salida: number, llegada: number) {
+  const diff = llegada - salida;
+  return diff >= 0 ? diff : diff + 1440;
+}
+
+
 export function UnifiedDashboard() {
   const {
     stats, getAirportStats,
@@ -236,6 +252,34 @@ export function UnifiedDashboard() {
   const finSimMin = lastValidTick?.tiempo_sim_utc ?? Math.floor(simulationTime.getTime() / 60000);
   const fechaFinSim = new Date(finSimMin * 60 * 1000);
   const diasSimulados = Math.max(0, Math.ceil((finSimMin - inicioSimMin) / 1440));
+  const fechaInicioSim = format(config.startDate, 'dd/MM/yyyy HH:mm');
+  const tipoSimulacionActual = SCENARIO_DISPLAY[config.scenario] ?? config.scenario;
+
+  const selectedFlightMeta = useMemo(() => {
+    if (!selectedVuelo) return null;
+
+    const salidaDia = normalizarMinutoDia(selectedVuelo.salidaUTC);
+    const llegadaDia = normalizarMinutoDia(selectedVuelo.llegadaUTC);
+    const duracion = duracionMinDia(salidaDia, llegadaDia);
+
+    const vueloReal = vuelosBD.find(v =>
+      v.idOrigen === selectedVuelo.idOrigen &&
+      v.idDestino === selectedVuelo.idDestino &&
+      Math.abs(v.salidaUTC - salidaDia) <= 2 &&
+      Math.abs(duracionMinDia(v.salidaUTC, v.llegadaUTC) - duracion) <= 5 &&
+      v.capacidadMaxima > 10
+    ) ?? vuelosBD.find(v =>
+      v.idOrigen === selectedVuelo.idOrigen &&
+      v.idDestino === selectedVuelo.idDestino &&
+      v.capacidadMaxima > 10
+    );
+
+    return {
+      capacidadReal: vueloReal?.capacidadMaxima ?? null,
+      maletasTramo: selectedVuelo.ocupacionActual ?? 0,
+      esVueloReal: Boolean(vueloReal),
+    };
+  }, [selectedVuelo, vuelosBD]);
 
   return (
     <div className="relative flex h-full flex-col bg-background">
@@ -248,7 +292,21 @@ export function UnifiedDashboard() {
           <span className={`text-xs font-semibold ${fl.color}`}>{fl.text}</span>
         </div>
         <div className="h-4 w-px bg-panel-border" />
-        {/* Sim time */}
+        {/* Tipo de simulación */}
+        <div className="flex items-center gap-1.5">
+          <span className="text-[11px] text-panel-text-muted">Simulación:</span>
+          <span className="rounded-full bg-panel-section-bg px-2 py-1 text-[11px] font-semibold text-panel-text">
+            {tipoSimulacionActual}
+          </span>
+        </div>
+        <div className="h-4 w-px bg-panel-border" />
+        {/* Fecha de inicio */}
+        <div className="flex items-center gap-1.5">
+          <span className="text-[11px] text-panel-text-muted">Inicio:</span>
+          <span className="font-mono text-xs text-panel-text">{fechaInicioSim}</span>
+        </div>
+        <div className="h-4 w-px bg-panel-border" />
+        {/* Tiempo simulado actual */}
         <div className="flex items-center gap-1.5">
           <Clock className="h-3.5 w-3.5 text-panel-text-faint" />
           <span className="font-mono text-xs text-panel-text">
@@ -553,8 +611,8 @@ export function UnifiedDashboard() {
             {selectedVuelo ? (() => {
               const orig = getAeropuertoById(selectedVuelo.idOrigen);
               const dest = getAeropuertoById(selectedVuelo.idDestino);
-              const occ = selectedVuelo.ocupacionActual ?? 0;
-              const cap = selectedVuelo.capacidadMaxima ?? 0;
+              const occ = selectedFlightMeta?.maletasTramo ?? 0;
+              const cap = selectedFlightMeta?.capacidadReal ?? 0;
               const pct = cap > 0 ? (occ / cap) * 100 : 0;
               return (
                 <div className="space-y-2">
@@ -587,7 +645,9 @@ export function UnifiedDashboard() {
                   </div>
                   <div>
                     <div className="flex justify-between text-[11px] mb-1">
-                      <span className="text-panel-text-muted">Ocupación</span>
+                      <span className="text-panel-text-muted">
+                        {cap > 0 ? 'Carga / capacidad' : 'Maletas del tramo'}
+                      </span>
                       <span className="font-semibold text-panel-text">
                         {cap > 0 ? (
                           <>
@@ -595,16 +655,22 @@ export function UnifiedDashboard() {
                             <span className="ml-1 text-panel-text-faint">({pct.toFixed(0)}%)</span>
                           </>
                         ) : (
-                          <span className="text-panel-text-faint">{occ}/—</span>
+                          <>{occ}</>
                         )}
                       </span>
                     </div>
-                    <div className="h-1.5 w-full rounded-full bg-panel-section-bg overflow-hidden">
-                      <div
-                        className={`h-full rounded-full transition-all ${pct > 90 ? 'bg-red-500' : pct > 70 ? 'bg-yellow-500' : 'bg-green-500'}`}
-                        style={{ width: `${cap > 0 ? Math.min(pct, 100) : 0}%` }}
-                      />
-                    </div>
+                    {cap > 0 ? (
+                      <div className="h-1.5 w-full rounded-full bg-panel-section-bg overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all ${pct > 90 ? 'bg-red-500' : pct > 70 ? 'bg-yellow-500' : 'bg-green-500'}`}
+                          style={{ width: `${Math.min(pct, 100)}%` }}
+                        />
+                      </div>
+                    ) : (
+                      <p className="text-[10px] text-panel-text-faint">
+                        La capacidad real del vuelo no pudo resolverse con certeza desde los datos actuales.
+                      </p>
+                    )}
                   </div>
                   <button onClick={() => setSelectedVuelo(null)} className="w-full rounded bg-panel-section-bg px-2 py-1 text-[10px] text-panel-text-muted hover:bg-panel-hover transition-colors">
                     Cerrar vuelo

@@ -511,23 +511,35 @@ export const Map = memo(function Map({ selectedAirportId, onAirportSelect, onFli
             }
           </Geographies>
 
-          {/* Rutas activas — no se dibujan rutas globales ni rutas programadas.
-              La línea se mantiene anclada en el origen y llega hasta el avión. */}
+          {/* Rutas activas. Línea sólida = origen → avión. Línea punteada = avión → destino. */}
           {showPlanes && activeFlights.map((af, index) => {
             const flightKey = `${af.vuelo.idOrigen}-${af.vuelo.idDestino}-${af.vuelo.salidaUTC}-${af.vuelo.llegadaUTC}-${index}`;
             const activeColor = af.isSameCont ? '#38bdf8' : '#fbbf24';
             const baseWidth = (af.isSameCont ? 0.75 : 1.05) * markerScale;
 
             return (
-              <Line
-                key={`active-route-${flightKey}`}
-                from={[af.trailLng, af.trailLat]}
-                to={[af.lng, af.lat]}
-                stroke={activeColor}
-                strokeWidth={baseWidth}
-                strokeLinecap="round"
-                strokeOpacity={0.72}
-              />
+              <React.Fragment key={`active-route-${flightKey}`}>
+                {/* Tramo recorrido: origen → avión */}
+                <Line
+                  from={[af.trailLng, af.trailLat]}
+                  to={[af.lng, af.lat]}
+                  stroke={activeColor}
+                  strokeWidth={baseWidth}
+                  strokeLinecap="round"
+                  strokeOpacity={0.72}
+                />
+
+                {/* Tramo pendiente: avión → destino */}
+                <Line
+                  from={[af.lng, af.lat]}
+                  to={[af.toLng, af.toLat]}
+                  stroke={activeColor}
+                  strokeWidth={baseWidth * 0.9}
+                  strokeOpacity={0.45}
+                  strokeDasharray={`${2.4 * markerScale} ${2.4 * markerScale}`}
+                  strokeLinecap="round"
+                />
+              </React.Fragment>
             );
           })}
 
@@ -709,6 +721,26 @@ export const Map = memo(function Map({ selectedAirportId, onAirportSelect, onFli
                 <div className="h-2 w-2 rounded-full bg-amber-400" />
                 <span className="text-[10px]" style={{ color: 'var(--map-overlay-text-muted)' }}>Ruta intercontinental</span>
               </div>
+            </div>
+          </div>
+          <div className="border-t pt-1.5 mt-1.5" style={{ borderColor: 'var(--panel-border)' }}>
+            <p className="text-xs font-medium mb-1" style={{ color: 'var(--panel-text-faint)' }}>
+              Lectura de ruta
+            </p>
+            <div className="flex items-center gap-2 mb-1">
+              <div className="h-0.5 w-6 rounded-full bg-amber-400" />
+              <span className="text-[10px]" style={{ color: 'var(--map-overlay-text-muted)' }}>
+                Recorrido
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div
+                className="h-0.5 w-6 border-t-2 border-dashed"
+                style={{ borderColor: '#fbbf24' }}
+              />
+              <span className="text-[10px]" style={{ color: 'var(--map-overlay-text-muted)' }}>
+                Pendiente al destino
+              </span>
             </div>
           </div>
           <div className="border-t pt-1.5 mt-1.5" style={{ borderColor: 'var(--panel-border)' }}>
