@@ -716,7 +716,7 @@ export function UnifiedDashboard() {
                       </p>
                     )}
                   </div>
-                  {(fase === 'ejecutando' || fase === 'pausado') && (
+                  {config.scenario === 'realtime' && (fase === 'ejecutando' || fase === 'pausado') && (
                     <button
                       onClick={handleCancelarVuelo}
                       disabled={cancelStatus === 'sending' || cancelStatus === 'ok'}
