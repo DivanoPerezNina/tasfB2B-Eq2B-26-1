@@ -28,6 +28,12 @@ type Orquestador struct {
 	Umbrales   Umbrales
 	Colapso    *ConfigColapso
 
+	// UsarCancelacionesArchivo controla si se aplican las cancelaciones cargadas
+	// por ARCHIVO (servicio de Consultas). Solo aplica a Periodo y Colapso; en
+	// Tiempo Real (día a día) se deja en false. Las cancelaciones INTERACTIVAS del
+	// buscador funcionan en todos los escenarios, independiente de este flag.
+	UsarCancelacionesArchivo bool
+
 	Broadcast func(event string, data interface{})
 
 	mu           sync.RWMutex
@@ -353,9 +359,12 @@ func (o *Orquestador) consultar(ini, fin int64) ([]envioConsulta, error) {
 // buscador (set en memoria). Sin validación: si Consultas falla, solo se usan las
 // interactivas (no se aborta la simulación).
 func (o *Orquestador) cancelacionesParaVentana(fin int64) []cancelacion {
-	archivo, err := o.consultarCancelaciones(o.IniPlanUTC, fin)
-	if err != nil {
-		archivo = nil
+	var archivo []cancelacion
+	// Solo Periodo y Colapso usan el archivo; Tiempo Real (día a día) lo ignora.
+	if o.UsarCancelacionesArchivo {
+		if a, err := o.consultarCancelaciones(o.IniPlanUTC, fin); err == nil {
+			archivo = a
+		}
 	}
 	o.mu.RLock()
 	inter := make([]cancelacion, len(o.cancelaciones))
@@ -385,7 +394,8 @@ func (o *Orquestador) limpiarCancelacionesArchivo() {
 
 func (o *Orquestador) consultarCancelaciones(ini, fin int64) ([]cancelacion, error) {
 	url := fmt.Sprintf("%s/cancelaciones?ini=%d&fin=%d", o.ConsultasURL, ini, fin)
-	resp, err := http.Get(url)
+	cli := &http.Client{Timeout: 10 * time.Second}
+	resp, err := cli.Get(url)
 	if err != nil {
 		return nil, err
 	}

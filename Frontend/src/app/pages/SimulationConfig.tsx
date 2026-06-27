@@ -483,6 +483,7 @@ export function SimulationConfig() {
         warmUp:    localConfig.warmUp,
         scMin:     60,   // Sc = 60 min de datos por bloque
         saSeg:     60,   // cada 60 s reales  → K = 60
+        usarCancelaciones: false, // el archivo de cancelaciones no aplica a día a día
       });
       return;
     }

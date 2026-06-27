@@ -617,7 +617,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   // Un solo paso: lanza el orquestador del Ejecutor, que cada Sa consulta el
   // bloque [t0, H] a la BD, planifica (desde-datos) y emite el estado por SSE.
   const iniciarPeriodoProgramado = useCallback(async (
-    opts: { startDate: Date; dias: number; criterio?: CriterioOrden; warmUp?: boolean; scMin?: number; saSeg?: number }
+    opts: { startDate: Date; dias: number; criterio?: CriterioOrden; warmUp?: boolean; scMin?: number; saSeg?: number; usarCancelaciones?: boolean }
   ) => {
     const efectivo = { ...config, ...opts };
     setErrorMsg(null);
@@ -643,6 +643,8 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           sa_seg:  saSeg,
           warmup:  efectivo.warmUp ?? false,
           criterio: efectivo.criterio ?? 'EDF',
+          // El archivo de cancelaciones solo aplica a Periodo/Colapso, no a día a día.
+          usar_cancelaciones: opts.usarCancelaciones ?? true,
           umbrales: {
             verde_hasta: config.thresholds.warehouse.green  / 100,
             ambar_hasta: config.thresholds.warehouse.yellow / 100,

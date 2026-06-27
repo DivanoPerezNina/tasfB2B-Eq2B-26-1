@@ -143,13 +143,14 @@ func (h *SimulacionHandler) Iniciar(w http.ResponseWriter, r *http.Request) {
 //	}
 func (h *SimulacionHandler) PeriodoProgramado(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		T0UTC    int64   `json:"t0_utc"`
-		Dias     int     `json:"dias"`
-		Sc       int64   `json:"sc"`
-		SaSeg    float64 `json:"sa_seg"`
-		WarmUp   bool    `json:"warmup"`
-		Criterio string  `json:"criterio"`
-		Umbrales struct {
+		T0UTC             int64   `json:"t0_utc"`
+		Dias              int     `json:"dias"`
+		Sc                int64   `json:"sc"`
+		SaSeg             float64 `json:"sa_seg"`
+		WarmUp            bool    `json:"warmup"`
+		Criterio          string  `json:"criterio"`
+		UsarCancelaciones *bool   `json:"usar_cancelaciones"` // nil/true=aplica archivo; false=Tiempo Real
+		Umbrales          struct {
 			VerdeHasta float64 `json:"verde_hasta"`
 			AmbarHasta float64 `json:"ambar_hasta"`
 		} `json:"umbrales"`
@@ -192,6 +193,8 @@ func (h *SimulacionHandler) PeriodoProgramado(w http.ResponseWriter, r *http.Req
 	broker := sse.Nuevo(h.MaxSSEClientes)
 	orq := engine.NuevoOrquestador("periodo", h.ConsultasURL, h.PlanificadorURL,
 		req.T0UTC, finUTC, req.Sc, sa, lookback, req.Criterio, umbrales)
+	// Periodo aplica el archivo de cancelaciones; Tiempo Real (envía false) no.
+	orq.UsarCancelacionesArchivo = req.UsarCancelaciones == nil || *req.UsarCancelaciones
 	orq.Broadcast = broker.Publicar
 	orq.Iniciar()
 
@@ -297,6 +300,7 @@ func (h *SimulacionHandler) Colapso(w http.ResponseWriter, r *http.Request) {
 		BloquesRojosConsecutivos: req.BloquesRojoConsecutivos,
 		MaxDias:                  req.MaxDias,
 	}
+	orq.UsarCancelacionesArchivo = true // Colapso aplica el archivo de cancelaciones
 	orq.Broadcast = broker.Publicar
 	orq.Iniciar()
 
