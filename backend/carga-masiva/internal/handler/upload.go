@@ -384,6 +384,22 @@ func (h *UploadHandler) Cancelaciones(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ── DELETE /upload/cancelaciones ─────────────────────────────────────────────
+//
+// Vacía la tabla de cancelaciones manualmente. Útil cuando se detiene una
+// simulación antes de que termine (el ejecutor solo limpia al terminar/detener
+// el escenario) o para descartar un archivo cargado sin correr nada.
+func (h *UploadHandler) LimpiarCancelaciones(w http.ResponseWriter, r *http.Request) {
+	res, err := h.DB.Exec("DELETE FROM cancelaciones")
+	if err != nil {
+		// Sin validación: si la tabla no existe, no hay nada que limpiar.
+		respond(w, 200, map[string]interface{}{"limpiado": 0})
+		return
+	}
+	n, _ := res.RowsAffected()
+	respond(w, 200, map[string]interface{}{"limpiado": n})
+}
+
 // ── GET /upload/sesion/{token} ───────────────────────────────────────────────
 
 func (h *UploadHandler) Sesion(w http.ResponseWriter, r *http.Request) {

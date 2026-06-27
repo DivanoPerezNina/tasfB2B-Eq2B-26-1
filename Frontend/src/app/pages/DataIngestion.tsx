@@ -110,9 +110,26 @@ export function DataIngestion() {
     }
   };
 
+  const [limpiando, setLimpiando] = useState(false);
+  const handleLimpiarCancelaciones = async () => {
+    setLimpiando(true);
+    try {
+      const res = await fetch(`${BFF}/api/carga/upload/cancelaciones`, { method: 'DELETE' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setCancelFile(null);
+      setEstado(prev => ({ ...prev, cancelaciones: 'idle' }));
+      setMensaje(prev => ({ ...prev, cancelaciones: '' }));
+      toast.success('Cancelaciones limpiadas');
+    } catch (e: any) {
+      toast.error('No se pudo limpiar', { description: e.message });
+    } finally {
+      setLimpiando(false);
+    }
+  };
+
   const cards: {
     kind: UploadKind; label: string; hint: string; icon: React.ReactNode;
-    multiple: boolean; accept: string; file: File | null; files: File[];
+    multiple: boolean; accept: string; clearable?: boolean; file: File | null; files: File[];
     onPick: (files: FileList | null) => void;
   }[] = [
     {
@@ -135,7 +152,7 @@ export function DataIngestion() {
     },
     {
       kind: 'cancelaciones', label: 'Cancelaciones', hint: 'cancelaciones.csv (ruta + fecha/hora local)',
-      icon: <X className="h-5 w-5" />, multiple: false, accept: '.csv,.txt',
+      icon: <X className="h-5 w-5" />, multiple: false, accept: '.csv,.txt', clearable: true,
       file: cancelFile, files: [],
       onPick: (fl) => setCancelFile(fl?.[0] ?? null),
     },
@@ -241,6 +258,16 @@ export function DataIngestion() {
                 >
                   Descargar plantilla
                 </a>
+
+                {c.clearable && (
+                  <button
+                    onClick={handleLimpiarCancelaciones}
+                    disabled={limpiando}
+                    className="mt-1 text-center text-[10px] text-red-500 hover:underline disabled:opacity-60"
+                  >
+                    {limpiando ? 'Limpiando…' : 'Limpiar cancelaciones'}
+                  </button>
+                )}
 
                 {mensaje[c.kind] && (
                   <p className={`mt-2 flex items-center gap-1 text-[11px] ${
