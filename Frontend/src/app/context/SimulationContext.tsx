@@ -90,6 +90,7 @@ interface SimulationContextType {
   pausarSimulacion: () => Promise<void>;
   reanudarSimulacion: () => Promise<void>;
   detenerSimulacion: () => Promise<void>;
+  cancelarVuelo: (origen: string, destino: string, salidaUTC: number) => Promise<boolean>;
   resetear: () => void;
 
   // ── Compatibilidad legacy ──
@@ -684,6 +685,27 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }
   }, [fase]);
 
+  // ─── Cancelar ocurrencia de vuelo (Flujo B: desde el buscador) ─────────────
+  // Registra la cancelación (vuelo, día) en el orquestador, que re-planifica el
+  // bloque actual de inmediato. El plan re-ruteado llega por SSE (plan-tramos).
+  const cancelarVuelo = useCallback(async (origen: string, destino: string, salidaUTC: number): Promise<boolean> => {
+    try {
+      const res = await fetch(`${BFF}/api/simulacion/cancelar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ origen, destino, salidaUTC }),
+      });
+      if (!res.ok) {
+        console.warn('[Sim] cancelar vuelo rechazado por el backend:', res.status);
+        return false;
+      }
+      return true;
+    } catch (e) {
+      console.warn('[Sim] error al cancelar vuelo:', e);
+      return false;
+    }
+  }, []);
+
   const setValidTick = useCallback((tick: { tiempo_sim_utc: number; contadores: Contadores; tick?: number; progreso_pct?: string } | null) => {
     lastValidTickRef.current = tick;
     setLastValidTick(tick);
@@ -853,6 +875,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       pausarSimulacion,
       reanudarSimulacion,
       detenerSimulacion,
+      cancelarVuelo,
       resetear,
       startSimulation,
       pauseSimulation,

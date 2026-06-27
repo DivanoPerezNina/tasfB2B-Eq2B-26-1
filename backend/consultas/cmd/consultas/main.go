@@ -24,9 +24,12 @@ func main() {
 	log.Printf("MySQL conectado en %s:%s/%s", cfg.DBHost, cfg.DBPort, cfg.DBName)
 
 	env := &handler.EnviosHandler{DB: database}
+	cancel := &handler.CancelacionesHandler{DB: database}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /envios", env.Envios)
+	mux.HandleFunc("GET /cancelaciones", cancel.Cancelaciones)
+	mux.HandleFunc("DELETE /cancelaciones", cancel.Limpiar)
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"status":"ok","service":"consultas"}`))

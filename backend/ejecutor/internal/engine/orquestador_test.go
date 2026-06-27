@@ -23,7 +23,8 @@ func TestPlanificarBodyStreamingEsJSONValido(t *testing.T) {
 	envios := []envioConsulta{
 		{Origen: "AAAA", Destino: "BBBB", Maletas: 2, RegistroUTC: 10, DeadlineUTC: 20},
 	}
-	resp, err := o.planificar(envios, 5, 50)
+	cancelados := []cancelacion{{Origen: "AAAA", Destino: "BBBB", SalidaUTC: 14460}}
+	resp, err := o.planificar(envios, cancelados, 5, 50)
 	if err != nil {
 		t.Fatalf("planificar: %v", err)
 	}
@@ -31,11 +32,12 @@ func TestPlanificarBodyStreamingEsJSONValido(t *testing.T) {
 	resp.Body.Close()
 
 	var got struct {
-		IniUTC   int64           `json:"iniUTC"`
-		FinUTC   int64           `json:"finUTC"`
-		ObsUTC   int64           `json:"observacionIniUTC"`
-		Criterio string          `json:"criterio"`
-		Envios   []envioConsulta `json:"envios"`
+		IniUTC     int64           `json:"iniUTC"`
+		FinUTC     int64           `json:"finUTC"`
+		ObsUTC     int64           `json:"observacionIniUTC"`
+		Criterio   string          `json:"criterio"`
+		Envios     []envioConsulta `json:"envios"`
+		Cancelados []cancelacion   `json:"cancelados"`
 	}
 	if err := json.Unmarshal(captured, &got); err != nil {
 		t.Fatalf("body no es JSON válido: %v\nbody=%s", err, captured)
@@ -45,6 +47,10 @@ func TestPlanificarBodyStreamingEsJSONValido(t *testing.T) {
 	}
 	if len(got.Envios) != 1 || got.Envios[0].Origen != "AAAA" || got.Envios[0].DeadlineUTC != 20 {
 		t.Errorf("envíos mal serializados: %+v", got.Envios)
+	}
+	if len(got.Cancelados) != 1 || got.Cancelados[0].Origen != "AAAA" ||
+		got.Cancelados[0].Destino != "BBBB" || got.Cancelados[0].SalidaUTC != 14460 {
+		t.Errorf("cancelados mal serializados: %+v", got.Cancelados)
 	}
 }
 

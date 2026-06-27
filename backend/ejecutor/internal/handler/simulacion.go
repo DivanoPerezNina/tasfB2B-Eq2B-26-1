@@ -315,6 +315,45 @@ func (h *SimulacionHandler) Colapso(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ── POST /api/simulacion/cancelar ────────────────────────────────────────────
+//
+// Cancela una OCURRENCIA de vuelo (vuelo, día) en la simulación de periodo en
+// curso y fuerza un re-plan inmediato del bloque actual. Body:
+//
+//	{ "vueloIdx": 123, "salidaUTC": 29742255 }   // salidaUTC = minuto UTC absoluto
+func (h *SimulacionHandler) Cancelar(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Origen    string `json:"origen"`
+		Destino   string `json:"destino"`
+		SalidaUTC int64  `json:"salidaUTC"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		errResp(w, 400, "BODY_INVALIDO", err.Error())
+		return
+	}
+	if req.Origen == "" || req.Destino == "" {
+		errResp(w, 400, "PARAM_FALTANTE", "Se requieren 'origen' y 'destino' (IATA)")
+		return
+	}
+
+	h.mu.Lock()
+	orq := h.orq
+	h.mu.Unlock()
+	if orq == nil || orq.GetEstado() == "detenido" || orq.GetEstado() == "completado" {
+		errResp(w, 404, "SIN_SIMULACION", "No hay simulación de periodo en curso")
+		return
+	}
+
+	orq.AgregarCancelacion(req.Origen, req.Destino, req.SalidaUTC)
+	respond(w, 202, map[string]interface{}{
+		"estado":    "cancelacion_aplicada",
+		"origen":    req.Origen,
+		"destino":   req.Destino,
+		"salidaUTC": req.SalidaUTC,
+		"mensaje":   "Cancelación registrada; re-planificando bloque actual",
+	})
+}
+
 // ── POST /api/simulacion/pausar ──────────────────────────────────────────────
 
 func (h *SimulacionHandler) Pausar(w http.ResponseWriter, r *http.Request) {

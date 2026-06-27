@@ -108,3 +108,42 @@ func InsertarEnviosBatch(tx *sql.Tx, rows []parser.Envio) error {
 	_, err := tx.Exec(q, args...)
 	return err
 }
+
+// InsertarCancelacionesBatch reemplaza las cancelaciones (DELETE + INSERT). Un
+// archivo nuevo sustituye al anterior; subir un archivo vacío limpia la tabla.
+func InsertarCancelacionesBatch(db *sql.DB, rows []parser.Cancelacion) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec("DELETE FROM cancelaciones"); err != nil {
+		return err
+	}
+	if len(rows) == 0 {
+		return tx.Commit()
+	}
+
+	const batchSize = 500
+	for i := 0; i < len(rows); i += batchSize {
+		end := i + batchSize
+		if end > len(rows) {
+			end = len(rows)
+		}
+		batch := rows[i:end]
+
+		placeholders := make([]string, len(batch))
+		args := make([]interface{}, 0, len(batch)*3)
+		for j, c := range batch {
+			placeholders[j] = "(?, ?, ?)"
+			args = append(args, c.Origen, c.Destino, c.SalidaUTC)
+		}
+		q := "INSERT INTO cancelaciones (origen_iata, destino_iata, salida_utc) VALUES " +
+			strings.Join(placeholders, ",")
+		if _, err := tx.Exec(q, args...); err != nil {
+			return fmt.Errorf("insertar cancelaciones batch: %w", err)
+		}
+	}
+	return tx.Commit()
+}

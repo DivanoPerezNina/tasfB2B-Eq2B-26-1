@@ -21,7 +21,7 @@ import { toast } from 'sonner';
 
 const BFF = import.meta.env.VITE_BFF_URL ?? '';
 
-type UploadKind = 'aeropuertos' | 'vuelos' | 'envios';
+type UploadKind = 'aeropuertos' | 'vuelos' | 'envios' | 'cancelaciones';
 type UploadState = 'idle' | 'subiendo' | 'ok' | 'error';
 
 interface DatasetInfo {
@@ -37,12 +37,13 @@ export function DataIngestion() {
   const [aeroFile,   setAeroFile]   = useState<File | null>(null);
   const [vuelosFile, setVuelosFile] = useState<File | null>(null);
   const [enviosFiles, setEnviosFiles] = useState<File[]>([]);
+  const [cancelFile, setCancelFile] = useState<File | null>(null);
 
   const [estado, setEstado] = useState<Record<UploadKind, UploadState>>({
-    aeropuertos: 'idle', vuelos: 'idle', envios: 'idle',
+    aeropuertos: 'idle', vuelos: 'idle', envios: 'idle', cancelaciones: 'idle',
   });
   const [mensaje, setMensaje] = useState<Record<UploadKind, string>>({
-    aeropuertos: '', vuelos: '', envios: '',
+    aeropuertos: '', vuelos: '', envios: '', cancelaciones: '',
   });
 
   const cargarDataset = () => {
@@ -76,8 +77,15 @@ export function DataIngestion() {
     return true;
   };
 
+  const filesFor = (kind: UploadKind): File[] => {
+    if (kind === 'envios') return enviosFiles;
+    if (kind === 'aeropuertos') return aeroFile ? [aeroFile] : [];
+    if (kind === 'vuelos') return vuelosFile ? [vuelosFile] : [];
+    return cancelFile ? [cancelFile] : [];
+  };
+
   const handleSubir = async (kind: UploadKind) => {
-    const files = kind === 'envios' ? enviosFiles : [kind === 'aeropuertos' ? aeroFile : vuelosFile].filter(Boolean) as File[];
+    const files = filesFor(kind);
     if (files.length === 0) {
       toast.error('Selecciona al menos un archivo');
       return;
@@ -104,26 +112,32 @@ export function DataIngestion() {
 
   const cards: {
     kind: UploadKind; label: string; hint: string; icon: React.ReactNode;
-    multiple: boolean; file: File | null; files: File[];
+    multiple: boolean; accept: string; file: File | null; files: File[];
     onPick: (files: FileList | null) => void;
   }[] = [
     {
       kind: 'aeropuertos', label: 'Aeropuertos', hint: 'aeropuertos.txt',
-      icon: <MapPin className="h-5 w-5" />, multiple: false,
+      icon: <MapPin className="h-5 w-5" />, multiple: false, accept: '.txt',
       file: aeroFile, files: [],
       onPick: (fl) => setAeroFile(fl?.[0] ?? null),
     },
     {
       kind: 'vuelos', label: 'Vuelos', hint: 'vuelos.txt',
-      icon: <Plane className="h-5 w-5" />, multiple: false,
+      icon: <Plane className="h-5 w-5" />, multiple: false, accept: '.txt',
       file: vuelosFile, files: [],
       onPick: (fl) => setVuelosFile(fl?.[0] ?? null),
     },
     {
       kind: 'envios', label: 'Envíos', hint: '_envios_XXXX_.txt (uno por aeropuerto)',
-      icon: <Package className="h-5 w-5" />, multiple: true,
+      icon: <Package className="h-5 w-5" />, multiple: true, accept: '.txt',
       file: null, files: enviosFiles,
       onPick: (fl) => setEnviosFiles(fl ? Array.from(fl) : []),
+    },
+    {
+      kind: 'cancelaciones', label: 'Cancelaciones', hint: 'cancelaciones.csv (ruta + fecha/hora local)',
+      icon: <X className="h-5 w-5" />, multiple: false, accept: '.csv,.txt',
+      file: cancelFile, files: [],
+      onPick: (fl) => setCancelFile(fl?.[0] ?? null),
     },
   ];
 
@@ -175,7 +189,7 @@ export function DataIngestion() {
         </label>
 
         {/* Tarjetas de carga */}
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {cards.map((c) => {
             const st = estado[c.kind];
             const hasSelection = c.multiple ? c.files.length > 0 : !!c.file;
@@ -190,7 +204,7 @@ export function DataIngestion() {
                 <input
                   id={inputId}
                   type="file"
-                  accept=".txt"
+                  accept={c.accept}
                   multiple={c.multiple}
                   className="hidden"
                   onChange={(e) => c.onPick(e.target.files)}
@@ -219,6 +233,14 @@ export function DataIngestion() {
                     ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Subiendo…</>
                     : <><Upload className="h-3.5 w-3.5" />Subir</>}
                 </Button>
+
+                <a
+                  href={`${BFF}/api/carga/plantillas/${c.kind}`}
+                  className="mt-1.5 text-center text-[10px] text-primary hover:underline"
+                  download
+                >
+                  Descargar plantilla
+                </a>
 
                 {mensaje[c.kind] && (
                   <p className={`mt-2 flex items-center gap-1 text-[11px] ${

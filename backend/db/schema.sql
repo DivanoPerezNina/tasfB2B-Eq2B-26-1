@@ -74,10 +74,26 @@ CREATE TABLE IF NOT EXISTS dataset_meta (
   PRIMARY KEY (clave)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- ── Cancelaciones de vuelo ───────────────────────────────────
+-- Cancelaciones DECLARATIVAS cargadas por archivo (CSV ruta + fecha/hora local).
+-- La hora local del origen se convierte a UTC en la carga (igual que envios) y se
+-- guarda salida_utc = minuto UTC absoluto de la salida de la ocurrencia cancelada.
+-- El servicio de Consultas las sirve por ventana (idx_cancel_salida) y el
+-- orquestador las envía al Planificador, que salta ese (vuelo, día). NO se validan
+-- contra el catálogo: rutas/fechas inexistentes simplemente no afectan nada.
+CREATE TABLE IF NOT EXISTS cancelaciones (
+  id           INT UNSIGNED AUTO_INCREMENT,
+  origen_iata  CHAR(4) NOT NULL,
+  destino_iata CHAR(4) NOT NULL,
+  salida_utc   BIGINT  NOT NULL,   -- minuto UTC absoluto de la salida de la ocurrencia
+  PRIMARY KEY (id),
+  KEY idx_cancel_salida (salida_utc)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- ── Sesiones de carga ────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS carga_sesiones (
   token            CHAR(36)          NOT NULL,
-  tipo             ENUM('aeropuertos','vuelos','envios') NOT NULL,
+  tipo             ENUM('aeropuertos','vuelos','envios','cancelaciones') NOT NULL,
   archivo          VARCHAR(120)      NOT NULL,
   estado           ENUM('recibido','procesando','ok','error') NOT NULL DEFAULT 'recibido',
   registros_total  INT UNSIGNED      NOT NULL DEFAULT 0,

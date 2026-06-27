@@ -74,9 +74,15 @@ class CancelacionPlanTest {
 
     @Test
     void clavesCanceladasTraduceDTO() {
+        GestorDatos d = datosAB();
+        // Ruta AAAA→BBBB con salida 10:00 → resuelve al vuelo 0 en el día de SALIDA_ABS.
         Set<Long> s = PlanificadorService.clavesCanceladas(
-                List.of(new CancelacionDTO(0, SALIDA_ABS)));
+                d, List.of(new CancelacionDTO("AAAA", "BBBB", SALIDA_ABS)));
         assertEquals(Set.of(PlanificadorGVNSConcurrente.claveVueloDia(0, SALIDA_ABS)), s);
-        assertTrue(PlanificadorService.clavesCanceladas(null).isEmpty());
+        assertTrue(PlanificadorService.clavesCanceladas(d, null).isEmpty());
+
+        // Ruta inexistente → se ignora (sin validación).
+        assertTrue(PlanificadorService.clavesCanceladas(
+                d, List.of(new CancelacionDTO("AAAA", "ZZZZ", SALIDA_ABS))).isEmpty());
     }
 }

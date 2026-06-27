@@ -113,6 +113,7 @@ export function UnifiedDashboard() {
     fase, contadores, progresoPct, warmupPct, simulationTime,
     collapseFailure, lastValidTick, config,
     pausarSimulacion, reanudarSimulacion, detenerSimulacion, resetear,
+    cancelarVuelo,
   } = useSimulation();
   const {
     airports,
@@ -130,6 +131,7 @@ export function UnifiedDashboard() {
   const [selectedVuelo, setSelectedVuelo] = useState<Vuelo | null>(null);
   const [panelOpen, setPanelOpen] = useState(true);
   const [showCompletion, setShowCompletion] = useState(false);
+  const [cancelStatus, setCancelStatus] = useState<'idle' | 'sending' | 'ok' | 'error'>('idle');
 
   // Show completion overlay when simulation finishes
   useEffect(() => {
@@ -140,6 +142,28 @@ export function UnifiedDashboard() {
   const selectedFlightKey = selectedVuelo
     ? `${selectedVuelo.idOrigen}-${selectedVuelo.idDestino}-${selectedVuelo.salidaUTC}`
     : undefined;
+
+  // Reiniciar el estado del botón de cancelar cuando cambia el vuelo seleccionado
+  useEffect(() => { setCancelStatus('idle'); }, [selectedFlightKey]);
+
+  // Cancela la ocurrencia (vuelo, día) del vuelo seleccionado en el día de sim
+  // actual. Identidad por ruta (origen→destino IATA) + salida UTC absoluta; el
+  // backend resuelve la ruta a su vueloIdx interno y re-rutea.
+  const handleCancelarVuelo = async () => {
+    if (!selectedVuelo) return;
+    const orig = getAeropuertoById(selectedVuelo.idOrigen);
+    const dest = getAeropuertoById(selectedVuelo.idDestino);
+    if (!orig || !dest) { setCancelStatus('error'); return; }
+    setCancelStatus('sending');
+    // selectedVuelo.salidaUTC viene de la BD en hora LOCAL del origen → a UTC con su GMT.
+    const salidaDiaUTC = ((selectedVuelo.salidaUTC - orig.gmt * 60) % 1440 + 1440) % 1440;
+    const nowMin = lastValidTick?.tiempo_sim_utc ?? Math.floor(simulationTime.getTime() / 60000);
+    // ponytail: ocurrencia del día de sim UTC actual; casos borde en el límite de
+    // medianoche local quedan al día UTC vigente (suficiente para el caso de uso).
+    const salidaAbs = Math.floor(nowMin / 1440) * 1440 + salidaDiaUTC;
+    const ok = await cancelarVuelo(orig.iata, dest.iata, salidaAbs);
+    setCancelStatus(ok ? 'ok' : 'error');
+  };
 
   const handleFlightSelect = (vuelo: Vuelo) => {
     setSelectedVuelo(vuelo);
@@ -692,6 +716,18 @@ export function UnifiedDashboard() {
                       </p>
                     )}
                   </div>
+                  {(fase === 'ejecutando' || fase === 'pausado') && (
+                    <button
+                      onClick={handleCancelarVuelo}
+                      disabled={cancelStatus === 'sending' || cancelStatus === 'ok'}
+                      className="w-full rounded bg-red-500/10 px-2 py-1 text-[10px] font-medium text-red-500 hover:bg-red-500/20 disabled:opacity-60 transition-colors"
+                    >
+                      {cancelStatus === 'sending' ? 'Cancelando…'
+                        : cancelStatus === 'ok' ? '✓ Vuelo cancelado'
+                        : cancelStatus === 'error' ? '✕ No se pudo cancelar — reintentar'
+                        : 'Cancelar este vuelo'}
+                    </button>
+                  )}
                   <button onClick={() => setSelectedVuelo(null)} className="w-full rounded bg-panel-section-bg px-2 py-1 text-[10px] text-panel-text-muted hover:bg-panel-hover transition-colors">
                     Cerrar vuelo
                   </button>
