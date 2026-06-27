@@ -140,6 +140,19 @@ public class PlanificadorGVNSConcurrente {
      */
     private final java.util.Map<Integer, Integer> capacidadesGuardadas = new java.util.HashMap<>();
 
+    /**
+     * Cancelaciones POR OCURRENCIA (vuelo, día), como claves {@link #claveVueloDia}.
+     * A diferencia de {@code vuelosCancelados} (que cancela el vuelo en todos los
+     * días via capacidad=0), esto cancela un (vuelo, día) concreto — el modelo que
+     * pide el enunciado. Se rellena antes de planificar (ver setDiasCancelados).
+     */
+    private java.util.Set<Long> diasCancelados = java.util.Collections.emptySet();
+
+    /** Fija las cancelaciones por ocurrencia (claves claveVueloDia) para esta corrida. */
+    public void setDiasCancelados(java.util.Set<Long> claves) {
+        this.diasCancelados = (claves != null) ? claves : java.util.Collections.emptySet();
+    }
+
     // ── ÍNDICE DE ADYACENCIA ─────────────────────────────────────────────────
     /**
      * vuelosPorOrigen[a] = array de índices de vuelos que salen del aeropuerto a.
@@ -583,6 +596,10 @@ public class PlanificadorGVNSConcurrente {
      */
     private boolean intentarReservarEspacio(int v, long salidaAbsoluta, int maletas) {
         long key = claveVueloDia(v, salidaAbsoluta);
+        // Cancelación por ocurrencia: este (vuelo, día) concreto no está disponible.
+        // Como TODA asignación pasa por aquí (greedy y GVNS), basta este chequeo para
+        // que el planificador no use el vuelo cancelado y busque rutas alternativas.
+        if (diasCancelados.contains(key)) return false;
         ocupacionVuelos.putIfAbsent(key, new AtomicInteger(0));
         AtomicInteger ocu = ocupacionVuelos.get(key);
         while (true) {
@@ -609,7 +626,7 @@ public class PlanificadorGVNSConcurrente {
      * salidaAbsoluta / 1440. Permite que el mismo vuelo (vuelo v) tenga
      * ocupaciones distintas en días distintos (vuelo repetido en el schedule).
      */
-    private static long claveVueloDia(int v, long salidaAbsoluta) {
+    public static long claveVueloDia(int v, long salidaAbsoluta) {
         return v * 100_000L + (salidaAbsoluta / 1440);
     }
 

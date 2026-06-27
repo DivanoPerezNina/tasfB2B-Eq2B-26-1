@@ -186,9 +186,11 @@ public class PlanificadorService {
 
     /** Corre el GVNS sobre datos ya cargados (Fase 2 + GVNS si quedan rechazos). */
     private static PlanificadorGVNSConcurrente correrSolver(GestorDatos datos,
-                                                            CriterioOrden criterio, long semilla) {
+                                                            CriterioOrden criterio, long semilla,
+                                                            java.util.Set<Long> diasCancelados) {
         PlanificadorGVNSConcurrente plan =
                 new PlanificadorGVNSConcurrente(datos, semilla, criterio);
+        plan.setDiasCancelados(diasCancelados);
         plan.construirSolucionInicial();
         if (plan.enviosExitosos.get() < datos.numEnvios) {
             plan.ejecutarMejoraGVNS();
@@ -235,7 +237,7 @@ public class PlanificadorService {
         List<EnvioAsignado> resultado = new ArrayList<>(total);
         if (total == 0) return resultado;
 
-        PlanificadorGVNSConcurrente plan = correrSolver(datos, criterio, semilla);
+        PlanificadorGVNSConcurrente plan = correrSolver(datos, criterio, semilla, null);
         for (int e = 0; e < total; e++) {
             resultado.add(construirUno(datos, plan, e));
         }
@@ -331,12 +333,14 @@ public class PlanificadorService {
      */
     public void planificarYStreamDesdeLista(List<EnvioDTO> envios, CriterioOrden criterio,
                                             long semilla, long iniUTC, long finUTC,
-                                            long observacionIniUTC, Appendable out) throws IOException {
+                                            long observacionIniUTC, List<CancelacionDTO> cancelados,
+                                            Appendable out) throws IOException {
         GestorDatos datos = new GestorDatos();
         datos.cargarAeropuertos(rutaAeropuertos);
         datos.cargarVuelos(rutaVuelos);
         datos.cargarEnviosDesdeArray(envios);
 
+        java.util.Set<Long> diasCancelados = clavesCanceladas(cancelados);
         int total = datos.numEnvios;
         Map<String, Integer> caps = capacidadesDe(datos);
 
@@ -348,7 +352,7 @@ public class PlanificadorService {
             return;
         }
 
-        PlanificadorGVNSConcurrente plan = correrSolver(datos, criterio, semilla);
+        PlanificadorGVNSConcurrente plan = correrSolver(datos, criterio, semilla, diasCancelados);
 
         // Pasada 1: contar exitosos (envío con al menos un tramo asignado).
         int exitosos = 0;
@@ -367,6 +371,17 @@ public class PlanificadorService {
             construirUno(datos, plan, e).appendJSON(out);
         }
         out.append("]}");
+    }
+
+    /** Traduce las cancelaciones (vueloIdx, salidaUTC) a claves claveVueloDia para el solver. */
+    static java.util.Set<Long> clavesCanceladas(List<CancelacionDTO> cancelados) {
+        if (cancelados == null || cancelados.isEmpty()) return java.util.Collections.emptySet();
+        java.util.Set<Long> claves = new java.util.HashSet<>(cancelados.size() * 2);
+        for (CancelacionDTO c : cancelados) {
+            if (c == null) continue;
+            claves.add(PlanificadorGVNSConcurrente.claveVueloDia(c.vueloIdx(), c.salidaUTC()));
+        }
+        return claves;
     }
 
     /** Capacidades IATA → almacén a partir de un GestorDatos ya con aeropuertos cargados. */
