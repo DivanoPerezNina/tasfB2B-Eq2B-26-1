@@ -41,6 +41,8 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       } else {
         root.classList.remove('dark');
       }
+      // Carbon: g10 (claro) / g100 (oscuro). Lo lee carbon.scss vía [data-carbon-theme].
+      root.dataset.carbonTheme = resolved === 'dark' ? 'g100' : 'g10';
     };
 
     applyTheme();

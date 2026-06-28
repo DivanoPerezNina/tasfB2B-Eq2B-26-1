@@ -4,9 +4,15 @@
  * El muro es anónimo: no pide usuario, pero cada comentario guarda y MUESTRA
  * toda la metadata capturable (IP pública vista por el servidor, navegador/SO,
  * zona horaria, pantalla, CPU/RAM, GPU, IPs locales, fecha/hora).
+ *
+ * Primera pantalla migrada a Carbon Design System.
  */
 import React, { useEffect, useState } from 'react';
-import { Lock, LogIn, MessageSquare, Send, Globe, Monitor, Cpu, Clock, MapPin, Loader2 } from 'lucide-react';
+import {
+  Tile, TextInput, PasswordInput, Button, Form, Stack,
+  InlineNotification, Tag,
+} from '@carbon/react';
+import { Login as LoginIcon, Send, Chat, Earth, Time, Location, Screen, Chip } from '@carbon/icons-react';
 import { setToken } from '../lib/auth';
 import { recolectarFingerprint } from '../lib/fingerprint';
 
@@ -83,98 +89,122 @@ export function Login({ onSuccess }: { onSuccess: () => void }) {
   };
 
   return (
-    <div className="min-h-screen w-full bg-background text-panel-text flex items-center justify-center p-4">
-      <div className="grid w-full max-w-4xl gap-6 md:grid-cols-2">
+    <div style={{
+      minHeight: '100vh', width: '100%', display: 'flex',
+      alignItems: 'center', justifyContent: 'center', padding: '1.5rem',
+      background: 'var(--cds-background)',
+    }}>
+      <div style={{
+        display: 'grid', gap: '1.5rem', width: '100%', maxWidth: '64rem',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
+      }}>
 
         {/* ── Login ── */}
-        <div className="rounded-2xl border border-panel-border bg-panel-bg p-8 shadow-lg">
-          <div className="mb-6 flex items-center gap-3">
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-blue-500/15">
-              <Lock className="h-5 w-5 text-blue-500" />
-            </div>
+        <Tile>
+          <Stack gap={5}>
             <div>
-              <h1 className="text-lg font-bold">TASF.B2B</h1>
-              <p className="text-xs text-panel-text-faint">Acceso a la simulación</p>
+              <h1 style={{ fontSize: '1.25rem', fontWeight: 600, margin: 0 }}>TASF.B2B</h1>
+              <p style={{ color: 'var(--cds-text-secondary)', fontSize: '.75rem', margin: 0 }}>
+                Acceso a operaciones y simulación
+              </p>
             </div>
-          </div>
 
-          <form onSubmit={entrar} className="space-y-3">
-            <div>
-              <label className="text-xs font-medium text-panel-text-muted">Usuario</label>
-              <input
-                value={usuario} onChange={e => setUsuario(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-panel-border bg-panel-section-bg px-3 py-2 text-sm focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400/30"
-                autoFocus
-              />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-panel-text-muted">Clave</label>
-              <input
-                type="password" value={clave} onChange={e => setClave(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-panel-border bg-panel-section-bg px-3 py-2 text-sm focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400/30"
-              />
-            </div>
-            {error && <p className="text-xs text-red-500">{error}</p>}
-            <button
-              type="submit" disabled={entrando}
-              className="flex w-full items-center justify-center gap-2 rounded-lg bg-blue-600 py-2.5 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
-            >
-              {entrando ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogIn className="h-4 w-4" />}
-              Entrar
-            </button>
-          </form>
-        </div>
+            <Form onSubmit={entrar}>
+              <Stack gap={5}>
+                <TextInput
+                  id="login-usuario"
+                  labelText="Usuario"
+                  value={usuario}
+                  onChange={e => setUsuario(e.target.value)}
+                  autoFocus
+                />
+                <PasswordInput
+                  id="login-clave"
+                  labelText="Clave"
+                  value={clave}
+                  onChange={e => setClave(e.target.value)}
+                />
+                {error && (
+                  <InlineNotification
+                    kind="error"
+                    lowContrast
+                    title="No se pudo entrar"
+                    subtitle={error}
+                    hideCloseButton
+                  />
+                )}
+                <Button type="submit" disabled={entrando} renderIcon={LoginIcon}>
+                  {entrando ? 'Entrando…' : 'Entrar'}
+                </Button>
+              </Stack>
+            </Form>
+          </Stack>
+        </Tile>
 
         {/* ── Muro ── */}
-        <div className="rounded-2xl border border-panel-border bg-panel-bg p-6 shadow-lg flex flex-col">
-          <div className="mb-3 flex items-center gap-2">
-            <MessageSquare className="h-4 w-4 text-panel-text-muted" />
-            <h2 className="text-sm font-semibold">Muro público</h2>
-            <span className="ml-auto text-[10px] text-panel-text-faint">{comentarios.length} comentarios</span>
-          </div>
+        <Tile>
+          <Stack gap={4}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '.5rem' }}>
+              <Chat />
+              <h2 style={{ fontSize: '.875rem', fontWeight: 600, margin: 0 }}>Muro público</h2>
+              <span style={{ marginLeft: 'auto', fontSize: '.75rem', color: 'var(--cds-text-secondary)' }}>
+                {comentarios.length} comentarios
+              </span>
+            </div>
 
-          <div className="flex gap-2">
-            <input
-              value={texto} onChange={e => setTexto(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') publicar(); }}
-              placeholder="Escribe un comentario…"
-              className="flex-1 rounded-lg border border-panel-border bg-panel-section-bg px-3 py-2 text-sm focus:border-blue-400 focus:outline-none"
-            />
-            <button
-              onClick={publicar} disabled={enviando || !texto.trim()}
-              className="flex items-center gap-1 rounded-lg bg-panel-section-bg px-3 text-sm hover:bg-panel-hover disabled:opacity-50"
-            >
-              {enviando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-            </button>
-          </div>
-          <p className="mt-1.5 text-[10px] text-panel-text-faint">
-            Al comentar se registra tu IP, navegador y dispositivo (visible abajo).
-          </p>
-
-          <div className="mt-3 flex-1 space-y-2 overflow-y-auto max-h-72 pr-1">
-            {comentarios.length === 0 && (
-              <p className="py-6 text-center text-xs text-panel-text-faint">Sé el primero en comentar</p>
-            )}
-            {comentarios.map(c => (
-              <div key={c.id} className="rounded-lg border border-panel-border bg-panel-section-bg p-2.5">
-                <p className="text-sm text-panel-text break-words">{c.texto}</p>
-                <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[9px] text-panel-text-faint">
-                  <span className="flex items-center gap-1"><Globe className="h-2.5 w-2.5" />{c.ip || '—'}</span>
-                  <span className="flex items-center gap-1"><Clock className="h-2.5 w-2.5" />{new Date(c.fecha_utc).toLocaleString()}</span>
-                  {c.cliente?.zonaHoraria && <span className="flex items-center gap-1"><MapPin className="h-2.5 w-2.5" />{c.cliente.zonaHoraria}</span>}
-                  {c.cliente?.plataforma && <span className="flex items-center gap-1"><Monitor className="h-2.5 w-2.5" />{c.cliente.plataforma}</span>}
-                  {c.cliente?.nucleosCPU != null && <span className="flex items-center gap-1"><Cpu className="h-2.5 w-2.5" />{c.cliente.nucleosCPU} cores{c.cliente?.memoriaGB ? ` · ${c.cliente.memoriaGB}GB` : ''}</span>}
-                  {Array.isArray(c.cliente?.ipsLocales) && c.cliente.ipsLocales.length > 0 && (
-                    <span className="flex items-center gap-1">LAN: {c.cliente.ipsLocales.join(', ')}</span>
-                  )}
-                </div>
-                {c.user_agent && (
-                  <p className="mt-0.5 text-[9px] text-panel-text-faint/70 truncate" title={c.user_agent}>{c.user_agent}</p>
-                )}
+            <div style={{ display: 'flex', gap: '.5rem', alignItems: 'flex-end' }}>
+              <div style={{ flex: 1 }}>
+                <TextInput
+                  id="muro-texto"
+                  labelText="Comentario"
+                  placeholder="Escribe un comentario…"
+                  value={texto}
+                  onChange={e => setTexto(e.target.value)}
+                  onKeyDown={(e: React.KeyboardEvent) => { if (e.key === 'Enter') publicar(); }}
+                />
               </div>
-            ))}
-          </div>
-        </div>
+              <Button
+                hasIconOnly renderIcon={Send} iconDescription="Publicar"
+                onClick={publicar} disabled={enviando || !texto.trim()}
+              />
+            </div>
+            <p style={{ fontSize: '.75rem', color: 'var(--cds-text-secondary)', margin: 0 }}>
+              Al comentar se registra tu IP, navegador y dispositivo (visible abajo).
+            </p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '.5rem', maxHeight: '18rem', overflowY: 'auto' }}>
+              {comentarios.length === 0 && (
+                <p style={{ textAlign: 'center', fontSize: '.75rem', color: 'var(--cds-text-secondary)', padding: '1.5rem 0' }}>
+                  Sé el primero en comentar
+                </p>
+              )}
+              {comentarios.map(c => (
+                <Tile key={c.id} style={{ background: 'var(--cds-layer-accent)' }}>
+                  <p style={{ fontSize: '.875rem', wordBreak: 'break-word', margin: 0 }}>{c.texto}</p>
+                  <div style={{ marginTop: '.5rem', display: 'flex', flexWrap: 'wrap', gap: '.25rem' }}>
+                    <Tag size="sm" type="gray" renderIcon={Earth}>{c.ip || '—'}</Tag>
+                    <Tag size="sm" type="gray" renderIcon={Time}>{new Date(c.fecha_utc).toLocaleString()}</Tag>
+                    {c.cliente?.zonaHoraria && <Tag size="sm" type="gray" renderIcon={Location}>{c.cliente.zonaHoraria}</Tag>}
+                    {c.cliente?.plataforma && <Tag size="sm" type="gray" renderIcon={Screen}>{c.cliente.plataforma}</Tag>}
+                    {c.cliente?.nucleosCPU != null && (
+                      <Tag size="sm" type="gray" renderIcon={Chip}>
+                        {c.cliente.nucleosCPU} cores{c.cliente?.memoriaGB ? ` · ${c.cliente.memoriaGB}GB` : ''}
+                      </Tag>
+                    )}
+                    {Array.isArray(c.cliente?.ipsLocales) && c.cliente.ipsLocales.length > 0 && (
+                      <Tag size="sm" type="gray">LAN: {c.cliente.ipsLocales.join(', ')}</Tag>
+                    )}
+                  </div>
+                  {c.user_agent && (
+                    <p style={{ marginTop: '.25rem', fontSize: '.6875rem', color: 'var(--cds-text-helper)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.user_agent}>
+                      {c.user_agent}
+                    </p>
+                  )}
+                </Tile>
+              ))}
+            </div>
+          </Stack>
+        </Tile>
       </div>
     </div>
   );

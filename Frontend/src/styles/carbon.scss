@@ -1,0 +1,15 @@
+// Carbon Design System — estilos base + temas g10 (claro) / g100 (oscuro).
+// El tema se alterna en runtime con el atributo data-carbon-theme en <html>
+// (lo pone ThemeContext). Mantiene IBM blue por defecto (sin branding propio).
+@use '@carbon/react';
+@use '@carbon/react/scss/theme';
+@use '@carbon/react/scss/themes';
+
+:root,
+[data-carbon-theme='g10'] {
+  @include theme.theme(themes.$g10);
+}
+
+[data-carbon-theme='g100'] {
+  @include theme.theme(themes.$g100);
+}
