@@ -8,8 +8,8 @@ import {
 import { Map } from '../components/Map';
 import { Vuelo } from '../types';
 import { format } from 'date-fns';
+import { Button, Search as CarbonSearch } from '@carbon/react';
 import {
-  Search,
   X,
   MapPin,
   Plane,
@@ -409,41 +409,18 @@ export function UnifiedDashboard() {
           </>
         )}
         {/* Controls */}
-        <div className="ml-auto flex items-center gap-1.5">
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '.5rem' }}>
           {fase === 'ejecutando' && (
-            <button
-              onClick={pausarSimulacion}
-              title="Pausar la simulación"
-              className="flex items-center gap-1.5 rounded-md bg-yellow-500/10 px-2.5 py-1.5 text-xs font-medium text-yellow-600 dark:text-yellow-400 hover:bg-yellow-500/20 transition-colors"
-            >
-              <Pause className="h-3.5 w-3.5" /> Pausar
-            </button>
+            <Button size="sm" kind="secondary" renderIcon={Pause} onClick={pausarSimulacion}>Pausar</Button>
           )}
           {fase === 'pausado' && (
-            <button
-              onClick={reanudarSimulacion}
-              title="Reanudar la simulación"
-              className="flex items-center gap-1.5 rounded-md bg-green-500/10 px-2.5 py-1.5 text-xs font-medium text-green-600 dark:text-green-400 hover:bg-green-500/20 transition-colors"
-            >
-              <Play className="h-3.5 w-3.5" /> Reanudar
-            </button>
+            <Button size="sm" renderIcon={Play} onClick={reanudarSimulacion}>Reanudar</Button>
           )}
           {(fase === 'ejecutando' || fase === 'pausado' || fase === 'calentando') && (
-            <button
-              onClick={detenerSimulacion}
-              title="Detener la simulación"
-              className="flex items-center gap-1.5 rounded-md bg-red-500/10 px-2.5 py-1.5 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-500/20 transition-colors"
-            >
-              <Square className="h-3.5 w-3.5" /> Detener
-            </button>
+            <Button size="sm" kind="danger" renderIcon={Square} onClick={detenerSimulacion}>Detener</Button>
           )}
           {(fase === 'completado' || fase === 'error' || fase === 'idle') && (
-            <button
-              onClick={resetear}
-              className="flex items-center gap-1.5 rounded-md bg-panel-section-bg px-2.5 py-1.5 text-xs font-medium text-panel-text-muted hover:bg-panel-hover transition-colors"
-            >
-              <RotateCcw className="h-3.5 w-3.5" /> Nueva simulación
-            </button>
+            <Button size="sm" kind="tertiary" renderIcon={RotateCcw} onClick={resetear}>Nueva simulación</Button>
           )}
         </div>
       </div>
@@ -531,20 +508,15 @@ export function UnifiedDashboard() {
           {/* Search */}
           <div className="border-b border-panel-border p-3" ref={searchRef}>
             <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-panel-text-faint" />
-              <input
-                type="text"
+              <CarbonSearch
+                size="sm"
+                labelText="Buscar"
                 placeholder="Buscar aeropuerto, vuelo o envío..."
                 value={query}
-                onChange={(e) => { setQuery(e.target.value); setShowResults(true); }}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => { setQuery(e.target.value); setShowResults(true); }}
                 onFocus={() => query.length >= 2 && setShowResults(true)}
-                className="w-full rounded-lg border border-panel-border bg-panel-section-bg py-2 pl-8 pr-8 text-xs text-panel-text placeholder:text-panel-text-faint focus:border-blue-400 focus:bg-panel-bg focus:outline-none focus:ring-1 focus:ring-blue-400/30 transition-colors"
+                onClear={() => { setQuery(''); setShowResults(false); }}
               />
-              {query && (
-                <button onClick={() => { setQuery(''); setShowResults(false); }} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-panel-text-faint hover:text-panel-text-muted">
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              )}
               {showResults && searchResults.length > 0 && (
                 <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-64 overflow-y-auto rounded-lg border border-panel-border bg-panel-bg shadow-lg">
                   {searchResults.map((r, i) => (
