@@ -441,6 +441,28 @@ func hayEnCurso(sim *engine.Simulacion, orq *engine.Orquestador) bool {
 // ── GET /api/simulacion/estado ───────────────────────────────────────────────
 
 func (h *SimulacionHandler) Estado(w http.ResponseWriter, r *http.Request) {
+	// Simulación de PERIODO/COLAPSO/Día-a-día (orquestador). Es la que el admin
+	// debe poder retomar al reabrir la pestaña: reportamos su estado para que el
+	// frontend detecte la sim en curso y se re-suscriba al SSE (que reenvía el
+	// snapshot). Los contadores/plan llegan por SSE, no aquí.
+	h.mu.Lock()
+	orq := h.orq
+	h.mu.Unlock()
+	if orq != nil {
+		est := orq.GetEstado()
+		if est != "detenido" && est != "completado" {
+			respond(w, 200, map[string]interface{}{
+				"tipo":         "orquestador",
+				"estado":       est,
+				"t0_utc":       orq.T0UTC,
+				"fin_utc":      orq.FinUTC,
+				"activa":       true,
+				"clientes_sse": h.brokerClientes(),
+			})
+			return
+		}
+	}
+
 	sim := h.getActiva(w)
 	if sim == nil {
 		return
@@ -512,6 +534,17 @@ func (h *SimulacionHandler) Health(w http.ResponseWriter, r *http.Request) {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+// brokerClientes devuelve el nº de clientes SSE conectados (0 si no hay broker).
+func (h *SimulacionHandler) brokerClientes() int {
+	h.mu.Lock()
+	b := h.broker
+	h.mu.Unlock()
+	if b == nil {
+		return 0
+	}
+	return b.NumClientes()
+}
 
 func (h *SimulacionHandler) getActiva(w http.ResponseWriter) *engine.Simulacion {
 	h.mu.Lock()
