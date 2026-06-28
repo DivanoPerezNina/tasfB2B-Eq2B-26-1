@@ -425,7 +425,7 @@ export const Map = memo(function Map({ selectedAirportId, onAirportSelect, onFli
       </div>
 
       {/* Zoom info */}
-      <div className="absolute right-4 top-4 z-10 rounded-lg backdrop-blur px-3 py-2 shadow-md" style={{ backgroundColor: 'var(--map-overlay-bg)', display: 'flex', flexDirection: 'column', gap: 2 }}>
+      <div className="absolute right-4 top-4 z-10 rounded-lg backdrop-blur px-3 py-2 shadow-md" style={{ backgroundColor: 'var(--map-overlay-bg)', display: 'flex', flexDirection: 'column', gap: 4, lineHeight: 1.4, minWidth: 130 }}>
         <p className="text-xs" style={{ color: 'var(--map-overlay-text-muted)' }}>Zoom</p>
         <p className="text-sm font-medium" style={{ color: 'var(--map-overlay-text)' }}>{zoom.toFixed(1)}x</p>
         <p className="text-xs mt-0.5" style={{ color: 'var(--panel-text-faint)' }}>
@@ -708,63 +708,57 @@ export const Map = memo(function Map({ selectedAirportId, onAirportSelect, onFli
             : <ChevronUp className="h-3.5 w-3.5" style={{ color: 'var(--map-overlay-text-muted)' }} />}
         </button>
         {legendOpen && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '.375rem' }}>
-          {[
-            { color: 'bg-green-500', text: 'Capacidad OK (<60%)' },
-            { color: 'bg-yellow-500', text: 'Capacidad Media (60-80%)' },
-            { color: 'bg-red-500', text: 'Capacidad Alta (>80%)' },
-          ].map(l => (
-            <div key={l.text} className="flex items-center gap-2">
-              <div className={`h-3 w-3 rounded-full ${l.color}`} />
-              <span className="text-xs" style={{ color: 'var(--map-overlay-text-muted)' }}>{l.text}</span>
-            </div>
-          ))}
-          <div className="border-t pt-1.5 mt-1.5" style={{ borderColor: 'var(--panel-border)' }}>
-            <p className="text-xs font-medium mb-1" style={{ color: 'var(--panel-text-faint)' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '.625rem', fontSize: 12, lineHeight: 1.4 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '.375rem' }}>
+            {[
+              { color: 'bg-green-500', text: 'Capacidad OK (<60%)' },
+              { color: 'bg-yellow-500', text: 'Capacidad Media (60-80%)' },
+              { color: 'bg-red-500', text: 'Capacidad Alta (>80%)' },
+            ].map(l => (
+              <div key={l.text} style={{ display: 'flex', alignItems: 'center', gap: '.5rem' }}>
+                <div className={`h-3 w-3 rounded-full ${l.color}`} style={{ flexShrink: 0 }} />
+                <span style={{ color: 'var(--map-overlay-text-muted)' }}>{l.text}</span>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '.375rem', borderTop: '1px solid var(--panel-border)', paddingTop: '.5rem' }}>
+            <p style={{ fontWeight: 600, margin: 0, color: 'var(--panel-text-faint)' }}>
               {config.scenario === 'collapse' ? 'Actividad en tránsito' : 'Vuelos activos'}
             </p>
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-1">
-                <div className="h-2 w-2 rounded-full bg-blue-400" />
-                <span className="text-[10px]" style={{ color: 'var(--map-overlay-text-muted)' }}>Ruta continental</span>
-              </div>
-              <div className="flex items-center gap-1">
-                <div className="h-2 w-2 rounded-full bg-amber-400" />
-                <span className="text-[10px]" style={{ color: 'var(--map-overlay-text-muted)' }}>Ruta intercontinental</span>
-              </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '.5rem' }}>
+              <div className="h-2 w-2 rounded-full bg-blue-400" style={{ flexShrink: 0 }} />
+              <span style={{ fontSize: 11, color: 'var(--map-overlay-text-muted)' }}>Ruta continental</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '.5rem' }}>
+              <div className="h-2 w-2 rounded-full bg-amber-400" style={{ flexShrink: 0 }} />
+              <span style={{ fontSize: 11, color: 'var(--map-overlay-text-muted)' }}>Ruta intercontinental</span>
             </div>
           </div>
-          <div className="border-t pt-1.5 mt-1.5" style={{ borderColor: 'var(--panel-border)' }}>
-            <p className="text-xs font-medium mb-1" style={{ color: 'var(--panel-text-faint)' }}>
-              Lectura de ruta
-            </p>
-            <div className="flex items-center gap-2 mb-1">
-              <div className="h-0.5 w-6 rounded-full bg-amber-400" />
-              <span className="text-[10px]" style={{ color: 'var(--map-overlay-text-muted)' }}>
-                Recorrido
-              </span>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '.375rem', borderTop: '1px solid var(--panel-border)', paddingTop: '.5rem' }}>
+            <p style={{ fontWeight: 600, margin: 0, color: 'var(--panel-text-faint)' }}>Lectura de ruta</p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '.5rem' }}>
+              <div className="h-0.5 w-6 rounded-full bg-amber-400" style={{ flexShrink: 0 }} />
+              <span style={{ fontSize: 11, color: 'var(--map-overlay-text-muted)' }}>Recorrido</span>
             </div>
-            <div className="flex items-center gap-2">
-              <div
-                className="h-0.5 w-6 border-t-2 border-dashed"
-                style={{ borderColor: '#fbbf24' }}
-              />
-              <span className="text-[10px]" style={{ color: 'var(--map-overlay-text-muted)' }}>
-                Pendiente al destino
-              </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '.5rem' }}>
+              <div className="h-0.5 w-6 border-t-2 border-dashed" style={{ borderColor: '#fbbf24', flexShrink: 0 }} />
+              <span style={{ fontSize: 11, color: 'var(--map-overlay-text-muted)' }}>Pendiente al destino</span>
             </div>
           </div>
-          <div className="border-t pt-1.5 mt-1.5" style={{ borderColor: 'var(--panel-border)' }}>
-            <p className="text-xs font-medium mb-1" style={{ color: 'var(--panel-text-faint)' }}>Tamaño por tier</p>
-            <div className="flex items-center gap-3">
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '.375rem', borderTop: '1px solid var(--panel-border)', paddingTop: '.5rem' }}>
+            <p style={{ fontWeight: 600, margin: 0, color: 'var(--panel-text-faint)' }}>Tamaño por tier</p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
               {[
                 { size: 'h-3 w-3', label: 'Hub' },
                 { size: 'h-2.5 w-2.5', label: 'Regional' },
                 { size: 'h-2 w-2', label: 'Pequeño' },
               ].map(t => (
-                <div key={t.label} className="flex items-center gap-1">
-                  <div className={`${t.size} rounded-full`} style={{ backgroundColor: 'var(--map-overlay-text-muted)' }} />
-                  <span className="text-[10px]" style={{ color: 'var(--map-overlay-text-muted)' }}>{t.label}</span>
+                <div key={t.label} style={{ display: 'flex', alignItems: 'center', gap: '.375rem' }}>
+                  <div className={`${t.size} rounded-full`} style={{ backgroundColor: 'var(--map-overlay-text-muted)', flexShrink: 0 }} />
+                  <span style={{ fontSize: 11, color: 'var(--map-overlay-text-muted)' }}>{t.label}</span>
                 </div>
               ))}
             </div>

@@ -296,3 +296,11 @@
 body {
   font-family: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
 }
+
+/* App de viewport fijo: el scroll vive en contenedores internos (paneles, tabs),
+ * no en el body. Evita el scroll fantasma que mostraba la franja negra debajo. */
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
