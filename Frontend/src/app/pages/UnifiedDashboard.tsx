@@ -8,8 +8,9 @@ import {
 import { Map } from '../components/Map';
 import { Vuelo } from '../types';
 import { format } from 'date-fns';
+import { Button, Search as CarbonSearch } from '@carbon/react';
+import { Pause, Play, StopFilledAlt, Renew } from '@carbon/icons-react';
 import {
-  Search,
   X,
   MapPin,
   Plane,
@@ -24,10 +25,6 @@ import {
   ChevronUp,
   ArrowRight,
   XCircle,
-  Pause,
-  Play,
-  Square,
-  RotateCcw,
   Trophy,
 } from 'lucide-react';
 
@@ -65,7 +62,7 @@ function Section({
         </div>
         {open ? <ChevronUp className="h-3 w-3 text-panel-text-faint" /> : <ChevronDown className="h-3 w-3 text-panel-text-faint" />}
       </button>
-      {open && <div className="px-4 pb-3">{children}</div>}
+      {open && <div className="px-4 pb-3" style={{ lineHeight: 1.5 }}>{children}</div>}
     </div>
   );
 }
@@ -325,7 +322,10 @@ export function UnifiedDashboard() {
     <div className="relative flex h-full flex-col bg-background">
 
       {/* ── Top control bar ── */}
-      <div className="flex items-center gap-4 border-b border-panel-border bg-panel-bg px-4 py-2 flex-shrink-0">
+      <div
+        className="border-b border-panel-border bg-panel-bg flex-shrink-0"
+        style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '.5rem 1rem', minHeight: 48, padding: '.5rem 1rem' }}
+      >
         {/* Fase badge */}
         <div className="flex items-center gap-1.5">
           <span className={`h-2 w-2 rounded-full ${fase === 'ejecutando' ? 'animate-pulse bg-green-500' : fase === 'calentando' ? 'animate-pulse bg-orange-500' : fase === 'pausado' ? 'bg-yellow-500' : fase === 'completado' ? 'bg-blue-500' : 'bg-panel-text-faint'}`} />
@@ -409,41 +409,18 @@ export function UnifiedDashboard() {
           </>
         )}
         {/* Controls */}
-        <div className="ml-auto flex items-center gap-1.5">
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '.5rem' }}>
           {fase === 'ejecutando' && (
-            <button
-              onClick={pausarSimulacion}
-              title="Pausar la simulación"
-              className="flex items-center gap-1.5 rounded-md bg-yellow-500/10 px-2.5 py-1.5 text-xs font-medium text-yellow-600 dark:text-yellow-400 hover:bg-yellow-500/20 transition-colors"
-            >
-              <Pause className="h-3.5 w-3.5" /> Pausar
-            </button>
+            <Button size="sm" kind="secondary" renderIcon={Pause} onClick={pausarSimulacion}>Pausar</Button>
           )}
           {fase === 'pausado' && (
-            <button
-              onClick={reanudarSimulacion}
-              title="Reanudar la simulación"
-              className="flex items-center gap-1.5 rounded-md bg-green-500/10 px-2.5 py-1.5 text-xs font-medium text-green-600 dark:text-green-400 hover:bg-green-500/20 transition-colors"
-            >
-              <Play className="h-3.5 w-3.5" /> Reanudar
-            </button>
+            <Button size="sm" renderIcon={Play} onClick={reanudarSimulacion}>Reanudar</Button>
           )}
           {(fase === 'ejecutando' || fase === 'pausado' || fase === 'calentando') && (
-            <button
-              onClick={detenerSimulacion}
-              title="Detener la simulación"
-              className="flex items-center gap-1.5 rounded-md bg-red-500/10 px-2.5 py-1.5 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-500/20 transition-colors"
-            >
-              <Square className="h-3.5 w-3.5" /> Detener
-            </button>
+            <Button size="sm" kind="danger" renderIcon={StopFilledAlt} onClick={detenerSimulacion}>Detener</Button>
           )}
           {(fase === 'completado' || fase === 'error' || fase === 'idle') && (
-            <button
-              onClick={resetear}
-              className="flex items-center gap-1.5 rounded-md bg-panel-section-bg px-2.5 py-1.5 text-xs font-medium text-panel-text-muted hover:bg-panel-hover transition-colors"
-            >
-              <RotateCcw className="h-3.5 w-3.5" /> Nueva simulación
-            </button>
+            <Button size="sm" kind="tertiary" renderIcon={Renew} onClick={resetear}>Nueva simulación</Button>
           )}
         </div>
       </div>
@@ -530,21 +507,26 @@ export function UnifiedDashboard() {
 
           {/* Search */}
           <div className="border-b border-panel-border p-3" ref={searchRef}>
-            <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-panel-text-faint" />
-              <input
-                type="text"
+            <div className="relative" style={{ display: 'flex', alignItems: 'center', gap: '.25rem' }}>
+              <div style={{ flex: 1 }}>
+              <CarbonSearch
+                size="sm"
+                labelText="Buscar"
                 placeholder="Buscar aeropuerto, vuelo o envío..."
                 value={query}
-                onChange={(e) => { setQuery(e.target.value); setShowResults(true); }}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => { setQuery(e.target.value); setShowResults(true); }}
                 onFocus={() => query.length >= 2 && setShowResults(true)}
-                className="w-full rounded-lg border border-panel-border bg-panel-section-bg py-2 pl-8 pr-8 text-xs text-panel-text placeholder:text-panel-text-faint focus:border-blue-400 focus:bg-panel-bg focus:outline-none focus:ring-1 focus:ring-blue-400/30 transition-colors"
+                onClear={() => { setQuery(''); setShowResults(false); }}
               />
-              {query && (
-                <button onClick={() => { setQuery(''); setShowResults(false); }} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-panel-text-faint hover:text-panel-text-muted">
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              )}
+              </div>
+              <span
+                title="Ejemplos — Aeropuerto por IATA: SKBO · Ruta: SKBO-EDDI"
+                style={{
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                  width: 24, height: 24, borderRadius: '50%', flexShrink: 0, cursor: 'help',
+                  border: '1px solid var(--cds-border-subtle)', color: 'var(--cds-text-secondary)', fontSize: 12,
+                }}
+              >?</span>
               {showResults && searchResults.length > 0 && (
                 <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-64 overflow-y-auto rounded-lg border border-panel-border bg-panel-bg shadow-lg">
                   {searchResults.map((r, i) => (
@@ -568,10 +550,6 @@ export function UnifiedDashboard() {
                 </div>
               )}
             </div>
-            <div className="flex gap-1 mt-2">
-              <span className="rounded bg-blue-500/10 px-1.5 py-0.5 text-[9px] text-blue-600 dark:text-blue-400">IATA: SKBO</span>
-              <span className="rounded bg-indigo-500/10 px-1.5 py-0.5 text-[9px] text-indigo-600 dark:text-indigo-400">Ruta: SKBO-EDDI</span>
-            </div>
           </div>
 
           {/* Airport Info */}
@@ -582,7 +560,7 @@ export function UnifiedDashboard() {
             badge={selectedBackendAirport ? `#${selectedBackendAirport.id}` : undefined}
           >
             {selectedAirport && airportStats && selectedBackendAirport ? (
-              <div className="space-y-2">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '.5rem' }}>
                 <p className="text-[11px] text-panel-text-faint">
                   {selectedAirport.name}
                   {selectedBFF?.pais ? ` · ${selectedBFF.pais}` : ''}
@@ -617,7 +595,7 @@ export function UnifiedDashboard() {
                 {airportVuelos.length > 0 && (
                   <div>
                     <p className="text-[10px] text-panel-text-faint mb-1">Vuelos conectados ({airportVuelos.length})</p>
-                    <div className="max-h-24 overflow-y-auto space-y-0.5">
+                    <div style={{ maxHeight: '6rem', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
                       {airportVuelos.slice(0, 5).map((v, i) => {
                         const orig = getAeropuertoById(v.idOrigen);
                         const dest = getAeropuertoById(v.idDestino);
@@ -659,7 +637,7 @@ export function UnifiedDashboard() {
               const cap = selectedFlightMeta?.capacidadReal ?? 0;
               const pct = cap > 0 ? (occ / cap) * 100 : 0;
               return (
-                <div className="space-y-2">
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '.5rem' }}>
                   <div className="flex items-center justify-between">
                     <div className="text-center">
                       <p className="text-sm font-bold text-panel-text">{orig?.iata}</p>
@@ -717,20 +695,21 @@ export function UnifiedDashboard() {
                     )}
                   </div>
                   {config.scenario === 'realtime' && (fase === 'ejecutando' || fase === 'pausado') && (
-                    <button
-                      onClick={handleCancelarVuelo}
+                    <Button
+                      kind="danger" size="sm"
                       disabled={cancelStatus === 'sending' || cancelStatus === 'ok'}
-                      className="w-full rounded bg-red-500/10 px-2 py-1 text-[10px] font-medium text-red-500 hover:bg-red-500/20 disabled:opacity-60 transition-colors"
+                      onClick={handleCancelarVuelo}
+                      style={{ width: '100%', maxWidth: 'none' }}
                     >
                       {cancelStatus === 'sending' ? 'Cancelando…'
                         : cancelStatus === 'ok' ? '✓ Vuelo cancelado'
                         : cancelStatus === 'error' ? '✕ No se pudo cancelar — reintentar'
                         : 'Cancelar este vuelo'}
-                    </button>
+                    </Button>
                   )}
-                  <button onClick={() => setSelectedVuelo(null)} className="w-full rounded bg-panel-section-bg px-2 py-1 text-[10px] text-panel-text-muted hover:bg-panel-hover transition-colors">
+                  <Button kind="ghost" size="sm" onClick={() => setSelectedVuelo(null)} style={{ width: '100%', maxWidth: 'none' }}>
                     Cerrar vuelo
-                  </button>
+                  </Button>
                 </div>
               );
             })() : (
@@ -757,7 +736,7 @@ export function UnifiedDashboard() {
                   </div>
                 </div>
               )}
-              <div className="space-y-1 flex-1">
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '.5rem' }}>
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] text-panel-text-muted">Entregados</span>
                   <span className="text-[10px] font-medium text-green-600 dark:text-green-400">{contadores.entregado}</span>
@@ -791,7 +770,7 @@ export function UnifiedDashboard() {
 
           {/* Métricas Globales */}
           <Section title="Métricas Globales" icon={<TrendingUp className="h-3.5 w-3.5" />}>
-            <div className="space-y-1">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '.5rem' }}>
               {[
                 { icon: <Package className="h-3 w-3 text-blue-500" />, label: 'Total Equipaje', value: stats.totalBaggage, color: 'text-panel-text' },
                 { icon: <CheckCircle className="h-3 w-3 text-green-500" />, label: 'Entregadas', value: stats.delivered, color: 'text-green-600 dark:text-green-400' },
