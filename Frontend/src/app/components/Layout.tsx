@@ -1,13 +1,15 @@
 import { Outlet } from 'react-router';
 import { Navigation } from './Navigation';
 
+// El Header de Carbon es fijo (48px de alto), por eso el contenido se desplaza
+// 48px hacia abajo y ocupa el resto del viewport.
 export function Layout() {
   return (
-    <div className="flex h-screen flex-col bg-background text-foreground">
+    <>
       <Navigation />
-      <div className="flex-1 overflow-hidden">
+      <div style={{ marginTop: '48px', height: 'calc(100vh - 48px)', overflow: 'hidden', background: 'var(--cds-background)' }}>
         <Outlet />
       </div>
-    </div>
+    </>
   );
 }
