@@ -325,7 +325,10 @@ export function UnifiedDashboard() {
     <div className="relative flex h-full flex-col bg-background">
 
       {/* ── Top control bar ── */}
-      <div className="flex items-center gap-4 border-b border-panel-border bg-panel-bg px-4 py-2 flex-shrink-0">
+      <div
+        className="border-b border-panel-border bg-panel-bg flex-shrink-0"
+        style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '.5rem 1rem', minHeight: 48, padding: '.5rem 1rem' }}
+      >
         {/* Fase badge */}
         <div className="flex items-center gap-1.5">
           <span className={`h-2 w-2 rounded-full ${fase === 'ejecutando' ? 'animate-pulse bg-green-500' : fase === 'calentando' ? 'animate-pulse bg-orange-500' : fase === 'pausado' ? 'bg-yellow-500' : fase === 'completado' ? 'bg-blue-500' : 'bg-panel-text-faint'}`} />
@@ -507,7 +510,8 @@ export function UnifiedDashboard() {
 
           {/* Search */}
           <div className="border-b border-panel-border p-3" ref={searchRef}>
-            <div className="relative">
+            <div className="relative" style={{ display: 'flex', alignItems: 'center', gap: '.25rem' }}>
+              <div style={{ flex: 1 }}>
               <CarbonSearch
                 size="sm"
                 labelText="Buscar"
@@ -517,6 +521,15 @@ export function UnifiedDashboard() {
                 onFocus={() => query.length >= 2 && setShowResults(true)}
                 onClear={() => { setQuery(''); setShowResults(false); }}
               />
+              </div>
+              <span
+                title="Ejemplos — Aeropuerto por IATA: SKBO · Ruta: SKBO-EDDI"
+                style={{
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                  width: 24, height: 24, borderRadius: '50%', flexShrink: 0, cursor: 'help',
+                  border: '1px solid var(--cds-border-subtle)', color: 'var(--cds-text-secondary)', fontSize: 12,
+                }}
+              >?</span>
               {showResults && searchResults.length > 0 && (
                 <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-64 overflow-y-auto rounded-lg border border-panel-border bg-panel-bg shadow-lg">
                   {searchResults.map((r, i) => (
@@ -540,10 +553,6 @@ export function UnifiedDashboard() {
                 </div>
               )}
             </div>
-            <div className="flex gap-1 mt-2">
-              <span className="rounded bg-blue-500/10 px-1.5 py-0.5 text-[9px] text-blue-600 dark:text-blue-400">IATA: SKBO</span>
-              <span className="rounded bg-indigo-500/10 px-1.5 py-0.5 text-[9px] text-indigo-600 dark:text-indigo-400">Ruta: SKBO-EDDI</span>
-            </div>
           </div>
 
           {/* Airport Info */}
@@ -554,7 +563,7 @@ export function UnifiedDashboard() {
             badge={selectedBackendAirport ? `#${selectedBackendAirport.id}` : undefined}
           >
             {selectedAirport && airportStats && selectedBackendAirport ? (
-              <div className="space-y-2">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '.5rem' }}>
                 <p className="text-[11px] text-panel-text-faint">
                   {selectedAirport.name}
                   {selectedBFF?.pais ? ` · ${selectedBFF.pais}` : ''}
@@ -589,7 +598,7 @@ export function UnifiedDashboard() {
                 {airportVuelos.length > 0 && (
                   <div>
                     <p className="text-[10px] text-panel-text-faint mb-1">Vuelos conectados ({airportVuelos.length})</p>
-                    <div className="max-h-24 overflow-y-auto space-y-0.5">
+                    <div style={{ maxHeight: '6rem', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
                       {airportVuelos.slice(0, 5).map((v, i) => {
                         const orig = getAeropuertoById(v.idOrigen);
                         const dest = getAeropuertoById(v.idDestino);
@@ -631,7 +640,7 @@ export function UnifiedDashboard() {
               const cap = selectedFlightMeta?.capacidadReal ?? 0;
               const pct = cap > 0 ? (occ / cap) * 100 : 0;
               return (
-                <div className="space-y-2">
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '.5rem' }}>
                   <div className="flex items-center justify-between">
                     <div className="text-center">
                       <p className="text-sm font-bold text-panel-text">{orig?.iata}</p>
@@ -730,7 +739,7 @@ export function UnifiedDashboard() {
                   </div>
                 </div>
               )}
-              <div className="space-y-1 flex-1">
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '.25rem' }}>
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] text-panel-text-muted">Entregados</span>
                   <span className="text-[10px] font-medium text-green-600 dark:text-green-400">{contadores.entregado}</span>
@@ -764,7 +773,7 @@ export function UnifiedDashboard() {
 
           {/* Métricas Globales */}
           <Section title="Métricas Globales" icon={<TrendingUp className="h-3.5 w-3.5" />}>
-            <div className="space-y-1">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '.25rem' }}>
               {[
                 { icon: <Package className="h-3 w-3 text-blue-500" />, label: 'Total Equipaje', value: stats.totalBaggage, color: 'text-panel-text' },
                 { icon: <CheckCircle className="h-3 w-3 text-green-500" />, label: 'Entregadas', value: stats.delivered, color: 'text-green-600 dark:text-green-400' },

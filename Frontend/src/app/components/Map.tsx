@@ -10,7 +10,7 @@ import {
 import { useSimulation } from '../context/SimulationContext';
 import { useDomain } from '../context/DomainContext';
 import { Airport, Continent, Vuelo, PlanTramoVisual, Aeropuerto } from '../types';
-import { ZoomIn, ZoomOut, Filter, Maximize2 } from 'lucide-react';
+import { ZoomIn, ZoomOut, Filter, Maximize2, ChevronDown, ChevronUp, X } from 'lucide-react';
 import { Button } from './ui/button';
 import {
   Select,
@@ -247,6 +247,8 @@ export const Map = memo(function Map({ selectedAirportId, onAirportSelect, onFli
   const [center, setCenter] = useState<[number, number]>([20, 10]);
   const [filter, setFilter] = useState<Continent | 'all'>('all');
   const [hoveredAirport, setHoveredAirport] = useState<string | null>(null);
+  const [legendOpen, setLegendOpen] = useState(true);   // leyenda del mapa minimizable
+  const [tipsOpen, setTipsOpen] = useState(true);        // indicaciones de arrastre minimizables
   const [showPlanes, setShowPlanes] = useState(true);
   const [, setTick] = useState(0);
 
@@ -423,7 +425,7 @@ export const Map = memo(function Map({ selectedAirportId, onAirportSelect, onFli
       </div>
 
       {/* Zoom info */}
-      <div className="absolute right-4 top-4 z-10 rounded-lg backdrop-blur px-3 py-2 shadow-md" style={{ backgroundColor: 'var(--map-overlay-bg)' }}>
+      <div className="absolute right-4 top-4 z-10 rounded-lg backdrop-blur px-3 py-2 shadow-md" style={{ backgroundColor: 'var(--map-overlay-bg)', display: 'flex', flexDirection: 'column', gap: 2 }}>
         <p className="text-xs" style={{ color: 'var(--map-overlay-text-muted)' }}>Zoom</p>
         <p className="text-sm font-medium" style={{ color: 'var(--map-overlay-text)' }}>{zoom.toFixed(1)}x</p>
         <p className="text-xs mt-0.5" style={{ color: 'var(--panel-text-faint)' }}>
@@ -695,9 +697,18 @@ export const Map = memo(function Map({ selectedAirportId, onAirportSelect, onFli
       </ComposableMap>
 
       {/* Legend */}
-      <div className="absolute bottom-4 right-4 rounded-lg backdrop-blur p-3 shadow-md border" style={{ backgroundColor: 'var(--map-overlay-bg)', borderColor: 'var(--panel-border)' }}>
-        <p className="mb-2 text-xs font-medium" style={{ color: 'var(--map-overlay-text)' }}>Leyenda</p>
-        <div className="space-y-1.5">
+      <div className="absolute bottom-4 right-4 rounded-lg backdrop-blur p-3 shadow-md border" style={{ backgroundColor: 'var(--map-overlay-bg)', borderColor: 'var(--panel-border)', maxWidth: 260 }}>
+        <button
+          onClick={() => setLegendOpen(o => !o)}
+          style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: '.5rem', marginBottom: legendOpen ? '.5rem' : 0 }}
+        >
+          <span className="text-xs font-medium" style={{ color: 'var(--map-overlay-text)' }}>Leyenda</span>
+          {legendOpen
+            ? <ChevronDown className="h-3.5 w-3.5" style={{ color: 'var(--map-overlay-text-muted)' }} />
+            : <ChevronUp className="h-3.5 w-3.5" style={{ color: 'var(--map-overlay-text-muted)' }} />}
+        </button>
+        {legendOpen && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '.375rem' }}>
           {[
             { color: 'bg-green-500', text: 'Capacidad OK (<60%)' },
             { color: 'bg-yellow-500', text: 'Capacidad Media (60-80%)' },
@@ -759,13 +770,25 @@ export const Map = memo(function Map({ selectedAirportId, onAirportSelect, onFli
             </div>
           </div>
         </div>
+        )}
       </div>
 
       {/* Tips */}
-      <div className="absolute bottom-4 left-4 rounded-lg backdrop-blur p-2 shadow-md border" style={{ backgroundColor: 'var(--map-overlay-bg)', borderColor: 'var(--panel-border)' }}>
-        <p className="text-xs" style={{ color: 'var(--map-overlay-text-muted)' }}>
-          Arrastra para mover · Scroll o botones para zoom · Hover para detalles
-        </p>
+      <div className="absolute bottom-4 left-4 rounded-lg backdrop-blur shadow-md border" style={{ backgroundColor: 'var(--map-overlay-bg)', borderColor: 'var(--panel-border)' }}>
+        {tipsOpen ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '.5rem', padding: '.5rem .625rem' }}>
+            <p className="text-xs" style={{ color: 'var(--map-overlay-text-muted)', margin: 0 }}>
+              Arrastra para mover · Scroll para zoom · Hover para detalles
+            </p>
+            <button onClick={() => setTipsOpen(false)} title="Ocultar">
+              <X className="h-3 w-3" style={{ color: 'var(--map-overlay-text-muted)' }} />
+            </button>
+          </div>
+        ) : (
+          <button onClick={() => setTipsOpen(true)} title="Mostrar ayuda" style={{ padding: '.375rem .5rem', fontSize: 12, color: 'var(--map-overlay-text-muted)' }}>
+            ?
+          </button>
+        )}
       </div>
     </div>
   );
