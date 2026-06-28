@@ -3,7 +3,7 @@ import * as SliderPrimitive from '@radix-ui/react-slider';
 import { useSimulation } from '../context/SimulationContext';
 import {
   Button, Tabs, TabList, Tab, TabPanels, TabPanel,
-  TileGroup, RadioTile, ContentSwitcher, Switch, Slider,
+  TileGroup, RadioTile, ContentSwitcher, Switch,
   DatePicker, DatePickerInput, TextInput, Tag, InlineNotification, Stack,
 } from '@carbon/react';
 import { SimulationScenario } from '../types';
@@ -283,16 +283,20 @@ export function SimulationConfig() {
             <Time size={14} />{format(currentTime, 'dd/MM/yyyy HH:mm:ss')}
           </span>
           <Tag size="sm" type={SCENARIO_TAG[localConfig.scenario]}>{SCENARIO_LABELS[localConfig.scenario]}</Tag>
-          {esPeriodo && <span>{localConfig.dias} días · {localConfig.duracionRealMin} min</span>}
-          {localConfig.scenario === 'collapse' && <span><Flash size={14} /> {VELOCIDADES_COLAPSO.find(v => v.k === kColapso)?.label}</span>}
+          {esPeriodo && <span style={{ whiteSpace: 'nowrap' }}>{localConfig.dias} días · ~60 min</span>}
+          {localConfig.scenario === 'collapse' && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '.25rem', whiteSpace: 'nowrap' }}>
+              <Flash size={14} /> {VELOCIDADES_COLAPSO.find(v => v.k === kColapso)?.label}
+            </span>
+          )}
           {tieneEnviosValidos
-            ? <span style={{ color: 'var(--cds-support-success)' }}><DataBase size={14} /> {totalEnvios.toLocaleString()} envíos</span>
-            : <span style={{ color: 'var(--cds-support-warning)' }}>Sin datos</span>}
+            ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: '.25rem', whiteSpace: 'nowrap', color: 'var(--cds-support-success)' }}><DataBase size={14} /> {totalEnvios.toLocaleString()} envíos</span>
+            : <span style={{ whiteSpace: 'nowrap', color: 'var(--cds-support-warning)' }}>Sin datos</span>}
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '.5rem' }}>
           {botonAccion()}
-          <Button size="sm" kind="ghost" hasIconOnly renderIcon={Reset} iconDescription="Reiniciar" onClick={() => resetear()} />
+          <Button size="sm" kind="ghost" renderIcon={Reset} onClick={() => resetear()}>Reiniciar</Button>
           <Button size="sm" kind="ghost" renderIcon={Close} onClick={() => setLocalConfig(config)}>Descartar</Button>
           <Button size="sm" renderIcon={Save} onClick={handleGuardar}>Guardar</Button>
         </div>
@@ -310,7 +314,7 @@ export function SimulationConfig() {
           <TabPanels>
             {/* ── General ── */}
             <TabPanel>
-              <div style={{ display: 'grid', gap: '1.5rem', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', maxWidth: '64rem', marginTop: '1rem' }}>
+              <div style={{ display: 'grid', gap: '1.5rem', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', maxWidth: '64rem', margin: '1rem auto 0' }}>
 
                 {/* Escenario */}
                 <TileGroup
@@ -335,30 +339,35 @@ export function SimulationConfig() {
                 {/* Fecha + duración/velocidad */}
                 <Stack gap={5}>
                   <Stack gap={3}>
-                    <DatePicker
-                      datePickerType="single"
-                      dateFormat="d/m/Y"
-                      value={localConfig.startDate}
-                      minDate={datasetInfo?.fecha_min}
-                      maxDate={datasetInfo?.fecha_max}
-                      onChange={handleFecha}
-                    >
-                      <DatePickerInput
-                        id="cfg-fecha"
-                        labelText="Fecha de inicio"
-                        placeholder="dd/mm/aaaa"
-                        disabled={!esConFecha}
-                      />
-                    </DatePicker>
-
-                    <TextInput
-                      id="cfg-hora"
-                      labelText="Hora de inicio"
-                      type="time"
-                      value={timeValue}
-                      disabled={!esConFecha}
-                      onChange={(e) => handleHora(e.target.value)}
-                    />
+                    <div style={{ display: 'flex', gap: '.75rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                      <div style={{ flex: '1 1 160px' }}>
+                        <DatePicker
+                          datePickerType="single"
+                          dateFormat="d/m/Y"
+                          value={localConfig.startDate}
+                          minDate={datasetInfo?.fecha_min}
+                          maxDate={datasetInfo?.fecha_max}
+                          onChange={handleFecha}
+                        >
+                          <DatePickerInput
+                            id="cfg-fecha"
+                            labelText="Fecha de inicio"
+                            placeholder="dd/mm/aaaa"
+                            disabled={!esConFecha}
+                          />
+                        </DatePicker>
+                      </div>
+                      <div style={{ width: '8rem' }}>
+                        <TextInput
+                          id="cfg-hora"
+                          labelText="Hora"
+                          type="time"
+                          value={timeValue}
+                          disabled={!esConFecha}
+                          onChange={(e) => handleHora(e.target.value)}
+                        />
+                      </div>
+                    </div>
 
                     {datasetInfo ? (
                       <p style={{ fontSize: '.75rem', color: 'var(--cds-text-secondary)', margin: 0 }}>
@@ -387,17 +396,9 @@ export function SimulationConfig() {
                   </Stack>
 
                   {esPeriodo && (
-                    <Slider
-                      min={30} max={90} step={1}
-                      value={localConfig.duracionRealMin}
-                      labelText="Duración real (min)"
-                      onChange={({ value }) => setLocalConfig({ ...localConfig, duracionRealMin: value })}
-                    />
-                  )}
-                  {esPeriodo && (
-                    <p style={{ fontSize: '.75rem', color: 'var(--cds-text-secondary)', margin: 0 }}>
-                      {diasEfectivos} {diasEfectivos === 1 ? 'día se comprime' : 'días se comprimen'} en {localConfig.duracionRealMin} min reales.
-                    </p>
+                    <InlineNotification kind="info" lowContrast hideCloseButton
+                      title="Duración fija ≈ 60 min"
+                      subtitle={`Los ${localConfig.dias} días se comprimen automáticamente en ~60 minutos reales.`} />
                   )}
 
                   {localConfig.scenario === 'collapse' && (

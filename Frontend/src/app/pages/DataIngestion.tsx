@@ -189,8 +189,8 @@ export function DataIngestion() {
             {cards.map((c) => {
               const st = estado[c.kind];
               return (
-                <Tile key={c.kind}>
-                  <Stack gap={4}>
+                <Tile key={c.kind} style={{ height: '100%' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', height: '100%' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '.5rem' }}>
                       {c.icon}
                       <h2 style={{ fontSize: '1rem', fontWeight: 600, margin: 0 }}>{c.label}</h2>
@@ -233,7 +233,7 @@ export function DataIngestion() {
                       />
                     )}
 
-                    <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+                    <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', marginTop: 'auto', paddingTop: '.5rem' }}>
                       <Link href={`${BFF}/api/carga/plantillas/${c.kind}`} renderIcon={Download} size="sm">
                         Plantilla
                       </Link>
@@ -248,7 +248,7 @@ export function DataIngestion() {
                         </Link>
                       )}
                     </div>
-                  </Stack>
+                  </div>
                 </Tile>
               );
             })}
