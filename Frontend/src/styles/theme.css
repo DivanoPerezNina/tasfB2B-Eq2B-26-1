@@ -253,3 +253,46 @@
     line-height: 1.5;
   }
 }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Puente de tokens → Carbon Design System
+ * Mapea los tokens semánticos de la app (--panel-*, --background, etc.) a los
+ * tokens Carbon (--cds-*), que ya cambian con [data-carbon-theme] g10/g100. Así
+ * TODA la UI basada en Tailwind adopta la paleta y tipografía Carbon sin tocar su
+ * markup. El mapa conserva sus propios --map-* (no se toca). Va al final para
+ * ganarle en cascada a los valores hardcodeados de :root y .dark de arriba.
+ * ──────────────────────────────────────────────────────────────────────────── */
+:root,
+.dark {
+  --background: var(--cds-background);
+  --foreground: var(--cds-text-primary);
+  --card: var(--cds-layer-01);
+  --card-foreground: var(--cds-text-primary);
+  --popover: var(--cds-layer-01);
+  --popover-foreground: var(--cds-text-primary);
+  --primary: var(--cds-button-primary);
+  --primary-foreground: var(--cds-text-on-color);
+  --secondary: var(--cds-layer-02);
+  --secondary-foreground: var(--cds-text-primary);
+  --muted: var(--cds-layer-02);
+  --muted-foreground: var(--cds-text-secondary);
+  --accent: var(--cds-layer-accent-01);
+  --accent-foreground: var(--cds-text-primary);
+  --border: var(--cds-border-subtle);
+  --input: var(--cds-border-strong);
+  --input-background: var(--cds-field-01);
+  --ring: var(--cds-focus);
+
+  --panel-bg: var(--cds-layer-01);
+  --panel-border: var(--cds-border-subtle);
+  --panel-hover: var(--cds-layer-hover-01);
+  --panel-section-bg: var(--cds-layer-02);
+  --panel-text: var(--cds-text-primary);
+  --panel-text-muted: var(--cds-text-secondary);
+  --panel-text-faint: var(--cds-text-helper);
+}
+
+/* IBM Plex en toda la UI (Carbon ya la usa en sus componentes). */
+body {
+  font-family: 'IBM Plex Sans', system-ui, -apple-system, sans-serif;
+}

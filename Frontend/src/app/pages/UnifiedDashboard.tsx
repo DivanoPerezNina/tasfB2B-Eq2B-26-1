@@ -689,20 +689,21 @@ export function UnifiedDashboard() {
                     )}
                   </div>
                   {config.scenario === 'realtime' && (fase === 'ejecutando' || fase === 'pausado') && (
-                    <button
-                      onClick={handleCancelarVuelo}
+                    <Button
+                      kind="danger" size="sm"
                       disabled={cancelStatus === 'sending' || cancelStatus === 'ok'}
-                      className="w-full rounded bg-red-500/10 px-2 py-1 text-[10px] font-medium text-red-500 hover:bg-red-500/20 disabled:opacity-60 transition-colors"
+                      onClick={handleCancelarVuelo}
+                      style={{ width: '100%', maxWidth: 'none' }}
                     >
                       {cancelStatus === 'sending' ? 'Cancelando…'
                         : cancelStatus === 'ok' ? '✓ Vuelo cancelado'
                         : cancelStatus === 'error' ? '✕ No se pudo cancelar — reintentar'
                         : 'Cancelar este vuelo'}
-                    </button>
+                    </Button>
                   )}
-                  <button onClick={() => setSelectedVuelo(null)} className="w-full rounded bg-panel-section-bg px-2 py-1 text-[10px] text-panel-text-muted hover:bg-panel-hover transition-colors">
+                  <Button kind="ghost" size="sm" onClick={() => setSelectedVuelo(null)} style={{ width: '100%', maxWidth: 'none' }}>
                     Cerrar vuelo
-                  </button>
+                  </Button>
                 </div>
               );
             })() : (
