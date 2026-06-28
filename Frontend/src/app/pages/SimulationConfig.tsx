@@ -401,6 +401,10 @@ export function SimulationConfig() {
                       subtitle={`Los ${localConfig.dias} días se comprimen automáticamente en ~60 minutos reales.`} />
                   )}
 
+                </Stack>
+
+                {/* Días + estado inicial (Periodo) / Velocidad (Colapso) */}
+                <Stack gap={5}>
                   {localConfig.scenario === 'collapse' && (
                     <TileGroup
                       legend="Velocidad (horas simuladas por segundo real)"
@@ -413,10 +417,6 @@ export function SimulationConfig() {
                       ))}
                     </TileGroup>
                   )}
-                </Stack>
-
-                {/* Días + estado inicial (Periodo) */}
-                <Stack gap={5}>
                   {esPeriodo && (
                     <>
                       <div>

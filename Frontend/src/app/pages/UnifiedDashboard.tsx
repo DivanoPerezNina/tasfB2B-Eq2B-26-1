@@ -9,6 +9,7 @@ import { Map } from '../components/Map';
 import { Vuelo } from '../types';
 import { format } from 'date-fns';
 import { Button, Search as CarbonSearch } from '@carbon/react';
+import { Pause, Play, StopFilledAlt, Renew } from '@carbon/icons-react';
 import {
   X,
   MapPin,
@@ -24,10 +25,6 @@ import {
   ChevronUp,
   ArrowRight,
   XCircle,
-  Pause,
-  Play,
-  Square,
-  RotateCcw,
   Trophy,
 } from 'lucide-react';
 
@@ -65,7 +62,7 @@ function Section({
         </div>
         {open ? <ChevronUp className="h-3 w-3 text-panel-text-faint" /> : <ChevronDown className="h-3 w-3 text-panel-text-faint" />}
       </button>
-      {open && <div className="px-4 pb-3">{children}</div>}
+      {open && <div className="px-4 pb-3" style={{ lineHeight: 1.5 }}>{children}</div>}
     </div>
   );
 }
@@ -420,10 +417,10 @@ export function UnifiedDashboard() {
             <Button size="sm" renderIcon={Play} onClick={reanudarSimulacion}>Reanudar</Button>
           )}
           {(fase === 'ejecutando' || fase === 'pausado' || fase === 'calentando') && (
-            <Button size="sm" kind="danger" renderIcon={Square} onClick={detenerSimulacion}>Detener</Button>
+            <Button size="sm" kind="danger" renderIcon={StopFilledAlt} onClick={detenerSimulacion}>Detener</Button>
           )}
           {(fase === 'completado' || fase === 'error' || fase === 'idle') && (
-            <Button size="sm" kind="tertiary" renderIcon={RotateCcw} onClick={resetear}>Nueva simulación</Button>
+            <Button size="sm" kind="tertiary" renderIcon={Renew} onClick={resetear}>Nueva simulación</Button>
           )}
         </div>
       </div>
@@ -739,7 +736,7 @@ export function UnifiedDashboard() {
                   </div>
                 </div>
               )}
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '.25rem' }}>
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '.5rem' }}>
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] text-panel-text-muted">Entregados</span>
                   <span className="text-[10px] font-medium text-green-600 dark:text-green-400">{contadores.entregado}</span>
@@ -773,7 +770,7 @@ export function UnifiedDashboard() {
 
           {/* Métricas Globales */}
           <Section title="Métricas Globales" icon={<TrendingUp className="h-3.5 w-3.5" />}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '.25rem' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '.5rem' }}>
               {[
                 { icon: <Package className="h-3 w-3 text-blue-500" />, label: 'Total Equipaje', value: stats.totalBaggage, color: 'text-panel-text' },
                 { icon: <CheckCircle className="h-3 w-3 text-green-500" />, label: 'Entregadas', value: stats.delivered, color: 'text-green-600 dark:text-green-400' },
