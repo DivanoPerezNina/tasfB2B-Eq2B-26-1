@@ -425,7 +425,7 @@ export const Map = memo(function Map({ selectedAirportId, onAirportSelect, onFli
       </div>
 
       {/* Zoom info */}
-      <div className="absolute right-4 top-4 z-10 rounded-lg backdrop-blur px-4 py-3 shadow-md" style={{ backgroundColor: 'var(--map-overlay-bg)', display: 'flex', flexDirection: 'column', gap: 4, lineHeight: 1.4, minWidth: 140 }}>
+      <div className="absolute right-4 top-4 z-10 rounded-lg backdrop-blur shadow-md" style={{ backgroundColor: 'var(--map-overlay-bg)', display: 'flex', flexDirection: 'column', gap: 4, lineHeight: 1.4, minWidth: 150, padding: '1rem 1.25rem' }}>
         <p className="text-xs" style={{ color: 'var(--map-overlay-text-muted)' }}>Zoom</p>
         <p className="text-sm font-medium" style={{ color: 'var(--map-overlay-text)' }}>{zoom.toFixed(1)}x</p>
         <p className="text-xs mt-0.5" style={{ color: 'var(--panel-text-faint)' }}>
@@ -697,7 +697,7 @@ export const Map = memo(function Map({ selectedAirportId, onAirportSelect, onFli
       </ComposableMap>
 
       {/* Legend */}
-      <div className="absolute bottom-4 right-4 rounded-lg backdrop-blur p-4 shadow-md border" style={{ backgroundColor: 'var(--map-overlay-bg)', borderColor: 'var(--panel-border)', maxWidth: 270 }}>
+      <div className="absolute bottom-4 right-4 rounded-lg backdrop-blur shadow-md border" style={{ backgroundColor: 'var(--map-overlay-bg)', borderColor: 'var(--panel-border)', maxWidth: 280, padding: '1.25rem' }}>
         <button
           onClick={() => setLegendOpen(o => !o)}
           style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: '.5rem', marginBottom: legendOpen ? '.5rem' : 0 }}
