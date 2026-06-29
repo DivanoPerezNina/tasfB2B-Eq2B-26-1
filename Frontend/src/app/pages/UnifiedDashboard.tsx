@@ -49,7 +49,7 @@ function Section({
     <div className="border-b border-panel-border">
       <button
         onClick={() => setOpen(!open)}
-        className="flex w-full items-center justify-between px-4 py-2.5 hover:bg-panel-hover transition-colors"
+        className="flex w-full items-center justify-between px-5 py-3 hover:bg-panel-hover transition-colors"
       >
         <div className="flex items-center gap-2">
           <span className={accentColor || 'text-panel-text-faint'}>{icon}</span>
@@ -62,7 +62,7 @@ function Section({
         </div>
         {open ? <ChevronUp className="h-3 w-3 text-panel-text-faint" /> : <ChevronDown className="h-3 w-3 text-panel-text-faint" />}
       </button>
-      {open && <div className="px-4 pb-3" style={{ lineHeight: 1.5 }}>{children}</div>}
+      {open && <div className="px-5 pb-4" style={{ lineHeight: 1.5 }}>{children}</div>}
     </div>
   );
 }
@@ -506,7 +506,7 @@ export function UnifiedDashboard() {
           )}
 
           {/* Search */}
-          <div className="border-b border-panel-border p-3" ref={searchRef}>
+          <div className="border-b border-panel-border p-4" ref={searchRef}>
             <div className="relative" style={{ display: 'flex', alignItems: 'center', gap: '.25rem' }}>
               <div style={{ flex: 1 }}>
               <CarbonSearch
