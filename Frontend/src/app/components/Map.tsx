@@ -9,7 +9,7 @@ import {
 } from 'react-simple-maps';
 import { useSimulation } from '../context/SimulationContext';
 import { useDomain } from '../context/DomainContext';
-import { Airport, Continent, Vuelo, PlanTramoVisual, Aeropuerto } from '../types';
+import { Airport, Continent, Vuelo, PlanTramoVisual, Aeropuerto, VisualCancellation } from '../types';
 import { ZoomIn, ZoomOut, Filter, Maximize2, ChevronDown, ChevronUp, X } from 'lucide-react';
 import { Button } from './ui/button';
 import {
@@ -21,6 +21,18 @@ import {
 } from './ui/select';
 
 const GEO_URL = 'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-110m.json';
+
+const COUNTRY_LABELS = [
+  { name: 'Estados Unidos', lat: 39, lng: -98 },
+  { name: 'Colombia', lat: 4, lng: -74 },
+  { name: 'Perú', lat: -9, lng: -75 },
+  { name: 'Brasil', lat: -10, lng: -53 },
+  { name: 'España', lat: 40, lng: -4 },
+  { name: 'Francia', lat: 46, lng: 2 },
+  { name: 'Alemania', lat: 51, lng: 10 },
+  { name: 'China', lat: 35, lng: 103 },
+  { name: 'Japón', lat: 37, lng: 138 },
+];
 
 function declutterAirports(list: Airport[], zoom: number): Airport[] {
   const minDist = 8 / zoom;
@@ -235,9 +247,20 @@ interface MapProps {
   onAirportSelect?: (airportId: string) => void;
   onFlightSelect?: (vuelo: Vuelo) => void;
   selectedFlightKey?: string; // `${idOrigen}-${idDestino}-${salidaUTC}`
+  canceledFlights?: VisualCancellation[];
+  warehouseCodeFilter?: string;
+  warehouseStatusFilter?: 'all' | 'verde' | 'ambar' | 'rojo' | 'vacio';
 }
 
-export const Map = memo(function Map({ selectedAirportId, onAirportSelect, onFlightSelect, selectedFlightKey }: MapProps) {
+export const Map = memo(function Map({
+  selectedAirportId,
+  onAirportSelect,
+  onFlightSelect,
+  selectedFlightKey,
+  canceledFlights = [],
+  warehouseCodeFilter = '',
+  warehouseStatusFilter = 'all',
+}: MapProps) {
   const { isRunning, aeropuertosState, tiempoSimUTC, contadores, planTramos, planVisualCargado, config } = useSimulation();
   const { airports, aeropuertosBackend, vuelosBackend } = useDomain();
 
@@ -257,6 +280,14 @@ export const Map = memo(function Map({ selectedAirportId, onAirportSelect, onFli
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
     return () => observer.disconnect();
   }, []);
+
+  React.useEffect(() => {
+    if (!selectedAirportId) return;
+    const airport = airports.find(a => a.id === selectedAirportId);
+    if (!airport) return;
+    setCenter([airport.lng, airport.lat]);
+    setZoom(z => Math.max(z, 3.4));
+  }, [selectedAirportId, airports]);
 
   // ── Animación suave: extrapolación 30fps entre ticks SSE ──────────────────
   // Guardamos el último tick conocido y la tasa de avance inferida,
@@ -317,9 +348,26 @@ export const Map = memo(function Map({ selectedAirportId, onAirportSelect, onFli
     labelStroke: cssVar('--map-label-stroke'),
   };
 
+  const getAirportStatus = useCallback((airport: Airport): 'verde' | 'ambar' | 'rojo' | 'vacio' => {
+    const live = aeropuertosState.find(a => a.iata === airport.code);
+    const occ = live?.maletas_almacen ?? airport.currentOccupancy;
+    if (occ <= 0) return 'vacio';
+    if (live?.semaforo) return live.semaforo;
+    const pct = airport.warehouseCapacity > 0 ? (occ / airport.warehouseCapacity) * 100 : 0;
+    if (pct > 80) return 'rojo';
+    if (pct > 60) return 'ambar';
+    return 'verde';
+  }, [aeropuertosState]);
+
   const filteredByContinent = useMemo(() =>
-    airports.filter(a => filter === 'all' || a.continent === filter),
-    [airports, filter]
+    airports.filter(a => {
+      const byContinent = filter === 'all' || a.continent === filter;
+      const q = warehouseCodeFilter.trim().toUpperCase();
+      const byCode = !q || a.code.includes(q) || a.city.toUpperCase().includes(q);
+      const byStatus = warehouseStatusFilter === 'all' || getAirportStatus(a) === warehouseStatusFilter;
+      return byContinent && byCode && byStatus;
+    }),
+    [airports, filter, warehouseCodeFilter, warehouseStatusFilter, getAirportStatus]
   );
 
   const visibleAirports = useMemo(() => {
@@ -340,6 +388,18 @@ export const Map = memo(function Map({ selectedAirportId, onAirportSelect, onFli
 
   const activeFlights = activeFlightResult.flights;
   const activeFlightTotal = activeFlightResult.totalActive;
+
+  const activeCancellations = useMemo(() => {
+    if (!simHasStarted) return [];
+    return canceledFlights
+      .filter(c => smoothMinute >= c.createdAtUTC && smoothMinute <= c.llegadaUTC)
+      .map(c => {
+        const from = airports.find(a => a.code === c.origen);
+        const to = airports.find(a => a.code === c.destino);
+        return from && to ? { ...c, from, to } : null;
+      })
+      .filter(Boolean) as Array<VisualCancellation & { from: Airport; to: Airport }>;
+  }, [canceledFlights, smoothMinute, simHasStarted, airports]);
 
   const handleZoomIn = useCallback(() => setZoom(z => Math.min(z * 1.5, 8)), []);
   const handleZoomOut = useCallback(() => setZoom(z => Math.max(z / 1.5, 1)), []);
@@ -442,6 +502,11 @@ export const Map = memo(function Map({ selectedAirportId, onAirportSelect, onFli
             Sin simulación activa
           </p>
         )}
+        {!simHasStarted && (
+          <p className="text-[10px] mt-1 text-panel-text-faint max-w-xs">
+            Aviones, rutas y ocupación en vivo no disponibles hasta iniciar.
+          </p>
+        )}
         {config.scenario === 'collapse' && simHasStarted && (
           <p className="text-[10px] mt-1 text-panel-text-faint max-w-xs">
             Visualización acelerada: los vuelos se muestran de forma agregada por bloque.
@@ -513,11 +578,49 @@ export const Map = memo(function Map({ selectedAirportId, onAirportSelect, onFli
             }
           </Geographies>
 
+          {zoom >= 1.15 && COUNTRY_LABELS.map(label => (
+            <Marker key={label.name} coordinates={[label.lng, label.lat]}>
+              <text
+                textAnchor="middle"
+                style={{
+                  fontSize: 8 / zoom,
+                  fontWeight: 600,
+                  letterSpacing: 0.2 / zoom,
+                  fill: mc.label,
+                  opacity: 0.55,
+                  paintOrder: 'stroke',
+                  stroke: mc.labelStroke,
+                  strokeWidth: 2 / zoom,
+                  pointerEvents: 'none',
+                  fontFamily: 'system-ui, sans-serif',
+                }}
+              >
+                {label.name}
+              </text>
+            </Marker>
+          ))}
+
+          {/* Cancelaciones visibles: ruta roja durante la ventana del vuelo cancelado, sin avión. */}
+          {activeCancellations.map(c => (
+            <Line
+              key={`cancel-${c.id}`}
+              from={[c.from.lng, c.from.lat]}
+              to={[c.to.lng, c.to.lat]}
+              stroke="#ef4444"
+              strokeWidth={1.8 * markerScale}
+              strokeOpacity={0.88}
+              strokeDasharray={`${4 * markerScale} ${2.5 * markerScale}`}
+              strokeLinecap="round"
+            />
+          ))}
+
           {/* Rutas activas. Línea sólida = origen → avión. Línea punteada = avión → destino. */}
           {showPlanes && activeFlights.map((af, index) => {
             const flightKey = `${af.vuelo.idOrigen}-${af.vuelo.idDestino}-${af.vuelo.salidaUTC}-${af.vuelo.llegadaUTC}-${index}`;
-            const activeColor = af.isSameCont ? '#38bdf8' : '#fbbf24';
-            const baseWidth = (af.isSameCont ? 0.75 : 1.05) * markerScale;
+            const selectedRouteKey = `${af.vuelo.idOrigen}-${af.vuelo.idDestino}-${af.vuelo.salidaUTC}`;
+            const isSelected = selectedFlightKey === selectedRouteKey;
+            const activeColor = isSelected ? '#a855f7' : af.isSameCont ? '#38bdf8' : '#fbbf24';
+            const baseWidth = (isSelected ? 1.8 : af.isSameCont ? 0.75 : 1.05) * markerScale;
 
             return (
               <React.Fragment key={`active-route-${flightKey}`}>
@@ -627,8 +730,8 @@ export const Map = memo(function Map({ selectedAirportId, onAirportSelect, onFli
             const isHovered = hoveredAirport === airport.id;
             const color = getAirportColor(airport.code, (airport.currentOccupancy / airport.warehouseCapacity) * 100);
 
-            const tierR = airport.tier === 1 ? 5 : airport.tier === 2 ? 3.5 : 2.5;
-            const r = ((isSelected || isHovered) ? tierR + 1.5 : tierR) * markerScale;
+            const tierR = 4.2;
+            const r = ((isSelected || isHovered) ? tierR + 1.3 : tierR) * markerScale;
             const strokeW = (isSelected ? 2 : 1.2) * markerScale;
             // Tamaño de fuente constante en píxeles visuales (no crece con el zoom)
             const fontSize     = 9 / zoom;   // IATA code ≈ 9px visual siempre
@@ -645,15 +748,25 @@ export const Map = memo(function Map({ selectedAirportId, onAirportSelect, onFli
                 style={{ cursor: 'pointer' }}
               >
                 {(isSelected || isHovered) && (
-                  <circle r={r + 3 * markerScale} fill={color} opacity={0.2} />
+                  <circle r={r + 4 * markerScale} fill={color} opacity={0.22} />
                 )}
-                <circle
-                  r={r}
-                  fill={color}
-                  stroke={mc.label}
-                  strokeOpacity={0.5}
-                  strokeWidth={strokeW}
-                />
+                <g>
+                  <path
+                    d={`M 0 ${-r * 1.35} L ${r * 1.15} ${r * 0.25} L ${r * 0.42} ${r * 0.25} L ${r * 0.42} ${r * 1.15} L ${-r * 0.42} ${r * 1.15} L ${-r * 0.42} ${r * 0.25} L ${-r * 1.15} ${r * 0.25} Z`}
+                    fill={color}
+                    stroke={mc.label}
+                    strokeOpacity={0.65}
+                    strokeWidth={strokeW}
+                    strokeLinejoin="round"
+                  />
+                  <path
+                    d={`M ${-r * 0.45} ${-r * 0.08} H ${r * 0.45} M ${-r * 0.32} ${r * 0.42} H ${r * 0.32}`}
+                    stroke={mc.bg}
+                    strokeWidth={0.9 * markerScale}
+                    strokeLinecap="round"
+                    opacity={0.75}
+                  />
+                </g>
                 {showCodes && (
                   <text
                     textAnchor="middle"
@@ -749,12 +862,11 @@ export const Map = memo(function Map({ selectedAirportId, onAirportSelect, onFli
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '.375rem', borderTop: '1px solid var(--panel-border)', paddingTop: '.5rem' }}>
-            <p style={{ fontWeight: 600, margin: 0, color: 'var(--panel-text-faint)' }}>Tamaño por tier</p>
+            <p style={{ fontWeight: 600, margin: 0, color: 'var(--panel-text-faint)' }}>Aeropuertos</p>
             <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
               {[
-                { size: 'h-3 w-3', label: 'Hub' },
-                { size: 'h-2.5 w-2.5', label: 'Regional' },
-                { size: 'h-2 w-2', label: 'Pequeño' },
+                { size: 'h-3 w-3', label: 'Tamaño uniforme' },
+                { size: 'h-3 w-3', label: 'Color por ocupación' },
               ].map(t => (
                 <div key={t.label} style={{ display: 'flex', alignItems: 'center', gap: '.375rem' }}>
                   <div className={`${t.size} rounded-full`} style={{ backgroundColor: 'var(--map-overlay-text-muted)', flexShrink: 0 }} />

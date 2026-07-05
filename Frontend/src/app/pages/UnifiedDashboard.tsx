@@ -6,7 +6,7 @@ import {
   getContinentLabel,
 } from '../data/envios';
 import { Map } from '../components/Map';
-import { Vuelo } from '../types';
+import { VisualCancellation, Vuelo } from '../types';
 import { format } from 'date-fns';
 import { Button, Search as CarbonSearch } from '@carbon/react';
 import { Pause, Play, StopFilledAlt, Renew } from '@carbon/icons-react';
@@ -77,6 +77,8 @@ interface SearchResult {
   data: any;
 }
 
+type WarehouseStatusFilter = 'all' | 'verde' | 'ambar' | 'rojo' | 'vacio';
+
 
 const SCENARIO_DISPLAY: Record<string, string> = {
   realtime: 'Operación día a día',
@@ -130,6 +132,9 @@ export function UnifiedDashboard() {
   const [panelOpen, setPanelOpen] = useState(true);
   const [showCompletion, setShowCompletion] = useState(false);
   const [cancelStatus, setCancelStatus] = useState<'idle' | 'sending' | 'ok' | 'error'>('idle');
+  const [warehouseQuery, setWarehouseQuery] = useState('');
+  const [warehouseStatusFilter, setWarehouseStatusFilter] = useState<WarehouseStatusFilter>('all');
+  const [canceledFlights, setCanceledFlights] = useState<VisualCancellation[]>([]);
 
   // Show completion overlay when simulation finishes
   useEffect(() => {
@@ -160,6 +165,22 @@ export function UnifiedDashboard() {
     // medianoche local quedan al día UTC vigente (suficiente para el caso de uso).
     const salidaAbs = Math.floor(nowMin / 1440) * 1440 + salidaDiaUTC;
     const ok = await cancelarVuelo(orig.iata, dest.iata, salidaAbs);
+    if (ok) {
+      const salidaDia = normalizarMinutoDia(selectedVuelo.salidaUTC);
+      const llegadaDia = normalizarMinutoDia(selectedVuelo.llegadaUTC);
+      const duracion = duracionMinDia(salidaDia, llegadaDia);
+      setCanceledFlights(prev => [
+        {
+          id: `${orig.iata}-${dest.iata}-${salidaAbs}-${Date.now()}`,
+          origen: orig.iata,
+          destino: dest.iata,
+          salidaUTC: salidaAbs,
+          llegadaUTC: salidaAbs + duracion,
+          createdAtUTC: nowMin,
+        },
+        ...prev,
+      ].slice(0, 20));
+    }
     setCancelStatus(ok ? 'ok' : 'error');
   };
 
@@ -192,7 +213,11 @@ export function UnifiedDashboard() {
 
     // Aeropuertos desde BD (via aeropuertosBFF que tiene ciudad y país)
     for (const ap of aeropuertosBFF) {
-      if (ap.iata.includes(q) || ap.ciudad.toUpperCase().includes(q)) {
+      if (
+        ap.iata.includes(q) ||
+        ap.ciudad.toUpperCase().includes(q) ||
+        String(ap.pais ?? '').toUpperCase().includes(q)
+      ) {
         results.push({
           type: 'aeropuerto',
           label: ap.iata,
@@ -250,6 +275,52 @@ export function UnifiedDashboard() {
   const selectedBackendAirport = selectedAirport ? aeropuertosBackend.find(a => a.iata === selectedAirport.code) : null;
   const airportVuelos = selectedBackendAirport ? getVuelosByAeropuerto(selectedBackendAirport.id) : [];
   const selectedBFF = selectedAirport ? aeropuertosBFF.find(a => a.iata === selectedAirport.code) : null;
+
+  const getWarehouseOccupancy = (iata: string) => {
+    const front = airports.find(a => a.code === iata);
+    const liveStats = front ? getAirportStats(front.id) : null;
+    if (liveStats) {
+      return {
+        occ: liveStats.occupancy,
+        cap: liveStats.capacity,
+        pct: liveStats.percentage,
+      };
+    }
+    const bff = aeropuertosBFF.find(a => a.iata === iata);
+    const cap = bff?.capacidad_almacen ?? front?.warehouseCapacity ?? 0;
+    const occ = front?.currentOccupancy ?? 0;
+    return {
+      occ,
+      cap,
+      pct: cap > 0 ? (occ / cap) * 100 : 0,
+    };
+  };
+
+  const getWarehouseStatus = (iata: string): WarehouseStatusFilter => {
+    const { occ, pct } = getWarehouseOccupancy(iata);
+    if (occ <= 0) return 'vacio';
+    if (pct > 80) return 'rojo';
+    if (pct > 60) return 'ambar';
+    return 'verde';
+  };
+
+  const warehouseRows = useMemo(() => {
+    const q = warehouseQuery.trim().toUpperCase();
+    return aeropuertosBFF
+      .map(ap => {
+        const front = airports.find(a => a.code === ap.iata);
+        const stats = getWarehouseOccupancy(ap.iata);
+        const status = getWarehouseStatus(ap.iata);
+        return { ap, front, stats, status };
+      })
+      .filter(row => {
+        const haystack = `${row.ap.iata} ${row.ap.ciudad} ${row.ap.pais ?? ''}`.toUpperCase();
+        const byQuery = !q || haystack.includes(q);
+        const byStatus = warehouseStatusFilter === 'all' || row.status === warehouseStatusFilter;
+        return byQuery && byStatus;
+      })
+      .sort((a, b) => b.stats.pct - a.stats.pct || a.ap.iata.localeCompare(b.ap.iata));
+  }, [warehouseQuery, warehouseStatusFilter, aeropuertosBFF, airports, aeropuertosState]);
 
   const statusData = [
     { name: 'Entregadas', value: stats.delivered, color: '#10b981' },
@@ -625,6 +696,92 @@ export function UnifiedDashboard() {
             )}
           </Section>
 
+          {/* Warehouse List */}
+          <Section
+            title="Almacenes"
+            icon={<Package className="h-3.5 w-3.5" />}
+            badge={warehouseRows.length}
+            defaultOpen
+          >
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '.625rem' }}>
+              <input
+                value={warehouseQuery}
+                onChange={(e) => setWarehouseQuery(e.target.value)}
+                placeholder="Filtrar por código, ciudad o país"
+                className="w-full rounded border border-panel-border bg-background px-2.5 py-1.5 text-xs text-panel-text outline-none focus:border-blue-500"
+              />
+              <div className="flex flex-wrap gap-1">
+                {[
+                  { value: 'all', label: 'Todos', color: 'bg-panel-section-bg text-panel-text-muted' },
+                  { value: 'verde', label: 'Verde', color: 'bg-green-500/10 text-green-600 dark:text-green-400' },
+                  { value: 'ambar', label: 'Ámbar', color: 'bg-yellow-500/10 text-yellow-600 dark:text-yellow-400' },
+                  { value: 'rojo', label: 'Rojo', color: 'bg-red-500/10 text-red-600 dark:text-red-400' },
+                  { value: 'vacio', label: 'Vacío', color: 'bg-slate-500/10 text-panel-text-muted' },
+                ].map(f => (
+                  <button
+                    key={f.value}
+                    onClick={() => setWarehouseStatusFilter(f.value as WarehouseStatusFilter)}
+                    className={`rounded-full px-2 py-1 text-[10px] font-medium transition ${f.color} ${warehouseStatusFilter === f.value ? 'ring-1 ring-blue-400' : ''}`}
+                  >
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px] text-panel-text-faint">
+                Ordenado por mayor ocupación. El filtro también actualiza los aeropuertos visibles del mapa.
+              </p>
+              <div style={{ maxHeight: '13rem', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '.35rem' }}>
+                {warehouseRows.length > 0 ? warehouseRows.map(({ ap, front, stats, status }) => {
+                  const colorClass = status === 'rojo'
+                    ? 'bg-red-500'
+                    : status === 'ambar'
+                      ? 'bg-yellow-500'
+                      : status === 'vacio'
+                        ? 'bg-slate-400'
+                        : 'bg-green-500';
+                  const selected = selectedAirport?.code === ap.iata;
+                  return (
+                    <button
+                      key={ap.iata}
+                      onClick={() => {
+                        if (front) {
+                          setSelectedAirportId(front.id);
+                          setSelectedVuelo(null);
+                        }
+                      }}
+                      className={`w-full rounded border px-2.5 py-2 text-left transition ${selected ? 'border-blue-400 bg-blue-500/10' : 'border-panel-border hover:bg-panel-hover'}`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className={`h-2.5 w-2.5 rounded-full ${colorClass}`} />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-xs font-semibold text-panel-text">
+                            {ap.iata} · {ap.ciudad}
+                          </p>
+                          <p className="truncate text-[10px] text-panel-text-faint">
+                            {ap.pais ?? getContinentLabel(ap.continente)}
+                          </p>
+                        </div>
+                        <span className="text-[10px] font-semibold text-panel-text">
+                          {stats.cap > 0 ? `${stats.occ}/${stats.cap}` : stats.occ}
+                        </span>
+                      </div>
+                      <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-panel-section-bg">
+                        <div
+                          className={`h-full rounded-full ${colorClass}`}
+                          style={{ width: `${Math.min(stats.pct, 100)}%` }}
+                        />
+                      </div>
+                    </button>
+                  );
+                }) : (
+                  <p className="rounded bg-panel-section-bg px-3 py-3 text-center text-[11px] text-panel-text-faint">
+                    No hay almacenes para el filtro aplicado.
+                  </p>
+                )}
+              </div>
+            </div>
+          </Section>
+
           {/* Flight Info */}
           <Section
             title={selectedVuelo ? `${getAeropuertoById(selectedVuelo.idOrigen)?.iata} → ${getAeropuertoById(selectedVuelo.idDestino)?.iata}` : 'Vuelo'}
@@ -825,6 +982,9 @@ export function UnifiedDashboard() {
           onAirportSelect={(id) => { setSelectedAirportId(id); setSelectedVuelo(null); }}
           onFlightSelect={handleFlightSelect}
           selectedFlightKey={selectedFlightKey}
+          canceledFlights={canceledFlights}
+          warehouseCodeFilter={warehouseQuery}
+          warehouseStatusFilter={warehouseStatusFilter}
         />
       </div>
       </div>{/* end flex-1 overflow-hidden */}

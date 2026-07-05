@@ -54,6 +54,15 @@ export interface FlightCancellation {
   affectedBaggageIds: string[];
 }
 
+export interface VisualCancellation {
+  id: string;
+  origen: string;
+  destino: string;
+  salidaUTC: number;
+  llegadaUTC: number;
+  createdAtUTC: number;
+}
+
 export type SimulationScenario = 'realtime' | 'period' | 'collapse';
 
 export type CriterioOrden = 'EDF' | 'FIFO' | 'ALEATORIO';

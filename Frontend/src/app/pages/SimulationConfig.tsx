@@ -169,7 +169,11 @@ export function SimulationConfig() {
   const esRealtime = localConfig.scenario === 'realtime';
   const esConFecha = esPeriodo || esRealtime;
   const diasEfectivos = esRealtime ? 1 : localConfig.dias;
-  const duracionFueraDeRango = esPeriodo && (localConfig.duracionRealMin < 30 || localConfig.duracionRealMin > 90);
+  const duracionFueraDeRango = esPeriodo
+    ? (localConfig.duracionRealMin < 30 || localConfig.duracionRealMin > 90)
+    : esRealtime
+      ? (localConfig.duracionRealMin < 5 || localConfig.duracionRealMin > 90)
+      : false;
   const fechaMaxDataset = datasetInfo ? new Date(datasetInfo.fecha_max + 'T23:59:59') : null;
   const fechaFinSim = new Date(localConfig.startDate.getTime() + diasEfectivos * 86_400_000);
   const fechaFueraDeRango = esConFecha && !!fechaMaxDataset && fechaFinSim > fechaMaxDataset;
@@ -210,29 +214,35 @@ export function SimulationConfig() {
       toast.error('Revisa la configuración', {
         description: fechaFueraDeRango
           ? 'La ventana de simulación excede el rango del dataset.'
-          : 'La duración real debe estar entre 30 y 90 minutos.',
+          : esRealtime
+            ? 'La duración real debe estar entre 5 y 90 minutos.'
+            : 'La duración real debe estar entre 30 y 90 minutos.',
       });
       return;
     }
     updateConfig(localConfig);
 
     if (esPeriodo) {
+      const bloquesPeriodo = 30;
       iniciarPeriodoProgramado({
         startDate: localConfig.startDate,
         dias: localConfig.dias,
         criterio: localConfig.criterio,
         warmUp: localConfig.warmUp,
+        scMin: localConfig.dias * 48,
+        saSeg: Math.max(20, Math.round((localConfig.duracionRealMin * 60) / bloquesPeriodo)),
       });
       return;
     }
     if (esRealtime) {
+      const bloquesDia = 24;
       iniciarPeriodoProgramado({
         startDate: localConfig.startDate,
         dias: 1,
         criterio: localConfig.criterio,
         warmUp: localConfig.warmUp,
         scMin: 60,
-        saSeg: 60,
+        saSeg: Math.max(5, Math.round((localConfig.duracionRealMin * 60) / bloquesDia)),
         usarCancelaciones: false,
       });
       return;
@@ -283,7 +293,8 @@ export function SimulationConfig() {
             <Time size={14} />{format(currentTime, 'dd/MM/yyyy HH:mm:ss')}
           </span>
           <Tag size="sm" type={SCENARIO_TAG[localConfig.scenario]}>{SCENARIO_LABELS[localConfig.scenario]}</Tag>
-          {esPeriodo && <span style={{ whiteSpace: 'nowrap' }}>{localConfig.dias} días · ~60 min</span>}
+          {esPeriodo && <span style={{ whiteSpace: 'nowrap' }}>{localConfig.dias} días · {localConfig.duracionRealMin} min</span>}
+          {esRealtime && <span style={{ whiteSpace: 'nowrap' }}>1 día · {localConfig.duracionRealMin} min</span>}
           {localConfig.scenario === 'collapse' && (
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: '.25rem', whiteSpace: 'nowrap' }}>
               <Flash size={14} /> {VELOCIDADES_COLAPSO.find(v => v.k === kColapso)?.label}
@@ -383,9 +394,14 @@ export function SimulationConfig() {
                         title="Fecha fuera de rango"
                         subtitle={`La ventana de ${diasEfectivos} ${diasEfectivos === 1 ? 'día' : 'días'} termina el ${format(fechaFinSim, 'dd/MM/yyyy')}, fuera del dataset (${datasetInfo?.fecha_max}).`} />
                     )}
+                    {duracionFueraDeRango && (
+                      <InlineNotification kind="error" lowContrast hideCloseButton
+                        title="Duración fuera de rango"
+                        subtitle={esRealtime ? 'Día a día permite entre 5 y 90 minutos reales.' : 'Periodo permite entre 30 y 90 minutos reales.'} />
+                    )}
                     {esRealtime && (
                       <p style={{ fontSize: '.75rem', color: 'var(--cds-text-secondary)', margin: 0 }}>
-                        Día a día: opera 1 día desde la fecha/hora elegida, 1:1 con el reloj.
+                        Día a día: opera 1 día desde la fecha/hora elegida con duración real configurable.
                       </p>
                     )}
                     {localConfig.scenario === 'collapse' && (
@@ -395,10 +411,25 @@ export function SimulationConfig() {
                     )}
                   </Stack>
 
-                  {esPeriodo && (
-                    <InlineNotification kind="info" lowContrast hideCloseButton
-                      title="Duración fija ≈ 60 min"
-                      subtitle={`Los ${localConfig.dias} días se comprimen automáticamente en ~60 minutos reales.`} />
+                  {(esPeriodo || esRealtime) && (
+                    <div style={{ maxWidth: 240 }}>
+                      <TextInput
+                        id="cfg-duracion-real"
+                        labelText="Duración real objetivo (min)"
+                        type="number"
+                        min={esRealtime ? 5 : 30}
+                        max={90}
+                        step={5}
+                        value={String(localConfig.duracionRealMin)}
+                        onChange={(e) => setLocalConfig({
+                          ...localConfig,
+                          duracionRealMin: Number(e.target.value) || (esRealtime ? 24 : 60),
+                        })}
+                      />
+                      <p style={{ fontSize: '.75rem', color: 'var(--cds-text-secondary)', margin: '.35rem 0 0' }}>
+                        Ajusta la velocidad de la simulación sin cambiar la ventana de datos.
+                      </p>
+                    </div>
                   )}
 
                 </Stack>
