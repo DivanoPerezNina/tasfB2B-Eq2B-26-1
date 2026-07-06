@@ -109,7 +109,7 @@ function duracionMinDia(salida: number, llegada: number) {
 
 export function UnifiedDashboard() {
   const {
-    stats, getAirportStats,
+    stats, getAirportStats,aeropuertosState,
     fase, contadores, progresoPct, warmupPct, simulationTime,
     collapseFailure, lastValidTick, config,
     pausarSimulacion, reanudarSimulacion, detenerSimulacion, resetear,
