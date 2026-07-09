@@ -271,6 +271,7 @@ export const Map = memo(function Map({
   const [filter, setFilter] = useState<Continent | 'all'>('all');
   const [hoveredAirport, setHoveredAirport] = useState<string | null>(null);
   const [legendOpen, setLegendOpen] = useState(true);   // leyenda del mapa minimizable
+  const [zoomInfoOpen, setZoomInfoOpen] = useState(true); // tarjeta superior derecha minimizable
   const [tipsOpen, setTipsOpen] = useState(true);        // indicaciones de arrastre minimizables
   const [showPlanes, setShowPlanes] = useState(true);
   const [, setTick] = useState(0);
@@ -485,32 +486,72 @@ export const Map = memo(function Map({
       </div>
 
       {/* Zoom info */}
-      <div className="absolute right-4 top-4 z-10 rounded-lg backdrop-blur shadow-md" style={{ backgroundColor: 'var(--map-overlay-bg)', display: 'flex', flexDirection: 'column', gap: 4, lineHeight: 1.4, minWidth: 150, padding: '1rem 1.25rem' }}>
-        <p className="text-xs" style={{ color: 'var(--map-overlay-text-muted)' }}>Zoom</p>
-        <p className="text-sm font-medium" style={{ color: 'var(--map-overlay-text)' }}>{zoom.toFixed(1)}x</p>
-        <p className="text-xs mt-0.5" style={{ color: 'var(--panel-text-faint)' }}>
-          {visibleCount}/{totalInFilter} aeropuertos
-        </p>
-        {showPlanes && simHasStarted && (activeFlightTotal > 0 || contadores.en_vuelo > 0) && (
-          <p className="text-xs mt-0.5" style={{ color: '#fbbf24' }}>
-            {activeFlightTotal || contadores.en_vuelo} {config.scenario === 'collapse' ? 'envíos en tránsito' : 'vuelos activos'}
-            {activeFlightTotal > activeFlights.length ? ` · ${activeFlights.length} visibles` : ''}
-          </p>
-        )}
-        {!simHasStarted && (
-          <p className="text-xs mt-0.5" style={{ color: 'var(--panel-text-faint)' }}>
-            Sin simulación activa
-          </p>
-        )}
-        {!simHasStarted && (
-          <p className="text-[10px] mt-1 text-panel-text-faint max-w-xs">
-            Aviones, rutas y ocupación en vivo no disponibles hasta iniciar.
-          </p>
-        )}
-        {config.scenario === 'collapse' && simHasStarted && (
-          <p className="text-[10px] mt-1 text-panel-text-faint max-w-xs">
-            Visualización acelerada: los vuelos se muestran de forma agregada por bloque.
-          </p>
+      <div
+        className="absolute right-4 top-4 z-10 rounded-lg backdrop-blur shadow-md border"
+        style={{
+          backgroundColor: 'var(--map-overlay-bg)',
+          borderColor: 'var(--panel-border)',
+          minWidth: zoomInfoOpen ? 138 : 112,
+          maxWidth: zoomInfoOpen ? 220 : 112,
+          padding: zoomInfoOpen ? '.7rem .85rem' : '.45rem .65rem',
+        }}
+      >
+        <button
+          onClick={() => setZoomInfoOpen(o => !o)}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            width: '100%',
+            gap: '.5rem',
+            marginBottom: zoomInfoOpen ? '.35rem' : 0,
+          }}
+          title={zoomInfoOpen ? 'Ocultar información de zoom' : 'Mostrar información de zoom'}
+        >
+          <span className="text-xs font-medium" style={{ color: 'var(--map-overlay-text)' }}>
+            Zoom
+          </span>
+          {zoomInfoOpen
+            ? <ChevronDown className="h-3.5 w-3.5" style={{ color: 'var(--map-overlay-text-muted)' }} />
+            : <ChevronUp className="h-3.5 w-3.5" style={{ color: 'var(--map-overlay-text-muted)' }} />}
+        </button>
+
+        {zoomInfoOpen && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '.25rem', lineHeight: 1.25 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '.75rem' }}>
+              <span className="text-[11px]" style={{ color: 'var(--map-overlay-text-muted)' }}>Nivel</span>
+              <span className="text-sm font-semibold" style={{ color: 'var(--map-overlay-text)' }}>{zoom.toFixed(1)}x</span>
+            </div>
+
+            <p className="text-[11px]" style={{ color: 'var(--panel-text-faint)', margin: 0 }}>
+              {visibleCount}/{totalInFilter} aeropuertos
+            </p>
+
+            {showPlanes && simHasStarted && (activeFlightTotal > 0 || contadores.en_vuelo > 0) && (
+              <p className="text-[11px]" style={{ color: '#fbbf24', margin: 0 }}>
+                {activeFlightTotal || contadores.en_vuelo} {config.scenario === 'collapse' ? 'envíos en tránsito' : 'vuelos activos'}
+                {activeFlightTotal > activeFlights.length ? ` · ${activeFlights.length} visibles` : ''}
+              </p>
+            )}
+
+            {!simHasStarted && (
+              <p className="text-[11px]" style={{ color: 'var(--panel-text-faint)', margin: 0 }}>
+                Sin simulación activa
+              </p>
+            )}
+
+            {!simHasStarted && (
+              <p className="text-[10px] text-panel-text-faint" style={{ margin: 0, maxWidth: 190 }}>
+                Aviones y ocupación en vivo estarán disponibles al iniciar.
+              </p>
+            )}
+
+            {config.scenario === 'collapse' && simHasStarted && (
+              <p className="text-[10px] text-panel-text-faint" style={{ margin: 0, maxWidth: 190 }}>
+                Visualización acelerada por bloque.
+              </p>
+            )}
+          </div>
         )}
       </div>
 
