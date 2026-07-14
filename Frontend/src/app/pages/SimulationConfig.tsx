@@ -28,12 +28,63 @@ interface HistoryRecord {
   exitosos: number;
   rechazados: number;
   tasaExito: number;
+  warmUp?: boolean;
 }
 
 const HISTORY_KEY = 'tasf_simulation_history';
 function loadHistory(): HistoryRecord[] {
   try { return JSON.parse(localStorage.getItem(HISTORY_KEY) ?? '[]'); }
   catch { return []; }
+}
+
+function historyRecordKey(rec: HistoryRecord) {
+  return [
+    rec.scenario,
+    rec.fechaInicio ?? '',
+    rec.dias ?? '',
+    rec.duracionMin ?? '',
+    rec.total ?? 0,
+  ].join('|');
+}
+
+function dedupeHistory(records: HistoryRecord[]) {
+  const seen = new Set<string>();
+  return records.filter((rec) => {
+    const key = historyRecordKey(rec);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function formatHistoryStart(fechaInicio?: string) {
+  if (!fechaInicio) return '—';
+
+  const match = fechaInicio.match(/^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?$/);
+  if (!match) return fechaInicio;
+
+  const [, yyyy, mm, dd, hh = '00', min = '00'] = match;
+  const meses = [
+    'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+    'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre',
+  ];
+
+  return `${Number(dd)} de ${meses[Number(mm) - 1]} del ${yyyy}, ${hh}:${min}`;
+}
+
+function formatHistoryDate(date: string) {
+  try {
+    return format(new Date(date), 'dd/MM/yyyy HH:mm', { locale: es });
+  } catch {
+    return '—';
+  }
+}
+
+function historyScenarioLabel(rec: HistoryRecord) {
+  if (rec.scenario === 'period') return `Simulación ${rec.dias ?? 5}D`;
+  if (rec.scenario === 'realtime') return 'Tiempo Real';
+  if (rec.scenario === 'collapse') return 'Colapso';
+  return SCENARIO_LABELS[rec.scenario] ?? 'Simulación';
 }
 
 // ─── Slider de umbrales tricolor (control especializado; se migra en limpieza) ──
@@ -152,9 +203,11 @@ export function SimulationConfig() {
         exitosos: contadores.entregado,
         rechazados: contadores.rechazado,
         tasaExito: contadores.total > 0 ? (contadores.entregado / contadores.total) * 100 : 0,
+        warmUp: config.warmUp,
       };
       setHistory(prev => {
-        const updated = [record, ...prev].slice(0, 30);
+        const withoutSame = prev.filter(item => historyRecordKey(item) !== historyRecordKey(record));
+        const updated = [record, ...withoutSame].slice(0, 30);
         localStorage.setItem(HISTORY_KEY, JSON.stringify(updated));
         return updated;
       });
@@ -281,6 +334,8 @@ export function SimulationConfig() {
     );
   };
 
+  const historyVisible = dedupeHistory(history);
+
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--cds-background)' }}>
 
@@ -321,7 +376,7 @@ export function SimulationConfig() {
           <TabList aria-label="Configuración">
             <Tab renderIcon={Settings}>General</Tab>
             <Tab renderIcon={SettingsAdjust}>Umbrales</Tab>
-            <Tab renderIcon={Calendar}>Historial ({history.length})</Tab>
+            <Tab renderIcon={Calendar}>Historial ({historyVisible.length})</Tab>
           </TabList>
 
           <TabPanels>
@@ -548,49 +603,127 @@ export function SimulationConfig() {
 
             {/* ── Historial ── */}
             <TabPanel>
-              <div style={{ maxWidth: '64rem', marginTop: '1rem' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '.75rem' }}>
-                  <p style={{ fontSize: '.8125rem', color: 'var(--cds-text-secondary)', margin: 0 }}>
-                    {history.length === 0
-                      ? 'Las simulaciones completadas se registrarán aquí.'
-                      : `${history.length} simulación${history.length !== 1 ? 'es' : ''} registrada${history.length !== 1 ? 's' : ''}`}
-                  </p>
+              <div style={{ maxWidth: '72rem', marginTop: '1rem' }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+                  <div>
+                    <h3 style={{ margin: '0 0 .25rem', color: 'var(--cds-text-primary)' }}>Historial de simulaciones</h3>
+                    <p style={{ fontSize: '.8125rem', color: 'var(--cds-text-secondary)', margin: 0 }}>
+                      {historyVisible.length === 0
+                        ? 'Las simulaciones completadas se registrarán aquí.'
+                        : `${historyVisible.length} simulación${historyVisible.length !== 1 ? 'es' : ''} registrada${historyVisible.length !== 1 ? 's' : ''}`}
+                    </p>
+                  </div>
                   {history.length > 0 && (
                     <Button size="sm" kind="ghost" renderIcon={TrashCan} onClick={handleClearHistory}>Borrar historial</Button>
                   )}
                 </div>
 
-                {history.length === 0 ? (
+                {historyVisible.length === 0 ? (
                   <InlineNotification kind="info" lowContrast hideCloseButton
                     title="Sin registros" subtitle="Completa una simulación para ver el historial." />
                 ) : (
-                  <Stack gap={2}>
-                    {history.map((rec) => {
-                      const pct = Math.round(rec.tasaExito);
+                  <Stack gap={4}>
+                    {historyVisible.map((rec) => {
+                      const pct = Math.max(0, Math.min(100, Math.round(rec.tasaExito)));
                       const barColor = pct >= 90 ? '#24a148' : pct >= 75 ? '#f1c21b' : '#da1e28';
+                      const estadoLabel = pct >= 100 ? 'Finalizada' : 'En progreso';
+                      const estadoColor = pct >= 100 ? '#24a148' : '#f1c21b';
+                      const isPeriod = rec.scenario === 'period';
+                      const estadoInicial = rec.warmUp ? 'Cargar estado previo' : 'Desde cero';
+
                       return (
-                        <div key={rec.id} style={{
-                          display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap',
-                          padding: '.75rem 1rem', border: '1px solid var(--cds-border-subtle)', background: 'var(--cds-layer)',
-                        }}>
-                          <Tag size="sm" type={SCENARIO_TAG[rec.scenario]}>{SCENARIO_LABELS[rec.scenario]}</Tag>
-                          {rec.fechaInicio && <span style={{ fontSize: '.75rem', color: 'var(--cds-text-secondary)' }}>desde <strong>{rec.fechaInicio}</strong></span>}
-                          {rec.dias != null && <span style={{ fontSize: '.75rem', color: 'var(--cds-text-secondary)' }}>{rec.dias} días · {rec.duracionMin} min</span>}
-                          <span style={{ fontSize: '.75rem', color: 'var(--cds-text-secondary)' }}><strong>{rec.total.toLocaleString()}</strong> envíos</span>
-                          <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '.5rem', minWidth: 120 }}>
-                            <div style={{ flex: 1, height: 6, borderRadius: 9999, background: 'var(--cds-border-subtle)', overflow: 'hidden' }}>
-                              <div style={{ height: '100%', width: `${pct}%`, background: barColor }} />
+                        <div
+                          key={rec.id}
+                          style={{
+                            border: '1px solid var(--cds-border-subtle)',
+                            background: 'var(--cds-layer)',
+                            borderRadius: 12,
+                            padding: '1rem',
+                            boxShadow: '0 10px 24px rgba(0,0,0,.14)',
+                          }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+                            <div style={{ display: 'grid', gap: '.5rem' }}>
+                              <div style={{ display: 'flex', gap: '.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                                <Tag size="sm" type={SCENARIO_TAG[rec.scenario]}>{historyScenarioLabel(rec)}</Tag>
+                                <span style={{
+                                  display: 'inline-flex', alignItems: 'center', gap: '.35rem',
+                                  padding: '.15rem .55rem', borderRadius: 999,
+                                  background: `${estadoColor}22`, color: estadoColor,
+                                  fontSize: '.75rem', fontWeight: 700,
+                                }}>
+                                  {estadoLabel} · {pct}%
+                                </span>
+                              </div>
+
+                              <div style={{ fontSize: '.875rem', color: 'var(--cds-text-secondary)' }}>
+                                Inicio:{' '}
+                                <strong style={{ color: 'var(--cds-text-primary)' }}>{formatHistoryStart(rec.fechaInicio)}</strong>
+                              </div>
+
+                              <div style={{ fontSize: '.75rem', color: 'var(--cds-text-helper)', display: 'flex', gap: '.75rem', flexWrap: 'wrap' }}>
+                                {isPeriod && <span>{rec.dias ?? 5} días simulados</span>}
+                                {rec.duracionMin != null && <span>{rec.duracionMin} min objetivo</span>}
+                                {isPeriod && <span>{estadoInicial}</span>}
+                                <span>Tiempo 0 = fecha/hora elegida</span>
+                              </div>
                             </div>
-                            <span style={{ fontSize: '.75rem', fontWeight: 700, color: barColor }}>{pct}%</span>
+
+                            <div style={{ textAlign: 'right' }}>
+                              <div style={{ fontSize: '1.5rem', fontWeight: 700, color: 'var(--cds-text-primary)', lineHeight: 1 }}>
+                                {pct}%
+                              </div>
+                              <div style={{ fontSize: '.6875rem', color: 'var(--cds-text-helper)' }}>avance</div>
+                            </div>
                           </div>
-                          <span style={{ fontSize: '.6875rem', color: 'var(--cds-text-helper)', marginLeft: 'auto' }}>
-                            {format(new Date(rec.date), 'dd/MM HH:mm', { locale: es })}
-                          </span>
+
+                          <div style={{ marginTop: '1rem' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '.75rem', marginBottom: '.35rem' }}>
+                              <span style={{ fontSize: '.75rem', color: 'var(--cds-text-secondary)' }}>Progreso de ejecución</span>
+                              <span style={{ fontSize: '.75rem', fontWeight: 700, color: barColor }}>{pct}%</span>
+                            </div>
+                            <div style={{ width: '100%', height: 8, borderRadius: 9999, background: 'var(--cds-border-subtle)', overflow: 'hidden' }}>
+                              <div style={{ height: '100%', width: `${pct}%`, background: barColor, transition: 'width .2s ease' }} />
+                            </div>
+                          </div>
+
+                          <div style={{ marginTop: '1rem', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '.75rem' }}>
+                            <div style={{ border: '1px solid var(--cds-border-subtle)', background: 'var(--cds-background)', borderRadius: 8, padding: '.75rem' }}>
+                              <div style={{ fontSize: '.6875rem', color: 'var(--cds-text-helper)' }}>Envíos considerados</div>
+                              <div style={{ fontWeight: 700, color: 'var(--cds-text-primary)' }}>{rec.total.toLocaleString('es-PE')}</div>
+                            </div>
+                            <div style={{ border: '1px solid var(--cds-border-subtle)', background: 'var(--cds-background)', borderRadius: 8, padding: '.75rem' }}>
+                              <div style={{ fontSize: '.6875rem', color: 'var(--cds-text-helper)' }}>Entregados</div>
+                              <div style={{ fontWeight: 700, color: '#24a148' }}>{rec.exitosos.toLocaleString('es-PE')}</div>
+                            </div>
+                            <div style={{ border: '1px solid var(--cds-border-subtle)', background: 'var(--cds-background)', borderRadius: 8, padding: '.75rem' }}>
+                              <div style={{ fontSize: '.6875rem', color: 'var(--cds-text-helper)' }}>Rechazados</div>
+                              <div style={{ fontWeight: 700, color: rec.rechazados > 0 ? '#da1e28' : 'var(--cds-text-primary)' }}>
+                                {rec.rechazados.toLocaleString('es-PE')}
+                              </div>
+                            </div>
+                            <div style={{ border: '1px solid var(--cds-border-subtle)', background: 'var(--cds-background)', borderRadius: 8, padding: '.75rem' }}>
+                              <div style={{ fontSize: '.6875rem', color: 'var(--cds-text-helper)' }}>Registrado</div>
+                              <div style={{ fontWeight: 700, color: 'var(--cds-text-primary)' }}>{formatHistoryDate(rec.date)}</div>
+                            </div>
+                          </div>
                         </div>
                       );
                     })}
                   </Stack>
                 )}
+
+                <div style={{
+                  marginTop: '1rem', border: '1px solid var(--cds-border-subtle)',
+                  background: 'var(--cds-layer)', borderRadius: 12, padding: '1rem',
+                }}>
+                  <h4 style={{ margin: '0 0 .5rem', color: 'var(--cds-text-primary)' }}>Cancelaciones en Sim3D, Sim5D y Sim7D</h4>
+                  <p style={{ margin: 0, fontSize: '.8125rem', color: 'var(--cds-text-secondary)', lineHeight: 1.5 }}>
+                    En el escenario Periodo, la fecha y hora elegida representan el tiempo 0. El planificador consume datos hacia adelante por bloques.
+                    Si un vuelo está cancelado dentro de la ventana simulada, no se usa su capacidad ni se muestra el avión; la ruta se marca en rojo
+                    y las maletas afectadas quedan pendientes para replanificación en los siguientes bloques.
+                  </p>
+                </div>
               </div>
             </TabPanel>
           </TabPanels>
