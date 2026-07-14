@@ -31,7 +31,7 @@ const CONFIG_DEFAULT: SimulationConfig = {
   dias:           5,
   duracionRealMin: 60,
   criterio:       'EDF',
-  warmUp:         true,       // default: sembrar el estado de la red en la fecha elegida
+  warmUp:         false,      // Sim5D: tiempo=0 en fecha/hora elegida; se consume data futura
                               // (aviones en vuelo + almacenes ocupados). "Desde cero" lo apaga.
   speed:          1,          // derivado; no se usa directamente
   thresholds: {
@@ -627,7 +627,11 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     // Fecha elegida → minuto epoch UTC (GMT=0, igual que el planificador).
     const d = efectivo.startDate;
     const t0utc = Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes()) / 60000);
-    // Valores calibrados (por defecto Periodo): 30 bloques → ~60 min (Sa=120s, Sc=dias·48).
+    const fechaInicioLocal = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}T${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    // En Sim3D/5D/7D, tiempo=0 es exactamente la fecha/hora elegida.
+    // El primer bloque consume datos futuros desde t0 hacia adelante.
+    setTiempoSimUTC(t0utc);
+    // Valores calibrados (por defecto Periodo): 30 bloques → duración real objetivo configurable.
     // Tiempo Real los sobreescribe con Sc=60, Sa=60s (K=60: 1 min-dato/seg-real).
     const sc    = opts.scMin ?? (efectivo.dias * 48);
     const saSeg = opts.saSeg ?? 120;
@@ -638,6 +642,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           t0_utc:  t0utc,
+          fecha_inicio_local: fechaInicioLocal,
           dias:    efectivo.dias,
           sc,
           sa_seg:  saSeg,

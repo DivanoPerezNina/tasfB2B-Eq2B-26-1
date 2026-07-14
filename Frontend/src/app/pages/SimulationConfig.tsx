@@ -123,6 +123,7 @@ export function SimulationConfig() {
   const SA_COLAPSO = 300;
   const kColapso = localConfig.velocidadColapsoK ?? VELOCIDADES_COLAPSO[0].k;
 
+
   useEffect(() => {
     const id = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(id);
@@ -231,6 +232,7 @@ export function SimulationConfig() {
         warmUp: localConfig.warmUp,
         scMin: localConfig.dias * 48,
         saSeg: Math.max(20, Math.round((localConfig.duracionRealMin * 60) / bloquesPeriodo)),
+        usarCancelaciones: true,
       });
       return;
     }
@@ -332,7 +334,10 @@ export function SimulationConfig() {
                   legend="Escenario"
                   name="scenario"
                   valueSelected={localConfig.scenario}
-                  onChange={(value) => setLocalConfig({ ...localConfig, scenario: value as SimulationScenario })}
+                  onChange={(value) => {
+                    const scenario = value as SimulationScenario;
+                    setLocalConfig({ ...localConfig, scenario, warmUp: false });
+                  }}
                 >
                   {SCENARIO_OPTIONS.map((opt) => (
                     <RadioTile id={`sc-${opt.value}`} value={opt.value} key={opt.value}>
@@ -432,6 +437,16 @@ export function SimulationConfig() {
                     </div>
                   )}
 
+                  {esPeriodo && (
+                    <InlineNotification
+                      kind="info"
+                      lowContrast
+                      hideCloseButton
+                      title={`Simulación ${localConfig.dias}D calibrada`}
+                      subtitle={`Tiempo estimado: ${localConfig.duracionRealMin} minutos reales. Se usan 30 bloques: cada ${Math.round(localConfig.dias * 48)} minutos de datos futuros se consumen cada ${Math.max(20, Math.round((localConfig.duracionRealMin * 60) / 30))} segundos reales. Tiempo = 0 en la fecha/hora elegida; no se procesa data anterior.`}
+                    />
+                  )}
+
                 </Stack>
 
                 {/* Días + estado inicial (Periodo) / Velocidad (Colapso) */}
@@ -481,6 +496,14 @@ export function SimulationConfig() {
                           </div>
                         </RadioTile>
                       </TileGroup>
+
+                      <InlineNotification
+                        kind="info"
+                        lowContrast
+                        hideCloseButton
+                        title="Cancelaciones consideradas en Periodo"
+                        subtitle="Para Sim3D/5D/7D se procesan las cancelaciones del archivo. Si eliges Desde cero, tiempo 0 queda en la fecha/hora seleccionada y se consumen datos futuros."
+                      />
                     </>
                   )}
 

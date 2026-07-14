@@ -33,7 +33,7 @@ function Section({
   title,
   icon,
   children,
-  defaultOpen = true,
+  defaultOpen = false,
   badge,
   accentColor,
 }: {
@@ -94,7 +94,8 @@ function formatFechaInicioTexto(date: Date) {
   const dia = date.getDate();
   const diaTexto = dia === 1 ? '1ro' : String(dia);
 
-  return `${diaTexto} de ${meses[date.getMonth()]} del ${date.getFullYear()}`;
+  const hora = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+  return `${diaTexto} de ${meses[date.getMonth()]} del ${date.getFullYear()} · ${hora}`;
 }
 
 function normalizarMinutoDia(min: number) {
@@ -414,10 +415,15 @@ export function UnifiedDashboard() {
         {esPeriodoSimulado && (
           <>
             <div className="h-4 w-px bg-panel-border" />
-            {/* Fecha de inicio: en simulaciones de 3, 5 y 7 días se muestra como texto */}
+            {/* Fecha y hora exactas elegidas como tiempo 0 de la Simulación 3D/5D/7D */}
             <div className="flex items-center gap-1.5">
               <span className="text-[11px] text-panel-text-muted">Inicio:</span>
               <span className="text-xs font-semibold text-panel-text">{fechaInicioSim}</span>
+            </div>
+            <div className="h-4 w-px bg-panel-border" />
+            <div className="flex items-center gap-1.5">
+              <span className="text-[11px] text-panel-text-muted">Duración objetivo:</span>
+              <span className="text-xs font-semibold text-panel-text">{config.duracionRealMin} min</span>
             </div>
           </>
         )}
@@ -701,7 +707,6 @@ export function UnifiedDashboard() {
             title="Almacenes"
             icon={<Package className="h-3.5 w-3.5" />}
             badge={warehouseRows.length}
-            defaultOpen
           >
             <div style={{ display: 'flex', flexDirection: 'column', gap: '.625rem' }}>
               <input

@@ -48,7 +48,7 @@ export function Navigation({ collapsed = false, onToggleCollapsed }: NavigationP
       <button
         type="button"
         onClick={onToggleCollapsed}
-        className="fixed left-1/2 top-0 z-[80] flex h-6 w-16 -translate-x-1/2 items-center justify-center rounded-b-full border border-t-0 border-panel-border bg-panel-bg text-panel-text-muted shadow-lg transition-colors hover:bg-panel-hover hover:text-panel-text"
+        className="fixed right-4 top-0 z-[80] flex h-6 w-16 items-center justify-center rounded-b-full border border-t-0 border-panel-border bg-panel-bg text-panel-text-muted shadow-lg transition-colors hover:bg-panel-hover hover:text-panel-text"
         title="Mostrar cabecera"
         aria-label="Mostrar cabecera"
       >
@@ -91,18 +91,11 @@ export function Navigation({ collapsed = false, onToggleCollapsed }: NavigationP
           <HeaderGlobalAction aria-label="Salir" onClick={cerrarSesion}>
             <Logout size={20} />
           </HeaderGlobalAction>
+          <HeaderGlobalAction aria-label="Ocultar cabecera" onClick={onToggleCollapsed}>
+            <ChevronUp size={20} />
+          </HeaderGlobalAction>
         </HeaderGlobalBar>
       </Header>
-
-      <button
-        type="button"
-        onClick={onToggleCollapsed}
-        className="fixed left-1/2 top-[47px] z-[90] flex h-6 w-16 -translate-x-1/2 items-center justify-center rounded-b-full border border-t-0 border-panel-border bg-panel-bg text-panel-text-muted shadow-lg transition-colors hover:bg-panel-hover hover:text-panel-text"
-        title="Ocultar cabecera"
-        aria-label="Ocultar cabecera"
-      >
-        <ChevronUp className="h-4 w-4" />
-      </button>
     </div>
   );
 }
