@@ -167,22 +167,48 @@ export function UnifiedDashboard() {
   // actual. Identidad por ruta (origen→destino IATA) + salida UTC absoluta; el
   // backend resuelve la ruta a su vueloIdx interno y re-rutea.
   const handleCancelarVuelo = async () => {
-    if (!selectedVuelo) return;
+    console.log('[CANCELAR] click detectado');
+
+    if (!selectedVuelo) {
+      console.warn('[CANCELAR] No hay vuelo seleccionado');
+      return;
+    }
+
+    console.log('[CANCELAR] vuelo seleccionado:', selectedVuelo);
+
     const orig = getAeropuertoById(selectedVuelo.idOrigen);
     const dest = getAeropuertoById(selectedVuelo.idDestino);
-    if (!orig || !dest) { setCancelStatus('error'); return; }
+
+    console.log('[CANCELAR] origen:', orig);
+    console.log('[CANCELAR] destino:', dest);
+
+    if (!orig || !dest) {
+      console.warn('[CANCELAR] No se pudo resolver origen/destino');
+      setCancelStatus('error');
+      return;
+    }
+
     setCancelStatus('sending');
-    // selectedVuelo.salidaUTC viene de la BD en hora LOCAL del origen → a UTC con su GMT.
+
     const salidaDiaUTC = ((selectedVuelo.salidaUTC - orig.gmt * 60) % 1440 + 1440) % 1440;
     const nowMin = lastValidTick?.tiempo_sim_utc ?? tiempoSimUTC ?? inicioSimMin;
-    // ponytail: ocurrencia del día de sim UTC actual; casos borde en el límite de
-    // medianoche local quedan al día UTC vigente (suficiente para el caso de uso).
     const salidaAbs = Math.floor(nowMin / 1440) * 1440 + salidaDiaUTC;
+
+    console.log('[CANCELAR] payload enviado:', {
+      origen: orig.iata,
+      destino: dest.iata,
+      salidaUTC: salidaAbs,
+    });
+
     const ok = await cancelarVuelo(orig.iata, dest.iata, salidaAbs);
+
+    console.log('[CANCELAR] respuesta backend ok:', ok);
+
     if (ok) {
       const salidaDia = normalizarMinutoDia(selectedVuelo.salidaUTC);
       const llegadaDia = normalizarMinutoDia(selectedVuelo.llegadaUTC);
       const duracion = duracionMinDia(salidaDia, llegadaDia);
+
       setCanceledFlights(prev => [
         {
           id: `${orig.iata}-${dest.iata}-${salidaAbs}-${Date.now()}`,
@@ -195,6 +221,7 @@ export function UnifiedDashboard() {
         ...prev,
       ].slice(0, 20));
     }
+
     setCancelStatus(ok ? 'ok' : 'error');
   };
 
@@ -874,9 +901,10 @@ export function UnifiedDashboard() {
                       </p>
                     )}
                   </div>
-                  {config.scenario === 'realtime' && (fase === 'ejecutando' || fase === 'pausado') && (
+                  {(config.scenario === 'period' || config.scenario === 'collapse') && (fase === 'ejecutando' || fase === 'pausado') && (
                     <Button
-                      kind="danger" size="sm"
+                      kind="danger"
+                      size="sm"
                       disabled={cancelStatus === 'sending' || cancelStatus === 'ok'}
                       onClick={handleCancelarVuelo}
                       style={{ width: '100%', maxWidth: 'none' }}
