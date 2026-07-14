@@ -98,6 +98,19 @@ function formatFechaInicioTexto(date: Date) {
   return `${diaTexto} de ${meses[date.getMonth()]} del ${date.getFullYear()} · ${hora}`;
 }
 
+function formatSimDateTimeUTCFromMinute(minUTC: number) {
+  const d = new Date(minUTC * 60 * 1000);
+
+  const dd = String(d.getUTCDate()).padStart(2, '0');
+  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const yyyy = d.getUTCFullYear();
+
+  const hh = String(d.getUTCHours()).padStart(2, '0');
+  const mi = String(d.getUTCMinutes()).padStart(2, '0');
+
+  return `${dd}/${mm}/${yyyy} ${hh}:${mi}`;
+}
+
 function normalizarMinutoDia(min: number) {
   return ((min % 1440) + 1440) % 1440;
 }
@@ -111,7 +124,7 @@ function duracionMinDia(salida: number, llegada: number) {
 export function UnifiedDashboard() {
   const {
     stats, getAirportStats,aeropuertosState,
-    fase, contadores, progresoPct, warmupPct, simulationTime,
+    fase, contadores, progresoPct, warmupPct, simulationTime, tiempoSimUTC,
     collapseFailure, lastValidTick, config,
     pausarSimulacion, reanudarSimulacion, detenerSimulacion, resetear,
     cancelarVuelo,
@@ -161,7 +174,7 @@ export function UnifiedDashboard() {
     setCancelStatus('sending');
     // selectedVuelo.salidaUTC viene de la BD en hora LOCAL del origen → a UTC con su GMT.
     const salidaDiaUTC = ((selectedVuelo.salidaUTC - orig.gmt * 60) % 1440 + 1440) % 1440;
-    const nowMin = lastValidTick?.tiempo_sim_utc ?? Math.floor(simulationTime.getTime() / 60000);
+    const nowMin = lastValidTick?.tiempo_sim_utc ?? tiempoSimUTC ?? inicioSimMin;
     // ponytail: ocurrencia del día de sim UTC actual; casos borde en el límite de
     // medianoche local quedan al día UTC vigente (suficiente para el caso de uso).
     const salidaAbs = Math.floor(nowMin / 1440) * 1440 + salidaDiaUTC;
@@ -365,6 +378,10 @@ export function UnifiedDashboard() {
     ? `Simulación ${config.dias}D`
     : (SCENARIO_DISPLAY[config.scenario] ?? config.scenario);
 
+  const tiempoSimuladoTexto = tiempoSimUTC > 0
+    ? formatSimDateTimeUTCFromMinute(tiempoSimUTC)
+    : format(config.startDate, 'dd/MM/yyyy HH:mm');
+
   const selectedFlightMeta = useMemo(() => {
     if (!selectedVuelo) return null;
 
@@ -432,7 +449,7 @@ export function UnifiedDashboard() {
         <div className="flex items-center gap-1.5">
           <Clock className="h-3.5 w-3.5 text-panel-text-faint" />
           <span className="font-mono text-xs text-panel-text">
-            {contadores.total > 0 ? format(simulationTime, 'dd/MM/yyyy HH:mm') : '—'}
+            {contadores.total > 0 || tiempoSimUTC > 0 ? tiempoSimuladoTexto : '—'}
           </span>
         </div>
         {/* Warm-up progress bar (pre-roll acelerado) */}
