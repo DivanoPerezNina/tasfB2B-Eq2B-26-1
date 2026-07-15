@@ -4,10 +4,12 @@ import {
   DatePicker,
   DatePickerInput,
   InlineNotification,
+  Modal,
   Pagination,
   Select,
   SelectItem,
   Tag,
+  TextInput,
 } from '@carbon/react';
 import { useDomain } from '../context/DomainContext';
 import { useSimulation } from '../context/SimulationContext';
@@ -29,6 +31,17 @@ interface FlightOccurrence {
   destinoIata: string;
   salidaUTC: number;
   llegadaUTC: number;
+}
+
+interface SearchFilters {
+  continent: 'todos' | 1 | 2 | 3;
+  originCountry: string;
+  originAirport: string;
+  destinationAirport: string;
+  codeOrRoute: string;
+  departureTimeFrom: string;
+  departureTimeTo: string;
+  status: 'todos' | 'PREPARADO' | 'EN VUELO' | 'FINALIZADO' | 'CANCELADO';
 }
 
 function formatMinutesAsHHMM(minutes: number) {
@@ -96,6 +109,21 @@ export function Contingencies() {
   const [feedback, setFeedback] = useState<{ kind: 'success' | 'error' | 'info'; title: string; detail: string } | null>(null);
   const hasManualDateSelectionRef = useRef(false);
   const wasActiveRef = useRef(hasActiveSimulation);
+
+  // Search modal state
+  const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
+  const defaultFilters: SearchFilters = {
+    continent: 'todos',
+    originCountry: '',
+    originAirport: '',
+    destinationAirport: '',
+    codeOrRoute: '',
+    departureTimeFrom: '',
+    departureTimeTo: '',
+    status: 'todos',
+  };
+  const [draftFilters, setDraftFilters] = useState<SearchFilters>(defaultFilters);
+  const [appliedFilters, setAppliedFilters] = useState<SearchFilters>(defaultFilters);
 
   useEffect(() => {
     setPage(1);
@@ -215,6 +243,32 @@ export function Contingencies() {
       return byCode && byOrigin && byDestination && byStatus;
     }).sort((a, b) => a.salidaUTC - b.salidaUTC);
   }, [flightCodeFilter, originFilter, destinationFilter, occurrences, statusFilter]);
+
+  // Search modal computed values
+  const availableCountries = useMemo(() => {
+    const countriesSet = new Set<string>();
+    aeropuertosBFF.forEach((airport) => {
+      if (draftFilters.continent === 'todos' || airport.continente === draftFilters.continent) {
+        countriesSet.add(airport.pais);
+      }
+    });
+    return Array.from(countriesSet).sort();
+  }, [aeropuertosBFF, draftFilters.continent]);
+
+  const availableOriginAirports = useMemo(() => {
+    const airportsArray = aeropuertosBFF.filter((airport) => {
+      const continentMatch = draftFilters.continent === 'todos' || airport.continente === draftFilters.continent;
+      const countryMatch = !draftFilters.originCountry || airport.pais === draftFilters.originCountry;
+      return continentMatch && countryMatch;
+    });
+    return airportsArray.sort((a, b) => a.iata.localeCompare(b.iata));
+  }, [aeropuertosBFF, draftFilters.continent, draftFilters.originCountry]);
+
+  const availableDestinationAirports = useMemo(
+    () => [...aeropuertosBFF].sort((a, b) => a.iata.localeCompare(b.iata)),
+    [aeropuertosBFF],
+  );
+
 
   const totalPages = Math.max(1, Math.ceil(filteredOccurrences.length / pageSize));
   const safePage = Math.min(page, totalPages);
@@ -338,6 +392,26 @@ export function Contingencies() {
     setPage(1);
   };
 
+  const openSearchModal = () => {
+    setDraftFilters({ ...appliedFilters });
+    setIsSearchModalOpen(true);
+  };
+
+
+  const applySearchFilters = () => {
+    setAppliedFilters({ ...draftFilters });
+    setIsSearchModalOpen(false);
+  };
+
+  const clearSearchFilters = () => {
+    setDraftFilters(defaultFilters);
+  };
+
+  const cancelSearchModal = () => {
+    setDraftFilters({ ...appliedFilters });
+    setIsSearchModalOpen(false);
+  };
+
   const handleCancelConfirm = async () => {
     if (!confirmationRow || !hasActiveSimulation) {
       return;
@@ -404,7 +478,7 @@ export function Contingencies() {
               <Button kind="secondary" onClick={resetToToday}>Hoy simulado</Button>
             </div>
             <div className="flex items-end">
-              <Button kind="secondary" aria-label="Búsqueda especializada" disabled>
+              <Button kind="secondary" aria-label="Búsqueda especializada" onClick={openSearchModal}>
                 Búsqueda especializada
               </Button>
             </div>
@@ -661,6 +735,172 @@ export function Contingencies() {
           <InlineNotification kind={feedback.kind} lowContrast title={feedback.title} subtitle={feedback.detail} />
         </div>
       )}
+
+      {/* Search Modal */}
+      <Modal
+        isOpen={isSearchModalOpen}
+        onRequestClose={cancelSearchModal}
+        modalHeading="Búsqueda especializada"
+        primaryButtonText="Aplicar filtros"
+        secondaryButtonText="Cancelar"
+        hasScrollingContent
+        size="lg"
+        onRequestSubmit={applySearchFilters}
+        onSecondarySubmit={cancelSearchModal}
+      >
+        <div className="space-y-6 pb-8">
+          {/* Row 1: Continent and Status */}
+          <div className="grid gap-4 md:grid-cols-2">
+            <Select
+              id="search-continent"
+              labelText="Continente"
+              value={draftFilters.continent === 'todos' ? 'todos' : String(draftFilters.continent)}
+              onChange={(e) => {
+                const strValue = e.target.value;
+                setDraftFilters((prev) => ({
+                  ...prev,
+                  continent: strValue === 'todos' ? 'todos' : (parseInt(strValue) as 1 | 2 | 3),
+                  originCountry: '',
+                  originAirport: '',
+                }));
+              }}
+            >
+              <SelectItem value="todos" text="Todos" />
+              <SelectItem value="1" text="América del Sur" />
+              <SelectItem value="2" text="Europa" />
+              <SelectItem value="3" text="Asia" />
+            </Select>
+
+            <Select
+              id="search-status"
+              labelText="Estado"
+              value={draftFilters.status}
+              onChange={(e) => {
+                setDraftFilters((prev) => ({
+                  ...prev,
+                  status: e.target.value as SearchFilters['status'],
+                }));
+              }}
+            >
+              <SelectItem value="todos" text="Todos" />
+              <SelectItem value="PREPARADO" text="Preparado" />
+              <SelectItem value="EN VUELO" text="En vuelo" />
+              <SelectItem value="FINALIZADO" text="Finalizado" />
+              <SelectItem value="CANCELADO" text="Cancelado" />
+            </Select>
+          </div>
+
+          {/* Row 2: Origin Country and Origin Airport */}
+          <div className="grid gap-4 md:grid-cols-2">
+            <Select
+              id="search-origin-country"
+              labelText="País de origen"
+              value={draftFilters.originCountry}
+              onChange={(e) => {
+                setDraftFilters((prev) => ({
+                  ...prev,
+                  originCountry: e.target.value,
+                  originAirport: '',
+                }));
+              }}
+            >
+              <SelectItem value="" text="Todos" />
+              {availableCountries.map((country) => (
+                <SelectItem key={country} value={country} text={country} />
+              ))}
+            </Select>
+
+            <Select
+              id="search-origin-airport"
+              labelText="Aeropuerto de origen"
+              value={draftFilters.originAirport}
+              onChange={(e) => {
+                setDraftFilters((prev) => ({
+                  ...prev,
+                  originAirport: e.target.value,
+                }));
+              }}
+            >
+              <SelectItem value="" text="Todos" />
+              {availableOriginAirports.map((airport) => (
+                <SelectItem key={airport.iata} value={airport.iata} text={`${airport.iata} — ${airport.ciudad}`} />
+              ))}
+            </Select>
+          </div>
+
+          {/* Row 3: Destination Airport */}
+          <div>
+            <Select
+              id="search-destination-airport"
+              labelText="Aeropuerto de destino"
+              value={draftFilters.destinationAirport}
+              onChange={(e) => {
+                setDraftFilters((prev) => ({
+                  ...prev,
+                  destinationAirport: e.target.value,
+                }));
+              }}
+            >
+              <SelectItem value="" text="Todos" />
+              {availableDestinationAirports.map((airport) => (
+                <SelectItem key={airport.iata} value={airport.iata} text={`${airport.iata} — ${airport.ciudad}`} />
+              ))}
+            </Select>
+          </div>
+
+          {/* Row 4: Code or Route */}
+          <div>
+            <TextInput
+              id="search-code-route"
+              labelText="Código o ruta"
+              placeholder="Ej: AA100, JFK, JFK-LAX"
+              value={draftFilters.codeOrRoute}
+              onChange={(e) => {
+                setDraftFilters((prev) => ({
+                  ...prev,
+                  codeOrRoute: e.target.value,
+                }));
+              }}
+            />
+          </div>
+
+          {/* Row 5: Departure Time Range */}
+          <div className="grid gap-4 md:grid-cols-2">
+            <TextInput
+              id="search-time-from"
+              labelText="Hora de salida desde"
+              type="time"
+              value={draftFilters.departureTimeFrom}
+              onChange={(e) => {
+                setDraftFilters((prev) => ({
+                  ...prev,
+                  departureTimeFrom: e.target.value,
+                }));
+              }}
+            />
+
+            <TextInput
+              id="search-time-to"
+              labelText="Hora de salida hasta"
+              type="time"
+              value={draftFilters.departureTimeTo}
+              onChange={(e) => {
+                setDraftFilters((prev) => ({
+                  ...prev,
+                  departureTimeTo: e.target.value,
+                }));
+              }}
+            />
+          </div>
+
+          {/* Clear Filters Button */}
+          <div className="border-t border-panel-border pt-4">
+            <Button kind="ghost" onClick={clearSearchFilters} className="w-full">
+              Limpiar filtros
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }
