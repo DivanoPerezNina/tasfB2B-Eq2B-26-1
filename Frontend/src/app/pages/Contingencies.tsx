@@ -16,6 +16,8 @@ import { useSimulation } from '../context/SimulationContext';
 
 type FlightStatus = 'PREPARADO' | 'EN VUELO' | 'FINALIZADO' | 'CANCELADO';
 type ViewMode = 'continents' | 'airport' | 'search';
+type DetailTableFilter = 'ALL' | 'PREPARADO' | 'FINALIZADO' | 'CANCELADO';
+
 
 interface FlightOccurrence {
   key: string;
@@ -120,22 +122,15 @@ function formatSimulationMoment(epochMinutes: number) {
   }).format(new Date(epochMinutes * 60 * 1000));
 }
 
-function formatSimulationMomentAtOffset(epochMinutes: number, gmtOffsetHours: number) {
-  return formatSimulationMoment(epochMinutes + gmtOffsetHours * 60);
-}
-
-function formatUtcOffset(gmtOffsetHours: number) {
-  const totalMinutes = Math.round(gmtOffsetHours * 60);
-  if (totalMinutes === 0) return 'UTC';
-
-  const sign = totalMinutes > 0 ? '+' : '−';
-  const absoluteMinutes = Math.abs(totalMinutes);
-  const hours = Math.floor(absoluteMinutes / 60);
-  const minutes = absoluteMinutes % 60;
-
-  return minutes === 0
-    ? `UTC${sign}${hours}`
-    : `UTC${sign}${hours}:${String(minutes).padStart(2, '0')}`;
+function formatUtcTableValue(epochMinutes: number) {
+  return new Intl.DateTimeFormat('es-PE', {
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: 'UTC',
+  }).format(new Date(epochMinutes * 60 * 1000));
 }
 
 export function Contingencies() {
@@ -181,6 +176,8 @@ export function Contingencies() {
   const [pageSize, setPageSize] = useState(25);
   const [selectedAirportIata, setSelectedAirportIata] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>('continents');
+  const [detailFilter, setDetailFilter] = useState<DetailTableFilter>('ALL');
+
   const [searchPage, setSearchPage] = useState(1);
   const [searchPageSize, setSearchPageSize] = useState(25);
   const [pendingCancellationKey, setPendingCancellationKey] = useState<string | null>(null);
@@ -202,6 +199,11 @@ export function Contingencies() {
   useEffect(() => {
     setPage(1);
   }, [selectedAirportIata]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [detailFilter]);
+
 
   useEffect(() => {
     setSearchPage(1);
@@ -523,25 +525,49 @@ export function Contingencies() {
       .sort(compareOccurrencesForAction);
   }, [filteredOccurrences, selectedAirportIata]);
 
-  const airportDetailTotalPages = Math.max(1, Math.ceil(airportDetailOccurrences.length / pageSize));
+  const airportDetailSummary = useMemo(() => ({
+    preparado: airportDetailOccurrences.filter((row) => row.estado === 'PREPARADO').length,
+    finalizado: airportDetailOccurrences.filter((row) => row.estado === 'FINALIZADO').length,
+    cancelado: airportDetailOccurrences.filter((row) => row.estado === 'CANCELADO').length,
+  }), [airportDetailOccurrences]);
+
+  const airportFilteredDetailOccurrences = useMemo(() => {
+    switch (detailFilter) {
+      case 'PREPARADO':
+        return airportDetailOccurrences.filter((row) => row.estado === 'PREPARADO');
+      case 'FINALIZADO':
+        return airportDetailOccurrences.filter((row) => row.estado === 'FINALIZADO');
+      case 'CANCELADO':
+        return airportDetailOccurrences.filter((row) => row.estado === 'CANCELADO');
+      default:
+        return airportDetailOccurrences;
+    }
+  }, [airportDetailOccurrences, detailFilter]);
+
+  const airportDetailTotalPages = Math.max(1, Math.ceil(airportFilteredDetailOccurrences.length / pageSize));
   const airportDetailSafePage = Math.min(page, airportDetailTotalPages);
   const paginatedAirportDetailOccurrences = useMemo(() => {
     const start = (airportDetailSafePage - 1) * pageSize;
-    return airportDetailOccurrences.slice(start, start + pageSize);
-  }, [airportDetailOccurrences, airportDetailSafePage, pageSize]);
+    return airportFilteredDetailOccurrences.slice(start, start + pageSize);
+  }, [airportFilteredDetailOccurrences, airportDetailSafePage, pageSize]);
+
 
   const handleSelectAirport = (iata: string) => {
     setSelectedAirportIata(iata);
     setViewMode('airport');
+    setDetailFilter('ALL');
     setPage(1);
   };
+
 
   const handleBackToContinents = () => {
     setSelectedAirportIata(null);
     setViewMode('continents');
+    setDetailFilter('ALL');
     setPage(1);
     setSearchPage(1);
   };
+
 
   const openSearchModal = () => {
     setDraftFilters({ ...appliedFilters });
@@ -640,14 +666,16 @@ export function Contingencies() {
 
       <main className="min-h-0 flex-1 overflow-hidden px-6 py-5">
         <div className="mx-auto flex h-full w-full max-w-[1760px] flex-col gap-5 overflow-hidden">
-          <section className="flex-shrink-0 rounded-xl border border-panel-border bg-panel-bg-subtle p-4 shadow-sm">
-            <div className="flex flex-wrap items-end justify-between gap-4">
-              <div className="w-full max-w-[320px]">
+          <section className="flex-shrink-0 rounded-xl border border-panel-border bg-panel-bg-subtle p-5 shadow-sm">
+            <div className="grid gap-5 xl:grid-cols-[320px,1fr] xl:items-start">
+              <div className="rounded-lg border border-panel-border bg-panel-bg px-4 py-4">
                 <DatePicker datePickerType="single" value={formatDateValue(selectedDate)} onChange={(dates) => {
                   const nextDate = dates[0];
                   if (nextDate) {
                     hasManualDateSelectionRef.current = true;
                     setSelectedDate(new Date(nextDate));
+                    setSelectedAirportIata(null);
+                    setViewMode('continents');
                   }
                 }}>
                   <DatePickerInput id="selected-date" labelText="Fecha programada" />
@@ -655,16 +683,16 @@ export function Contingencies() {
               </div>
 
               <div className="flex flex-wrap items-center justify-end gap-2">
-                <Button kind="secondary" size="sm" onClick={resetToToday}>
+                <Button type="button" kind="secondary" size="sm" onClick={resetToToday}>
                   Mostrar vuelos programados de hoy
                 </Button>
-                <Button kind="secondary" size="sm" aria-label="Búsqueda especializada" onClick={openSearchModal}>
+                <Button type="button" kind="secondary" size="sm" aria-label="Búsqueda especializada" onClick={openSearchModal}>
                   Búsqueda especializada
                 </Button>
               </div>
             </div>
 
-            <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-panel-border pt-4">
+            <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-panel-border pt-5">
               <Tag type="gray">Total: {summary.total}</Tag>
               <Tag type="green">Preparados: {summary.preparado}</Tag>
               <Tag type="blue">En vuelo: {summary.enVuelo}</Tag>
@@ -677,6 +705,7 @@ export function Contingencies() {
               )}
             </div>
           </section>
+
 
           {!hasCancelablePeriodSimulation && (
             <div className="max-w-3xl flex-shrink-0">
@@ -733,15 +762,15 @@ export function Contingencies() {
                 ) : (
                   <>
                     <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-panel-border bg-panel-bg">
-                      <table className="w-full min-w-[1120px] border-separate border-spacing-0 text-sm">
+                      <table className="w-full min-w-[1180px] border-separate border-spacing-0 text-sm">
                         <thead className="sticky top-0 z-10 bg-panel-bg-subtle text-left text-xs uppercase tracking-wide text-panel-text-faint">
                           <tr>
                             <th className="border-b border-panel-border px-4 py-3">Código</th>
                             <th className="border-b border-panel-border px-4 py-3">Fecha</th>
                             <th className="border-b border-panel-border px-4 py-3">Origen</th>
                             <th className="border-b border-panel-border px-4 py-3">Destino</th>
-                            <th className="border-b border-panel-border px-4 py-3">Salida local (origen)</th>
-                            <th className="border-b border-panel-border px-4 py-3">Llegada local (destino)</th>
+                            <th className="border-b border-panel-border px-4 py-3">Salida UTC</th>
+                            <th className="border-b border-panel-border px-4 py-3">Llegada UTC</th>
                             <th className="border-b border-panel-border px-4 py-3">Capacidad</th>
                             <th className="border-b border-panel-border px-4 py-3">Estado</th>
                             <th className="border-b border-panel-border px-4 py-3">Acción</th>
@@ -750,17 +779,15 @@ export function Contingencies() {
                         <tbody>
                           {paginatedSearchResults.map((row) => {
                             const canCancel = canCancelOccurrence(row);
+                            const destinationAirport = airportByIata.get(row.destino);
                             return (
                               <tr key={row.key} className="border-b border-panel-border last:border-b-0 hover:bg-panel-hover">
                                 <td className="whitespace-nowrap px-5 py-3.5 font-mono text-xs font-semibold tracking-wide">{row.code}</td>
                                 <td className="whitespace-nowrap px-5 py-3.5">{formatDateLabel(selectedDate)}</td>
                                 <td className="whitespace-nowrap px-5 py-3.5">{row.origen}</td>
-                                <td className="whitespace-nowrap px-5 py-3.5">{row.destino}</td>
-                                <td className="whitespace-nowrap px-5 py-3.5">{row.salidaLocal}</td>
-                                <td className="whitespace-nowrap px-5 py-3.5">
-                                  {row.llegadaLocal}
-                                  {row.llegadaLocalDayOffset > 0 ? ` (+${row.llegadaLocalDayOffset} día${row.llegadaLocalDayOffset > 1 ? 's' : ''})` : ''}
-                                </td>
+                                <td className="whitespace-nowrap px-5 py-3.5">{row.destino} - {destinationAirport?.pais ?? 'Sin país'}</td>
+                                <td className="whitespace-nowrap px-5 py-3.5">{formatUtcTableValue(row.salidaUTC)}</td>
+                                <td className="whitespace-nowrap px-5 py-3.5">{formatUtcTableValue(row.llegadaUTC)}</td>
                                 <td className="whitespace-nowrap px-5 py-3.5">{row.capacidad}</td>
                                 <td className="whitespace-nowrap px-5 py-3.5">
                                   <Tag type={row.estado === 'CANCELADO' ? 'red' : row.estado === 'EN VUELO' ? 'blue' : row.estado === 'FINALIZADO' ? 'purple' : 'green'}>
@@ -769,6 +796,7 @@ export function Contingencies() {
                                 </td>
                                 <td className="whitespace-nowrap px-5 py-3.5">
                                   <Button
+                                    type="button"
                                     size="sm"
                                     kind="danger"
                                     disabled={!canCancel}
@@ -782,6 +810,7 @@ export function Contingencies() {
                           })}
                         </tbody>
                       </table>
+
                     </div>
 
                     <div className="mt-4 flex justify-end">
@@ -816,34 +845,20 @@ export function Contingencies() {
                       <span className="font-medium text-panel-text">{selectedAirportDetails.iata}</span>
                     </nav>
                     <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                      <h2 className="font-mono text-2xl font-semibold tracking-wide text-panel-text">{selectedAirportDetails.iata}</h2>
+                      <h2 className="font-mono text-3xl font-semibold tracking-wide text-panel-text">{selectedAirportDetails.iata}</h2>
                       <span className="text-base text-panel-text-faint">{selectedAirportDetails.ciudad}, {selectedAirportDetails.pais}</span>
                     </div>
-                    <p className="mt-2 text-sm text-panel-text-faint">
-                      Los estados se calculan con la hora local del aeropuerto. Los vuelos preparados se muestran primero para facilitar su cancelación.
+                    <p className="mt-2 max-w-3xl text-sm text-panel-text-faint">
+                      Compara la salida y la llegada en UTC contra la hora simulada global para validar el estado del vuelo y decidir si aún corresponde cancelarlo.
                     </p>
                   </div>
-                  <Button kind="secondary" size="sm" onClick={handleBackToContinents}>Volver a continentes</Button>
+                  <div className="flex flex-wrap gap-2">
+                    <Button type="button" kind="secondary" size="sm" onClick={resetToToday}>Mostrar vuelos programados de hoy</Button>
+                    <Button type="button" kind="secondary" size="sm" onClick={handleBackToContinents}>Volver a continentes</Button>
+                  </div>
                 </div>
 
-                {hasValidSimulationTime && (
-                  <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-panel-border bg-panel-bg-subtle px-4 py-3">
-                    <div>
-                      <p className="text-xs uppercase tracking-wide text-panel-text-faint">Hora local simulada en {selectedAirportDetails.iata}</p>
-                      <p className="mt-1 text-lg font-semibold text-panel-text">
-                        {formatSimulationMomentAtOffset(referenceTimeMinutes, selectedAirportDetails.gmt_offset)}
-                        <span className="ml-2 text-sm font-normal text-panel-text-faint">
-                          ({formatUtcOffset(selectedAirportDetails.gmt_offset)})
-                        </span>
-                      </p>
-                    </div>
-                    <p className="max-w-xl text-sm text-panel-text-faint">
-                      La cabecera usa UTC; las columnas de salida y llegada muestran la hora local de cada aeropuerto.
-                    </p>
-                  </div>
-                )}
-
-                <div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <div className="mb-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                   <div className="rounded-lg border border-panel-border bg-panel-bg-subtle px-4 py-3">
                     <p className="text-xs uppercase tracking-wide text-panel-text-faint">Código IATA</p>
                     <p className="mt-1 font-mono text-lg font-semibold tracking-wide text-panel-text">{selectedAirportDetails.iata}</p>
@@ -857,25 +872,39 @@ export function Contingencies() {
                     <p className="mt-1 text-lg font-semibold text-panel-text">{airportDetailOccurrences.length}</p>
                   </div>
                   <div className="rounded-lg border border-panel-border bg-panel-bg-subtle px-4 py-3">
-                    <p className="text-xs uppercase tracking-wide text-panel-text-faint">Preparados para cancelar</p>
-                    <div className="mt-2">
-                      <Tag type="green">
-                        {airportDetailOccurrences.filter((row) => row.estado === 'PREPARADO').length}
-                      </Tag>
+                    <p className="text-xs uppercase tracking-wide text-panel-text-faint">Hora simulada global</p>
+                    <p className="mt-1 text-lg font-semibold text-panel-text">
+                      {hasValidSimulationTime ? `${formatSimulationMoment(referenceTimeMinutes)} UTC` : 'No disponible'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mb-5 rounded-lg border border-panel-border bg-panel-bg-subtle px-4 py-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex flex-wrap gap-2">
+                      <Button type="button" size="sm" kind={detailFilter === 'ALL' ? 'primary' : 'secondary'} onClick={() => setDetailFilter('ALL')}>Tabla maestra</Button>
+                      <Button type="button" size="sm" kind={detailFilter === 'PREPARADO' ? 'primary' : 'secondary'} onClick={() => setDetailFilter('PREPARADO')}>Programados</Button>
+                      <Button type="button" size="sm" kind={detailFilter === 'FINALIZADO' ? 'primary' : 'secondary'} onClick={() => setDetailFilter('FINALIZADO')}>Finalizados</Button>
+                      <Button type="button" size="sm" kind={detailFilter === 'CANCELADO' ? 'primary' : 'secondary'} onClick={() => setDetailFilter('CANCELADO')}>Cancelados</Button>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Tag type="green">Programados: {airportDetailSummary.preparado}</Tag>
+                      <Tag type="purple">Finalizados: {airportDetailSummary.finalizado}</Tag>
+                      <Tag type="red">Cancelados: {airportDetailSummary.cancelado}</Tag>
                     </div>
                   </div>
                 </div>
 
                 <div className="min-h-0 flex-1 overflow-auto rounded-xl border border-panel-border bg-panel-bg shadow-sm">
-                  <table className="w-full min-w-[1180px] border-separate border-spacing-0 text-sm">
+                  <table className="w-full min-w-[1320px] border-separate border-spacing-0 text-sm">
                     <thead className="sticky top-0 z-10 bg-panel-bg-subtle text-left text-xs uppercase tracking-wide text-panel-text-faint">
                       <tr>
                         <th className="border-b border-panel-border px-5 py-3.5">Código</th>
                         <th className="border-b border-panel-border px-5 py-3.5">Fecha</th>
                         <th className="border-b border-panel-border px-5 py-3.5">Origen</th>
                         <th className="border-b border-panel-border px-5 py-3.5">Destino</th>
-                        <th className="border-b border-panel-border px-5 py-3.5">Salida local ({selectedAirportDetails.iata})</th>
-                        <th className="border-b border-panel-border px-5 py-3.5">Llegada local (destino)</th>
+                        <th className="border-b border-panel-border px-5 py-3.5">Salida UTC</th>
+                        <th className="border-b border-panel-border px-5 py-3.5">Llegada UTC</th>
                         <th className="border-b border-panel-border px-5 py-3.5">Capacidad</th>
                         <th className="border-b border-panel-border px-5 py-3.5">Estado</th>
                         <th className="border-b border-panel-border px-5 py-3.5 text-center">Acción</th>
@@ -885,23 +914,21 @@ export function Contingencies() {
                       {paginatedAirportDetailOccurrences.length === 0 ? (
                         <tr>
                           <td colSpan={9} className="px-5 py-10 text-center text-panel-text-faint">
-                            No hay vuelos de salida para este aeropuerto en la fecha seleccionada.
+                            No hay vuelos para el filtro seleccionado en este aeropuerto y en la fecha indicada.
                           </td>
                         </tr>
                       ) : (
                         paginatedAirportDetailOccurrences.map((row) => {
                           const canCancel = canCancelOccurrence(row);
+                          const destinationAirport = airportByIata.get(row.destino);
                           return (
                             <tr key={row.key} className="border-b border-panel-border transition-colors last:border-b-0 hover:bg-panel-hover">
                               <td className="whitespace-nowrap border-b border-panel-border px-5 py-3.5 font-mono text-xs font-semibold tracking-wide">{row.code}</td>
                               <td className="whitespace-nowrap border-b border-panel-border px-5 py-3.5">{formatDateLabel(selectedDate)}</td>
                               <td className="whitespace-nowrap border-b border-panel-border px-5 py-3.5 font-medium">{row.origen}</td>
-                              <td className="whitespace-nowrap border-b border-panel-border px-5 py-3.5 font-medium">{row.destino}</td>
-                              <td className="whitespace-nowrap border-b border-panel-border px-5 py-3.5">{row.salidaLocal}</td>
-                              <td className="whitespace-nowrap border-b border-panel-border px-5 py-3.5">
-                                {row.llegadaLocal}
-                                {row.llegadaLocalDayOffset > 0 ? ` (+${row.llegadaLocalDayOffset} día${row.llegadaLocalDayOffset > 1 ? 's' : ''})` : ''}
-                              </td>
+                              <td className="whitespace-nowrap border-b border-panel-border px-5 py-3.5 font-medium">{row.destino} - {destinationAirport?.pais ?? 'Sin país'}</td>
+                              <td className="whitespace-nowrap border-b border-panel-border px-5 py-3.5">{formatUtcTableValue(row.salidaUTC)}</td>
+                              <td className="whitespace-nowrap border-b border-panel-border px-5 py-3.5">{formatUtcTableValue(row.llegadaUTC)}</td>
                               <td className="whitespace-nowrap border-b border-panel-border px-5 py-3.5">{row.capacidad}</td>
                               <td className="whitespace-nowrap border-b border-panel-border px-5 py-3.5">
                                 <Tag type={row.estado === 'CANCELADO' ? 'red' : row.estado === 'EN VUELO' ? 'blue' : row.estado === 'FINALIZADO' ? 'purple' : 'green'}>
@@ -910,6 +937,7 @@ export function Contingencies() {
                               </td>
                               <td className="whitespace-nowrap border-b border-panel-border px-5 py-3.5 text-center">
                                 <Button
+                                  type="button"
                                   size="sm"
                                   kind="danger"
                                   disabled={!canCancel}
@@ -928,7 +956,7 @@ export function Contingencies() {
 
                 <div className="mt-4 flex justify-end">
                   <Pagination
-                    totalItems={airportDetailOccurrences.length}
+                    totalItems={airportFilteredDetailOccurrences.length}
                     page={airportDetailSafePage}
                     pageSize={pageSize}
                     pageSizes={[25, 50, 100]}
@@ -943,6 +971,7 @@ export function Contingencies() {
                 </div>
               </div>
             ) : (
+
               <div className="grid h-full min-h-0 grid-cols-1 gap-5 overflow-auto p-5 xl:grid-cols-3">
                 {continentGroups.length === 0 ? (
                   <div className="col-span-full rounded-xl border border-panel-border bg-panel-bg-subtle p-8 text-center text-sm text-panel-text-faint">
@@ -956,16 +985,11 @@ export function Contingencies() {
                     >
                       <header className="border-b border-panel-border px-5 py-4">
                         <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <p className="text-xs font-medium uppercase tracking-[0.14em] text-panel-text-faint">Continente</p>
-                            <h2 className="mt-1 text-xl font-semibold tracking-tight text-panel-text">{group.label}</h2>
-                          </div>
+                          <h2 className="text-2xl font-semibold tracking-tight text-panel-text">{group.label}</h2>
                           <Tag type="gray">{group.airports.length} aeropuertos</Tag>
                         </div>
-                        <p className="mt-3 text-sm leading-5 text-panel-text-faint">
-                          Selecciona un código para revisar su programación detallada.
-                        </p>
                       </header>
+
 
                       <div className="min-h-0 flex-1 overflow-auto">
                         <table className="w-full table-fixed border-separate border-spacing-0 text-sm">
@@ -1033,8 +1057,9 @@ export function Contingencies() {
                 <div><span className="text-panel-text-faint">Fecha:</span> {confirmationRow.fecha}</div>
                 <div><span className="text-panel-text-faint">Origen:</span> {confirmationRow.origen}</div>
                 <div><span className="text-panel-text-faint">Destino:</span> {confirmationRow.destino}</div>
-                <div><span className="text-panel-text-faint">Salida local ({confirmationRow.origen}):</span> {confirmationRow.salidaLocal}</div>
-                <div><span className="text-panel-text-faint">Salida UTC:</span> {confirmationRow.salidaUTC}</div>
+                <div><span className="text-panel-text-faint">Salida UTC:</span> {formatUtcTableValue(confirmationRow.salidaUTC)}</div>
+                <div><span className="text-panel-text-faint">Llegada UTC:</span> {formatUtcTableValue(confirmationRow.llegadaUTC)}</div>
+
               </div>
               <div className="mt-4 rounded border border-red-200 bg-red-50 p-3 text-red-800">
                 La cancelación provocará la replanificación de las maletas asignadas.
