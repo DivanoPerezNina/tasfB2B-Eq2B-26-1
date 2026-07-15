@@ -98,10 +98,28 @@ function getContinentLabel(continent: number | undefined) {
 
 export function Contingencies() {
   const { vuelosBFF, aeropuertosBFF, isLoading, error } = useDomain();
-  const { fase, tiempoSimUTC, simulationTime, cancelarVuelo } = useSimulation();
+  const {
+    fase,
+    tiempoSimUTC,
+    simulationTime,
+    cancelarVuelo,
+    config,
+    lastValidTick,
+  } = useSimulation();
 
   const hasActiveSimulation = fase === 'ejecutando' || fase === 'pausado' || fase === 'calentando';
-  const referenceTimeMinutes = tiempoSimUTC > 0 ? tiempoSimUTC : Math.floor((simulationTime?.getTime() ?? Date.now()) / 60000);
+  const hasCancelablePeriodSimulation =
+    config.scenario === 'period' && (fase === 'ejecutando' || fase === 'pausado');
+  const lastValidSimulationMinute = lastValidTick?.tiempo_sim_utc;
+  const referenceTimeMinutes =
+    typeof lastValidSimulationMinute === 'number' &&
+    Number.isFinite(lastValidSimulationMinute) &&
+    lastValidSimulationMinute > 0
+      ? lastValidSimulationMinute
+      : tiempoSimUTC > 0
+        ? tiempoSimUTC
+        : Math.floor(simulationTime.getTime() / 60000);
+  const hasValidSimulationTime = Number.isFinite(referenceTimeMinutes) && referenceTimeMinutes > 0;
 
   const initialDate = useMemo(() => {
     const base = simulationTime && !Number.isNaN(simulationTime.getTime()) && hasActiveSimulation
@@ -510,8 +528,22 @@ export function Contingencies() {
     setIsSearchModalOpen(false);
   };
 
+  const canCancelOccurrence = (row: FlightOccurrence) =>
+    hasCancelablePeriodSimulation &&
+    hasValidSimulationTime &&
+    row.estado === 'PREPARADO' &&
+    row.salidaUTC > referenceTimeMinutes &&
+    !cancelledKeys.has(row.key) &&
+    pendingCancellationKey === null;
+
   const handleCancelConfirm = async () => {
-    if (!confirmationRow || !hasActiveSimulation) {
+    if (!confirmationRow || !canCancelOccurrence(confirmationRow)) {
+      setFeedback({
+        kind: 'info',
+        title: 'Cancelación no disponible',
+        detail: 'El vuelo ya no está preparado o no existe una simulación de Periodo ejecutándose o pausada.',
+      });
+      setConfirmationRow(null);
       return;
     }
 
@@ -590,13 +622,21 @@ export function Contingencies() {
             <Tag type="red">Cancelados: {summary.cancelado}</Tag>
           </div>
 
-          {!hasActiveSimulation && (
-            <InlineNotification
-              kind="info"
-              lowContrast
-              title="No hay una simulación activa"
-              subtitle="Inicia Periodo o Colapso para cancelar vuelos."
-            />
+          {!hasCancelablePeriodSimulation && (
+            <div className="max-w-2xl">
+              <InlineNotification
+                kind="info"
+                lowContrast
+                title="Cancelación no disponible"
+                subtitle={
+                  config.scenario !== 'period'
+                    ? 'Inicia una simulación de Periodo (3D, 5D o 7D) para cancelar vuelos.'
+                    : fase === 'calentando'
+                      ? 'Espera a que termine el calentamiento de la simulación de Periodo.'
+                      : 'Ejecuta o pausa la simulación de Periodo para cancelar vuelos preparados.'
+                }
+              />
+            </div>
           )}
 
           {isLoading && (
@@ -653,7 +693,7 @@ export function Contingencies() {
                         </thead>
                         <tbody>
                           {paginatedSearchResults.map((row) => {
-                            const canCancel = hasActiveSimulation && row.estado === 'PREPARADO' && !pendingCancellationKey;
+                            const canCancel = canCancelOccurrence(row);
                             return (
                               <tr key={row.key} className="border-b border-panel-border last:border-b-0 hover:bg-panel-hover">
                                 <td className="px-4 py-3 font-mono text-xs">{row.code}</td>
@@ -768,7 +808,7 @@ export function Contingencies() {
                         </tr>
                       ) : (
                         paginatedAirportDetailOccurrences.map((row) => {
-                          const canCancel = hasActiveSimulation && row.estado === 'PREPARADO' && !pendingCancellationKey;
+                          const canCancel = canCancelOccurrence(row);
                           return (
                             <tr key={row.key} className="border-b border-panel-border last:border-b-0 hover:bg-panel-hover">
                               <td className="px-4 py-3 font-mono text-xs">{row.code}</td>
@@ -918,7 +958,11 @@ export function Contingencies() {
             </div>
             <div className="mt-6 flex justify-end gap-3">
               <Button kind="secondary" onClick={() => setConfirmationRow(null)}>Cancelar</Button>
-              <Button kind="danger" onClick={handleCancelConfirm} disabled={pendingCancellationKey === confirmationRow.key}>
+              <Button
+                kind="danger"
+                onClick={handleCancelConfirm}
+                disabled={!canCancelOccurrence(confirmationRow)}
+              >
                 {pendingCancellationKey === confirmationRow.key ? 'Cancelando…' : 'Confirmar cancelación'}
               </Button>
             </div>
