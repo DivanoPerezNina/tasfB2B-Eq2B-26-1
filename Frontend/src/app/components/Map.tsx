@@ -271,7 +271,7 @@ export const Map = memo(function Map({
     config,
     visualCancellations,
   } = useSimulation();
-  const { airports, aeropuertosBackend, vuelosBackend } = useDomain();
+  const { airports, aeropuertosBackend, vuelosBackend, aeropuertosBFF } = useDomain();
 
   // Solo hay aviones reales cuando la simulación ha avanzado al menos un tick
   const simHasStarted = tiempoSimUTC > 0;
@@ -576,12 +576,14 @@ export const Map = memo(function Map({
       {hoveredAirport && (() => {
         const ap = airports.find(a => a.id === hoveredAirport);
         if (!ap) return null;
+        const airportDetails = aeropuertosBFF.find(item => item.iata === ap.code);
+        const country = airportDetails?.pais ?? 'País no disponible';
         const { occ, cap, pct } = getLiveOccupancy(ap.code, { occ: ap.currentOccupancy, cap: ap.warehouseCapacity });
         const semColor = pct > 80 ? '#ef4444' : pct > 60 ? '#f59e0b' : '#10b981';
         return (
           <div className="absolute left-1/2 top-14 z-20 -translate-x-1/2 rounded-lg backdrop-blur px-4 py-3 shadow-xl pointer-events-none border" style={{ backgroundColor: 'var(--map-overlay-bg)', borderColor: 'var(--panel-border)' }}>
             <p className="text-sm font-medium" style={{ color: 'var(--map-overlay-text)' }}>{ap.code} — {ap.city}</p>
-            <p className="text-xs mt-0.5" style={{ color: 'var(--map-overlay-text-muted)' }}>{ap.name}</p>
+            <p className="text-xs mt-0.5" style={{ color: 'var(--map-overlay-text-muted)' }}>{country} · {ap.name}</p>
             <div className="flex gap-4 mt-1.5">
               {[
                 { label: 'Capacidad', val: cap },

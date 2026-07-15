@@ -6,7 +6,7 @@ import {
   getContinentLabel,
 } from '../data/envios';
 import { Map } from '../components/Map';
-import { VisualCancellation, Vuelo } from '../types';
+import { Vuelo } from '../types';
 import { format } from 'date-fns';
 import { Button, Search as CarbonSearch } from '@carbon/react';
 import { Pause, Play, StopFilledAlt, Renew } from '@carbon/icons-react';
@@ -127,7 +127,6 @@ export function UnifiedDashboard() {
     fase, contadores, progresoPct, warmupPct, simulationTime, tiempoSimUTC,
     collapseFailure, lastValidTick, config,
     pausarSimulacion, reanudarSimulacion, detenerSimulacion, resetear,
-    cancelarVuelo,
   } = useSimulation();
   const {
     airports,
@@ -145,10 +144,8 @@ export function UnifiedDashboard() {
   const [selectedVuelo, setSelectedVuelo] = useState<Vuelo | null>(null);
   const [panelOpen, setPanelOpen] = useState(true);
   const [showCompletion, setShowCompletion] = useState(false);
-  const [cancelStatus, setCancelStatus] = useState<'idle' | 'sending' | 'ok' | 'error'>('idle');
   const [warehouseQuery, setWarehouseQuery] = useState('');
   const [warehouseStatusFilter, setWarehouseStatusFilter] = useState<WarehouseStatusFilter>('all');
-  const [canceledFlights, setCanceledFlights] = useState<VisualCancellation[]>([]);
 
   // Show completion overlay when simulation finishes
   useEffect(() => {
@@ -159,71 +156,6 @@ export function UnifiedDashboard() {
   const selectedFlightKey = selectedVuelo
     ? `${selectedVuelo.idOrigen}-${selectedVuelo.idDestino}-${selectedVuelo.salidaUTC}`
     : undefined;
-
-  // Reiniciar el estado del botón de cancelar cuando cambia el vuelo seleccionado
-  useEffect(() => { setCancelStatus('idle'); }, [selectedFlightKey]);
-
-  // Cancela la ocurrencia (vuelo, día) del vuelo seleccionado en el día de sim
-  // actual. Identidad por ruta (origen→destino IATA) + salida UTC absoluta; el
-  // backend resuelve la ruta a su vueloIdx interno y re-rutea.
-  const handleCancelarVuelo = async () => {
-    console.log('[CANCELAR] click detectado');
-
-    if (!selectedVuelo) {
-      console.warn('[CANCELAR] No hay vuelo seleccionado');
-      return;
-    }
-
-    console.log('[CANCELAR] vuelo seleccionado:', selectedVuelo);
-
-    const orig = getAeropuertoById(selectedVuelo.idOrigen);
-    const dest = getAeropuertoById(selectedVuelo.idDestino);
-
-    console.log('[CANCELAR] origen:', orig);
-    console.log('[CANCELAR] destino:', dest);
-
-    if (!orig || !dest) {
-      console.warn('[CANCELAR] No se pudo resolver origen/destino');
-      setCancelStatus('error');
-      return;
-    }
-
-    setCancelStatus('sending');
-
-    const salidaDiaUTC = ((selectedVuelo.salidaUTC - orig.gmt * 60) % 1440 + 1440) % 1440;
-    const nowMin = lastValidTick?.tiempo_sim_utc ?? tiempoSimUTC ?? inicioSimMin;
-    const salidaAbs = Math.floor(nowMin / 1440) * 1440 + salidaDiaUTC;
-
-    console.log('[CANCELAR] payload enviado:', {
-      origen: orig.iata,
-      destino: dest.iata,
-      salidaUTC: salidaAbs,
-    });
-
-    const ok = await cancelarVuelo(orig.iata, dest.iata, salidaAbs);
-
-    console.log('[CANCELAR] respuesta backend ok:', ok);
-
-    if (ok) {
-      const salidaDia = normalizarMinutoDia(selectedVuelo.salidaUTC);
-      const llegadaDia = normalizarMinutoDia(selectedVuelo.llegadaUTC);
-      const duracion = duracionMinDia(salidaDia, llegadaDia);
-
-      setCanceledFlights(prev => [
-        {
-          id: `${orig.iata}-${dest.iata}-${salidaAbs}-${Date.now()}`,
-          origen: orig.iata,
-          destino: dest.iata,
-          salidaUTC: salidaAbs,
-          llegadaUTC: salidaAbs + duracion,
-          createdAtUTC: nowMin,
-        },
-        ...prev,
-      ].slice(0, 20));
-    }
-
-    setCancelStatus(ok ? 'ok' : 'error');
-  };
 
   const handleFlightSelect = (vuelo: Vuelo) => {
     setSelectedVuelo(vuelo);
@@ -901,23 +833,6 @@ export function UnifiedDashboard() {
                       </p>
                     )}
                   </div>
-                  {(config.scenario === 'period' || config.scenario === 'collapse') && (fase === 'ejecutando' || fase === 'pausado') && (
-                    <Button
-                      kind="danger"
-                      size="sm"
-                      disabled={cancelStatus === 'sending' || cancelStatus === 'ok'}
-                      onClick={handleCancelarVuelo}
-                      style={{ width: '100%', maxWidth: 'none' }}
-                    >
-                      {cancelStatus === 'sending' ? 'Cancelando…'
-                        : cancelStatus === 'ok' ? '✓ Vuelo cancelado'
-                        : cancelStatus === 'error' ? '✕ No se pudo cancelar — reintentar'
-                        : 'Cancelar este vuelo'}
-                    </Button>
-                  )}
-                  <Button kind="ghost" size="sm" onClick={() => setSelectedVuelo(null)} style={{ width: '100%', maxWidth: 'none' }}>
-                    Cerrar vuelo
-                  </Button>
                 </div>
               );
             })() : (
@@ -1032,7 +947,6 @@ export function UnifiedDashboard() {
           onAirportSelect={(id) => { setSelectedAirportId(id); setSelectedVuelo(null); }}
           onFlightSelect={handleFlightSelect}
           selectedFlightKey={selectedFlightKey}
-          canceledFlights={canceledFlights}
           warehouseCodeFilter={warehouseQuery}
           warehouseStatusFilter={warehouseStatusFilter}
         />
