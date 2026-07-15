@@ -30,6 +30,7 @@ export function Navigation({ collapsed = false, onToggleCollapsed }: NavigationP
 
   const links = [
     { path: '/', label: 'Simulación' },
+    { path: '/cancelaciones', label: 'Cancelaciones' },
     { path: '/configuracion', label: 'Configuración' },
     { path: '/datos', label: 'Ingreso de datos' },
   ];
