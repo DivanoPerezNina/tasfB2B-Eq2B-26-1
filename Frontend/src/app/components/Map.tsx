@@ -261,7 +261,16 @@ export const Map = memo(function Map({
   warehouseCodeFilter = '',
   warehouseStatusFilter = 'all',
 }: MapProps) {
-  const { isRunning, aeropuertosState, tiempoSimUTC, contadores, planTramos, planVisualCargado, config } = useSimulation();
+  const {
+    isRunning,
+    aeropuertosState,
+    tiempoSimUTC,
+    contadores,
+    planTramos,
+    planVisualCargado,
+    config,
+    visualCancellations,
+  } = useSimulation();
   const { airports, aeropuertosBackend, vuelosBackend } = useDomain();
 
   // Solo hay aviones reales cuando la simulación ha avanzado al menos un tick
@@ -390,9 +399,17 @@ export const Map = memo(function Map({
   const activeFlights = activeFlightResult.flights;
   const activeFlightTotal = activeFlightResult.totalActive;
 
+  const allVisualCancellations = useMemo(() => {
+    const unique = new globalThis.Map<string, VisualCancellation>();
+    [...visualCancellations, ...canceledFlights].forEach((item) => {
+      unique.set(item.id, item);
+    });
+    return Array.from(unique.values());
+  }, [canceledFlights, visualCancellations]);
+
   const activeCancellations = useMemo(() => {
     if (!simHasStarted) return [];
-    return canceledFlights
+    return allVisualCancellations
       .filter(c => smoothMinute >= c.createdAtUTC && smoothMinute <= c.llegadaUTC)
       .map(c => {
         const from = airports.find(a => a.code === c.origen);
@@ -400,7 +417,7 @@ export const Map = memo(function Map({
         return from && to ? { ...c, from, to } : null;
       })
       .filter(Boolean) as Array<VisualCancellation & { from: Airport; to: Airport }>;
-  }, [canceledFlights, smoothMinute, simHasStarted, airports]);
+  }, [allVisualCancellations, smoothMinute, simHasStarted, airports]);
 
   const handleZoomIn = useCallback(() => setZoom(z => Math.min(z * 1.5, 8)), []);
   const handleZoomOut = useCallback(() => setZoom(z => Math.max(z / 1.5, 1)), []);

@@ -1,10 +1,9 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Button,
   DatePicker,
   DatePickerInput,
   InlineNotification,
-  Modal,
   Pagination,
   Select,
   SelectItem,
@@ -133,6 +132,24 @@ function formatUtcTableValue(epochMinutes: number) {
   }).format(new Date(epochMinutes * 60 * 1000));
 }
 
+function formatUtcDate(epochMinutes: number) {
+  return new Intl.DateTimeFormat('es-PE', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    timeZone: 'UTC',
+  }).format(new Date(epochMinutes * 60 * 1000));
+}
+
+function formatUtcTime(epochMinutes: number) {
+  return new Intl.DateTimeFormat('es-PE', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: 'UTC',
+  }).format(new Date(epochMinutes * 60 * 1000));
+}
+
 export function Contingencies() {
   const { vuelosBFF, aeropuertosBFF, isLoading, error } = useDomain();
   const {
@@ -140,6 +157,8 @@ export function Contingencies() {
     tiempoSimUTC,
     simulationTime,
     cancelarVuelo,
+    registrarCancelacionVisual,
+    visualCancellations,
     config,
     lastValidTick,
   } = useSimulation();
@@ -184,8 +203,7 @@ export function Contingencies() {
   const [cancelledKeys, setCancelledKeys] = useState<Set<string>>(new Set());
   const [confirmationRow, setConfirmationRow] = useState<FlightOccurrence | null>(null);
   const [feedback, setFeedback] = useState<{ kind: 'success' | 'error' | 'info'; title: string; detail: string } | null>(null);
-  const hasManualDateSelectionRef = useRef(false);
-  const wasActiveRef = useRef(hasActiveSimulation);
+  const [isDateFilterApplied, setIsDateFilterApplied] = useState(false);
 
   // Search modal state
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
@@ -210,31 +228,30 @@ export function Contingencies() {
   }, [appliedFilters, searchPageSize]);
 
   useEffect(() => {
-    if (hasManualDateSelectionRef.current || !hasActiveSimulation || !simulationTime) {
-      wasActiveRef.current = hasActiveSimulation;
+    if (isDateFilterApplied || !hasActiveSimulation || !simulationTime) {
       return;
     }
 
-    if (!wasActiveRef.current) {
-      const next = new Date(simulationTime);
-      next.setHours(12, 0, 0, 0);
-      setSelectedDate((current) => {
-        const currentKey = `${current.getFullYear()}-${current.getMonth()}-${current.getDate()}`;
-        const nextKey = `${next.getFullYear()}-${next.getMonth()}-${next.getDate()}`;
-        return currentKey === nextKey ? current : next;
-      });
-    }
-
-    wasActiveRef.current = hasActiveSimulation;
-  }, [hasActiveSimulation, simulationTime]);
-
-  const resetToToday = () => {
-    hasManualDateSelectionRef.current = true;
-    const next = new Date(initialDate);
+    const next = new Date(simulationTime);
     next.setHours(12, 0, 0, 0);
+    setSelectedDate((current) => {
+      const currentKey = `${current.getFullYear()}-${current.getMonth()}-${current.getDate()}`;
+      const nextKey = `${next.getFullYear()}-${next.getMonth()}-${next.getDate()}`;
+      return currentKey === nextKey ? current : next;
+    });
+  }, [hasActiveSimulation, isDateFilterApplied, simulationTime]);
+
+  const clearDateFilter = () => {
+    const base = hasActiveSimulation && simulationTime && !Number.isNaN(simulationTime.getTime())
+      ? simulationTime
+      : initialDate;
+    const next = new Date(base);
+    next.setHours(12, 0, 0, 0);
+    setIsDateFilterApplied(false);
     setSelectedDate(next);
     setSelectedAirportIata(null);
     setViewMode('continents');
+    setDetailFilter('ALL');
     setPage(1);
     setSearchPage(1);
   };
@@ -265,7 +282,11 @@ export function Contingencies() {
       }
 
       const key = `${vuelo.id}-${selectedDateValue}-${salidaUTC}`;
-      const isCancelled = cancelledKeys.has(key);
+      const isCancelled = cancelledKeys.has(key) || visualCancellations.some((item) => (
+        item.origen === vuelo.origen_iata
+        && item.destino === vuelo.destino_iata
+        && item.salidaUTC === salidaUTC
+      ));
       let estado: FlightStatus = 'PREPARADO';
 
       if (isCancelled) {
@@ -310,7 +331,7 @@ export function Contingencies() {
         llegadaUTC,
       }];
     });
-  }, [aeropuertosBFF, cancelledKeys, referenceTimeMinutes, selectedDate, vuelosBFF]);
+  }, [aeropuertosBFF, cancelledKeys, referenceTimeMinutes, selectedDate, visualCancellations, vuelosBFF]);
 
   const filteredOccurrences = useMemo(() => {
     const normalizedCode = flightCodeFilter.trim().toUpperCase();
@@ -626,6 +647,14 @@ export function Contingencies() {
 
     if (ok) {
       setCancelledKeys((prev) => new Set(prev).add(confirmationRow.key));
+      registrarCancelacionVisual({
+        id: confirmationRow.key,
+        origen: confirmationRow.origenIata,
+        destino: confirmationRow.destinoIata,
+        salidaUTC: confirmationRow.salidaUTC,
+        llegadaUTC: confirmationRow.llegadaUTC,
+        createdAtUTC: referenceTimeMinutes,
+      });
       setFeedback({
         kind: 'success',
         title: 'Cancelación confirmada',
@@ -666,48 +695,71 @@ export function Contingencies() {
 
       <main className="min-h-0 flex-1 overflow-hidden px-6 py-5">
         <div className="mx-auto flex h-full w-full max-w-[1760px] flex-col gap-5 overflow-hidden">
-          <section className="flex-shrink-0 rounded-xl border border-panel-border bg-panel-bg-subtle p-5 shadow-sm">
-            <div className="grid gap-5 xl:grid-cols-[320px,1fr] xl:items-start">
-              <div className="rounded-lg border border-panel-border bg-panel-bg px-4 py-4">
-                <DatePicker datePickerType="single" value={formatDateValue(selectedDate)} onChange={(dates) => {
-                  const nextDate = dates[0];
-                  if (nextDate) {
-                    hasManualDateSelectionRef.current = true;
-                    setSelectedDate(new Date(nextDate));
-                    setSelectedAirportIata(null);
-                    setViewMode('continents');
-                  }
-                }}>
-                  <DatePickerInput id="selected-date" labelText="Fecha programada" />
-                </DatePicker>
-              </div>
+          {viewMode !== 'airport' && (
+            <section className="flex-shrink-0 rounded-xl border border-panel-border bg-panel-bg-subtle p-5 shadow-sm">
+              <div className="flex flex-wrap items-end justify-between gap-4">
+                <div className="flex flex-wrap items-end gap-3">
+                  <div className="w-full min-w-[280px] max-w-[340px]">
+                    <DatePicker datePickerType="single" value={formatDateValue(selectedDate)} onChange={(dates) => {
+                      const nextDate = dates[0];
+                      if (nextDate) {
+                        setIsDateFilterApplied(true);
+                        setSelectedDate(new Date(nextDate));
+                        setSelectedAirportIata(null);
+                        setViewMode('continents');
+                        setPage(1);
+                        setSearchPage(1);
+                      }
+                    }}>
+                      <DatePickerInput id="selected-date" labelText="Filtrar por fecha" />
+                    </DatePicker>
+                  </div>
 
-              <div className="flex flex-wrap items-center justify-end gap-2">
-                <Button type="button" kind="secondary" size="sm" onClick={resetToToday}>
-                  Mostrar vuelos programados de hoy
-                </Button>
-                <Button type="button" kind="secondary" size="sm" aria-label="Búsqueda especializada" onClick={openSearchModal}>
+                  {isDateFilterApplied && (
+                    <div className="inline-flex h-10 items-center gap-2 rounded-full border border-blue-500/50 bg-blue-500/10 px-4 text-sm text-panel-text">
+                      <span>Filtro aplicado: <strong>{formatDateLabel(selectedDate)}</strong></span>
+                      <button
+                        type="button"
+                        aria-label="Quitar filtro de fecha"
+                        title="Quitar filtro de fecha"
+                        className="flex h-6 w-6 items-center justify-center rounded-full text-lg leading-none text-panel-text-faint transition-colors hover:bg-panel-hover hover:text-panel-text"
+                        onClick={clearDateFilter}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <Button
+                  type="button"
+                  kind="secondary"
+                  size="sm"
+                  aria-label="Abrir búsqueda especializada"
+                  aria-expanded={isSearchModalOpen}
+                  onClick={openSearchModal}
+                >
                   Búsqueda especializada
                 </Button>
               </div>
-            </div>
 
-            <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-panel-border pt-5">
-              <Tag type="gray">Total: {summary.total}</Tag>
-              <Tag type="green">Preparados: {summary.preparado}</Tag>
-              <Tag type="blue">En vuelo: {summary.enVuelo}</Tag>
-              <Tag type="purple">Finalizados: {summary.finalizado}</Tag>
-              <Tag type="red">Cancelados: {summary.cancelado}</Tag>
-              {hasValidSimulationTime && (
-                <span className="ml-auto text-xs text-panel-text-faint">
-                  Hora simulada global: <strong className="font-medium text-panel-text">{formatSimulationMoment(referenceTimeMinutes)} UTC</strong>
-                </span>
-              )}
-            </div>
-          </section>
+              <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-panel-border pt-5">
+                <Tag type="gray">Total: {summary.total}</Tag>
+                <Tag type="green">Preparados: {summary.preparado}</Tag>
+                <Tag type="blue">En vuelo: {summary.enVuelo}</Tag>
+                <Tag type="purple">Finalizados: {summary.finalizado}</Tag>
+                <Tag type="red">Cancelados: {summary.cancelado}</Tag>
+                {hasValidSimulationTime && (
+                  <span className="ml-auto text-xs text-panel-text-faint">
+                    Hora simulada global: <strong className="font-medium text-panel-text">{formatSimulationMoment(referenceTimeMinutes)} UTC</strong>
+                  </span>
+                )}
+              </div>
+            </section>
+          )}
 
 
-          {!hasCancelablePeriodSimulation && (
+          {viewMode !== 'airport' && !hasCancelablePeriodSimulation && (
             <div className="max-w-3xl flex-shrink-0">
               <InlineNotification
                 kind="info"
@@ -833,9 +885,9 @@ export function Contingencies() {
               </div>
             ) : selectedAirportIata && selectedAirportDetails ? (
               <div className="flex h-full flex-col p-5">
-                <div className="mb-5 flex flex-wrap items-start justify-between gap-4 border-b border-panel-border pb-5">
+                <div className="mb-4 flex flex-wrap items-start justify-between gap-4 border-b border-panel-border pb-4">
                   <div className="min-w-0">
-                    <nav aria-label="Breadcrumb" className="mb-3 text-sm text-panel-text-faint">
+                    <nav aria-label="Breadcrumb" className="mb-2 text-sm text-panel-text-faint">
                       <button type="button" className="font-medium text-panel-text hover:underline" onClick={handleBackToContinents}>
                         Continentes
                       </button>
@@ -848,17 +900,11 @@ export function Contingencies() {
                       <h2 className="font-mono text-3xl font-semibold tracking-wide text-panel-text">{selectedAirportDetails.iata}</h2>
                       <span className="text-base text-panel-text-faint">{selectedAirportDetails.ciudad}, {selectedAirportDetails.pais}</span>
                     </div>
-                    <p className="mt-2 max-w-3xl text-sm text-panel-text-faint">
-                      Compara la salida y la llegada en UTC contra la hora simulada global para validar el estado del vuelo y decidir si aún corresponde cancelarlo.
-                    </p>
                   </div>
-                  <div className="flex flex-wrap gap-2">
-                    <Button type="button" kind="secondary" size="sm" onClick={resetToToday}>Mostrar vuelos programados de hoy</Button>
-                    <Button type="button" kind="secondary" size="sm" onClick={handleBackToContinents}>Volver a continentes</Button>
-                  </div>
+                  <Button type="button" kind="secondary" size="sm" onClick={handleBackToContinents}>Volver a continentes</Button>
                 </div>
 
-                <div className="mb-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                <div className="mb-4 grid gap-3 md:grid-cols-2 xl:grid-cols-[0.8fr,1.2fr,0.8fr,2.5fr]">
                   <div className="rounded-lg border border-panel-border bg-panel-bg-subtle px-4 py-3">
                     <p className="text-xs uppercase tracking-wide text-panel-text-faint">Código IATA</p>
                     <p className="mt-1 font-mono text-lg font-semibold tracking-wide text-panel-text">{selectedAirportDetails.iata}</p>
@@ -868,40 +914,26 @@ export function Contingencies() {
                     <p className="mt-1 font-semibold text-panel-text">{selectedAirportDetails.ciudad}, {selectedAirportDetails.pais}</p>
                   </div>
                   <div className="rounded-lg border border-panel-border bg-panel-bg-subtle px-4 py-3">
-                    <p className="text-xs uppercase tracking-wide text-panel-text-faint">Vuelos programados</p>
+                    <p className="text-xs uppercase tracking-wide text-panel-text-faint">Vuelos</p>
                     <p className="mt-1 text-lg font-semibold text-panel-text">{airportDetailOccurrences.length}</p>
                   </div>
                   <div className="rounded-lg border border-panel-border bg-panel-bg-subtle px-4 py-3">
-                    <p className="text-xs uppercase tracking-wide text-panel-text-faint">Hora simulada global</p>
-                    <p className="mt-1 text-lg font-semibold text-panel-text">
-                      {hasValidSimulationTime ? `${formatSimulationMoment(referenceTimeMinutes)} UTC` : 'No disponible'}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="mb-5 rounded-lg border border-panel-border bg-panel-bg-subtle px-4 py-4">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex flex-wrap gap-2">
+                    <p className="text-xs uppercase tracking-wide text-panel-text-faint">Vista de tabla</p>
+                    <div className="mt-2 flex flex-wrap gap-2">
                       <Button type="button" size="sm" kind={detailFilter === 'ALL' ? 'primary' : 'secondary'} onClick={() => setDetailFilter('ALL')}>Tabla maestra</Button>
-                      <Button type="button" size="sm" kind={detailFilter === 'PREPARADO' ? 'primary' : 'secondary'} onClick={() => setDetailFilter('PREPARADO')}>Programados</Button>
-                      <Button type="button" size="sm" kind={detailFilter === 'FINALIZADO' ? 'primary' : 'secondary'} onClick={() => setDetailFilter('FINALIZADO')}>Finalizados</Button>
-                      <Button type="button" size="sm" kind={detailFilter === 'CANCELADO' ? 'primary' : 'secondary'} onClick={() => setDetailFilter('CANCELADO')}>Cancelados</Button>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <Tag type="green">Programados: {airportDetailSummary.preparado}</Tag>
-                      <Tag type="purple">Finalizados: {airportDetailSummary.finalizado}</Tag>
-                      <Tag type="red">Cancelados: {airportDetailSummary.cancelado}</Tag>
+                      <Button type="button" size="sm" kind={detailFilter === 'PREPARADO' ? 'primary' : 'secondary'} onClick={() => setDetailFilter('PREPARADO')}>Programados ({airportDetailSummary.preparado})</Button>
+                      <Button type="button" size="sm" kind={detailFilter === 'FINALIZADO' ? 'primary' : 'secondary'} onClick={() => setDetailFilter('FINALIZADO')}>Finalizados ({airportDetailSummary.finalizado})</Button>
+                      <Button type="button" size="sm" kind={detailFilter === 'CANCELADO' ? 'primary' : 'secondary'} onClick={() => setDetailFilter('CANCELADO')}>Cancelados ({airportDetailSummary.cancelado})</Button>
                     </div>
                   </div>
                 </div>
 
                 <div className="min-h-0 flex-1 overflow-auto rounded-xl border border-panel-border bg-panel-bg shadow-sm">
-                  <table className="w-full min-w-[1320px] border-separate border-spacing-0 text-sm">
+                  <table className="w-full min-w-[1180px] border-separate border-spacing-0 text-sm">
                     <thead className="sticky top-0 z-10 bg-panel-bg-subtle text-left text-xs uppercase tracking-wide text-panel-text-faint">
                       <tr>
                         <th className="border-b border-panel-border px-5 py-3.5">Código</th>
-                        <th className="border-b border-panel-border px-5 py-3.5">Fecha</th>
-                        <th className="border-b border-panel-border px-5 py-3.5">Origen</th>
+                        <th className="border-b border-panel-border px-5 py-3.5">Fecha UTC</th>
                         <th className="border-b border-panel-border px-5 py-3.5">Destino</th>
                         <th className="border-b border-panel-border px-5 py-3.5">Salida UTC</th>
                         <th className="border-b border-panel-border px-5 py-3.5">Llegada UTC</th>
@@ -913,8 +945,8 @@ export function Contingencies() {
                     <tbody>
                       {paginatedAirportDetailOccurrences.length === 0 ? (
                         <tr>
-                          <td colSpan={9} className="px-5 py-10 text-center text-panel-text-faint">
-                            No hay vuelos para el filtro seleccionado en este aeropuerto y en la fecha indicada.
+                          <td colSpan={8} className="px-5 py-10 text-center text-panel-text-faint">
+                            No hay vuelos para la vista seleccionada en este aeropuerto y fecha.
                           </td>
                         </tr>
                       ) : (
@@ -924,11 +956,10 @@ export function Contingencies() {
                           return (
                             <tr key={row.key} className="border-b border-panel-border transition-colors last:border-b-0 hover:bg-panel-hover">
                               <td className="whitespace-nowrap border-b border-panel-border px-5 py-3.5 font-mono text-xs font-semibold tracking-wide">{row.code}</td>
-                              <td className="whitespace-nowrap border-b border-panel-border px-5 py-3.5">{formatDateLabel(selectedDate)}</td>
-                              <td className="whitespace-nowrap border-b border-panel-border px-5 py-3.5 font-medium">{row.origen}</td>
+                              <td className="whitespace-nowrap border-b border-panel-border px-5 py-3.5">{formatUtcDate(row.salidaUTC)}</td>
                               <td className="whitespace-nowrap border-b border-panel-border px-5 py-3.5 font-medium">{row.destino} - {destinationAirport?.pais ?? 'Sin país'}</td>
-                              <td className="whitespace-nowrap border-b border-panel-border px-5 py-3.5">{formatUtcTableValue(row.salidaUTC)}</td>
-                              <td className="whitespace-nowrap border-b border-panel-border px-5 py-3.5">{formatUtcTableValue(row.llegadaUTC)}</td>
+                              <td className="whitespace-nowrap border-b border-panel-border px-5 py-3.5 font-mono">{formatUtcTime(row.salidaUTC)}</td>
+                              <td className="whitespace-nowrap border-b border-panel-border px-5 py-3.5 font-mono">{formatUtcTime(row.llegadaUTC)}</td>
                               <td className="whitespace-nowrap border-b border-panel-border px-5 py-3.5">{row.capacidad}</td>
                               <td className="whitespace-nowrap border-b border-panel-border px-5 py-3.5">
                                 <Tag type={row.estado === 'CANCELADO' ? 'red' : row.estado === 'EN VUELO' ? 'blue' : row.estado === 'FINALIZADO' ? 'purple' : 'green'}>
@@ -954,7 +985,7 @@ export function Contingencies() {
                   </table>
                 </div>
 
-                <div className="mt-4 flex justify-end">
+                <div className="mt-3 flex justify-end">
                   <Pagination
                     totalItems={airportFilteredDetailOccurrences.length}
                     page={airportDetailSafePage}
@@ -1085,171 +1116,152 @@ export function Contingencies() {
         </div>
       )}
 
-      {/* Search Modal */}
-      <Modal
-        isOpen={isSearchModalOpen}
-        onRequestClose={cancelSearchModal}
-        modalHeading="Búsqueda especializada"
-        primaryButtonText="Aplicar filtros"
-        secondaryButtonText="Cancelar"
-        hasScrollingContent
-        size="lg"
-        onRequestSubmit={applySearchFilters}
-        onSecondarySubmit={cancelSearchModal}
-      >
-        <div className="space-y-6 pb-8">
-          {/* Row 1: Continent and Status */}
-          <div className="grid gap-4 md:grid-cols-2">
-            <Select
-              id="search-continent"
-              labelText="Continente"
-              value={draftFilters.continent === 'todos' ? 'todos' : String(draftFilters.continent)}
-              onChange={(e) => {
-                const strValue = e.target.value;
-                setDraftFilters((prev) => ({
-                  ...prev,
-                  continent: strValue === 'todos' ? 'todos' : (parseInt(strValue) as 1 | 2 | 3),
-                  originCountry: '',
-                  originAirport: '',
-                }));
-              }}
-            >
-              <SelectItem value="todos" text="Todos" />
-              <SelectItem value="1" text="América del Sur" />
-              <SelectItem value="2" text="Europa" />
-              <SelectItem value="3" text="Asia" />
-            </Select>
+      {isSearchModalOpen && (
+        <div
+          className="fixed inset-0 z-[120] flex items-center justify-center bg-black/60 p-4"
+          onMouseDown={cancelSearchModal}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="special-search-title"
+            className="flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-panel-border bg-panel-bg shadow-2xl"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-panel-border px-6 py-4">
+              <div>
+                <h2 id="special-search-title" className="text-xl font-semibold text-panel-text">Búsqueda especializada</h2>
+                <p className="mt-1 text-sm text-panel-text-faint">Configura los criterios y aplica la búsqueda sobre la fecha seleccionada.</p>
+              </div>
+              <button
+                type="button"
+                aria-label="Cerrar búsqueda especializada"
+                className="flex h-9 w-9 items-center justify-center rounded-full text-2xl leading-none text-panel-text-faint transition-colors hover:bg-panel-hover hover:text-panel-text"
+                onClick={cancelSearchModal}
+              >
+                ×
+              </button>
+            </div>
 
-            <Select
-              id="search-status"
-              labelText="Estado"
-              value={draftFilters.status}
-              onChange={(e) => {
-                setDraftFilters((prev) => ({
-                  ...prev,
-                  status: e.target.value as SearchFilters['status'],
-                }));
-              }}
-            >
-              <SelectItem value="todos" text="Todos" />
-              <SelectItem value="PREPARADO" text="Preparado" />
-              <SelectItem value="EN VUELO" text="En vuelo" />
-              <SelectItem value="FINALIZADO" text="Finalizado" />
-              <SelectItem value="CANCELADO" text="Cancelado" />
-            </Select>
-          </div>
+            <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-6 py-5">
+              <div className="grid gap-4 md:grid-cols-2">
+                <Select
+                  id="search-continent"
+                  labelText="Continente"
+                  value={draftFilters.continent === 'todos' ? 'todos' : String(draftFilters.continent)}
+                  onChange={(e) => {
+                    const strValue = e.target.value;
+                    setDraftFilters((prev) => ({
+                      ...prev,
+                      continent: strValue === 'todos' ? 'todos' : (parseInt(strValue) as 1 | 2 | 3),
+                      originCountry: '',
+                      originAirport: '',
+                    }));
+                  }}
+                >
+                  <SelectItem value="todos" text="Todos" />
+                  <SelectItem value="1" text="América del Sur" />
+                  <SelectItem value="2" text="Europa" />
+                  <SelectItem value="3" text="Asia" />
+                </Select>
 
-          {/* Row 2: Origin Country and Origin Airport */}
-          <div className="grid gap-4 md:grid-cols-2">
-            <Select
-              id="search-origin-country"
-              labelText="País de origen"
-              value={draftFilters.originCountry}
-              onChange={(e) => {
-                setDraftFilters((prev) => ({
-                  ...prev,
-                  originCountry: e.target.value,
-                  originAirport: '',
-                }));
-              }}
-            >
-              <SelectItem value="" text="Todos" />
-              {availableCountries.map((country) => (
-                <SelectItem key={country} value={country} text={country} />
-              ))}
-            </Select>
+                <Select
+                  id="search-status"
+                  labelText="Estado"
+                  value={draftFilters.status}
+                  onChange={(e) => setDraftFilters((prev) => ({
+                    ...prev,
+                    status: e.target.value as SearchFilters['status'],
+                  }))}
+                >
+                  <SelectItem value="todos" text="Todos" />
+                  <SelectItem value="PREPARADO" text="Preparado" />
+                  <SelectItem value="EN VUELO" text="En vuelo" />
+                  <SelectItem value="FINALIZADO" text="Finalizado" />
+                  <SelectItem value="CANCELADO" text="Cancelado" />
+                </Select>
+              </div>
 
-            <Select
-              id="search-origin-airport"
-              labelText="Aeropuerto de origen"
-              value={draftFilters.originAirport}
-              onChange={(e) => {
-                setDraftFilters((prev) => ({
-                  ...prev,
-                  originAirport: e.target.value,
-                }));
-              }}
-            >
-              <SelectItem value="" text="Todos" />
-              {availableOriginAirports.map((airport) => (
-                <SelectItem key={airport.iata} value={airport.iata} text={`${airport.iata} — ${airport.ciudad}`} />
-              ))}
-            </Select>
-          </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <Select
+                  id="search-origin-country"
+                  labelText="País de origen"
+                  value={draftFilters.originCountry}
+                  onChange={(e) => setDraftFilters((prev) => ({
+                    ...prev,
+                    originCountry: e.target.value,
+                    originAirport: '',
+                  }))}
+                >
+                  <SelectItem value="" text="Todos" />
+                  {availableCountries.map((country) => (
+                    <SelectItem key={country} value={country} text={country} />
+                  ))}
+                </Select>
 
-          {/* Row 3: Destination Airport */}
-          <div>
-            <Select
-              id="search-destination-airport"
-              labelText="Aeropuerto de destino"
-              value={draftFilters.destinationAirport}
-              onChange={(e) => {
-                setDraftFilters((prev) => ({
-                  ...prev,
-                  destinationAirport: e.target.value,
-                }));
-              }}
-            >
-              <SelectItem value="" text="Todos" />
-              {availableDestinationAirports.map((airport) => (
-                <SelectItem key={airport.iata} value={airport.iata} text={`${airport.iata} — ${airport.ciudad}`} />
-              ))}
-            </Select>
-          </div>
+                <Select
+                  id="search-origin-airport"
+                  labelText="Aeropuerto de origen"
+                  value={draftFilters.originAirport}
+                  onChange={(e) => setDraftFilters((prev) => ({ ...prev, originAirport: e.target.value }))}
+                >
+                  <SelectItem value="" text="Todos" />
+                  {availableOriginAirports.map((airport) => (
+                    <SelectItem key={airport.iata} value={airport.iata} text={`${airport.iata} — ${airport.ciudad}`} />
+                  ))}
+                </Select>
+              </div>
 
-          {/* Row 4: Code or Route */}
-          <div>
-            <TextInput
-              id="search-code-route"
-              labelText="Código o ruta"
-              placeholder="Ej: AA100, JFK, JFK-LAX"
-              value={draftFilters.codeOrRoute}
-              onChange={(e) => {
-                setDraftFilters((prev) => ({
-                  ...prev,
-                  codeOrRoute: e.target.value,
-                }));
-              }}
-            />
-          </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <Select
+                  id="search-destination-airport"
+                  labelText="Aeropuerto de destino"
+                  value={draftFilters.destinationAirport}
+                  onChange={(e) => setDraftFilters((prev) => ({ ...prev, destinationAirport: e.target.value }))}
+                >
+                  <SelectItem value="" text="Todos" />
+                  {availableDestinationAirports.map((airport) => (
+                    <SelectItem key={airport.iata} value={airport.iata} text={`${airport.iata} — ${airport.ciudad}`} />
+                  ))}
+                </Select>
 
-          {/* Row 5: Departure Time Range */}
-          <div className="grid gap-4 md:grid-cols-2">
-            <TextInput
-              id="search-time-from"
-              labelText="Hora de salida desde"
-              type="time"
-              value={draftFilters.departureTimeFrom}
-              onChange={(e) => {
-                setDraftFilters((prev) => ({
-                  ...prev,
-                  departureTimeFrom: e.target.value,
-                }));
-              }}
-            />
+                <TextInput
+                  id="search-code-route"
+                  labelText="Código o ruta"
+                  placeholder="Ej: SLLP, OJAI o SLLP-OJAI"
+                  value={draftFilters.codeOrRoute}
+                  onChange={(e) => setDraftFilters((prev) => ({ ...prev, codeOrRoute: e.target.value }))}
+                />
+              </div>
 
-            <TextInput
-              id="search-time-to"
-              labelText="Hora de salida hasta"
-              type="time"
-              value={draftFilters.departureTimeTo}
-              onChange={(e) => {
-                setDraftFilters((prev) => ({
-                  ...prev,
-                  departureTimeTo: e.target.value,
-                }));
-              }}
-            />
-          </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <TextInput
+                  id="search-time-from"
+                  labelText="Hora de salida desde"
+                  type="time"
+                  value={draftFilters.departureTimeFrom}
+                  onChange={(e) => setDraftFilters((prev) => ({ ...prev, departureTimeFrom: e.target.value }))}
+                />
+                <TextInput
+                  id="search-time-to"
+                  labelText="Hora de salida hasta"
+                  type="time"
+                  value={draftFilters.departureTimeTo}
+                  onChange={(e) => setDraftFilters((prev) => ({ ...prev, departureTimeTo: e.target.value }))}
+                />
+              </div>
+            </div>
 
-          {/* Clear Filters Button */}
-          <div className="border-t border-panel-border pt-4">
-            <Button kind="ghost" onClick={clearSearchFilters} className="w-full">
-              Limpiar filtros
-            </Button>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-panel-border px-6 py-4">
+              <Button type="button" kind="ghost" onClick={clearSearchFilters}>Limpiar filtros</Button>
+              <div className="flex gap-2">
+                <Button type="button" kind="secondary" onClick={cancelSearchModal}>Cancelar</Button>
+                <Button type="button" kind="primary" onClick={applySearchFilters}>Aplicar filtros</Button>
+              </div>
+            </div>
           </div>
         </div>
-      </Modal>
+      )}
     </div>
   );
 }
