@@ -410,7 +410,7 @@ export const Map = memo(function Map({
   const activeCancellations = useMemo(() => {
     if (!simHasStarted) return [];
     return allVisualCancellations
-      .filter(c => smoothMinute >= c.createdAtUTC && smoothMinute <= c.llegadaUTC)
+      .filter(c => smoothMinute >= c.salidaUTC && smoothMinute <= c.llegadaUTC)
       .map(c => {
         const from = airports.find(a => a.code === c.origen);
         const to = airports.find(a => a.code === c.destino);
@@ -665,9 +665,9 @@ export const Map = memo(function Map({
               from={[c.from.lng, c.from.lat]}
               to={[c.to.lng, c.to.lat]}
               stroke="#ef4444"
-              strokeWidth={1.8 * markerScale}
-              strokeOpacity={0.88}
-              strokeDasharray={`${4 * markerScale} ${2.5 * markerScale}`}
+              strokeWidth={1.05 * markerScale}
+              strokeOpacity={0.82}
+              strokeDasharray={`${2.4 * markerScale} ${2.4 * markerScale}`}
               strokeLinecap="round"
             />
           ))}

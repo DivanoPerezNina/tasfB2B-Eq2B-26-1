@@ -904,7 +904,7 @@ export function Contingencies() {
                   <Button type="button" kind="secondary" size="sm" onClick={handleBackToContinents}>Volver a continentes</Button>
                 </div>
 
-                <div className="mb-4 grid gap-3 md:grid-cols-2 xl:grid-cols-[0.8fr,1.2fr,0.8fr,2.5fr]">
+                <div className="mb-4 grid gap-3 md:grid-cols-2 xl:grid-cols-[0.8fr,1.1fr,0.7fr,1fr,2.1fr]">
                   <div className="rounded-lg border border-panel-border bg-panel-bg-subtle px-4 py-3">
                     <p className="text-xs uppercase tracking-wide text-panel-text-faint">Código IATA</p>
                     <p className="mt-1 font-mono text-lg font-semibold tracking-wide text-panel-text">{selectedAirportDetails.iata}</p>
@@ -918,8 +918,14 @@ export function Contingencies() {
                     <p className="mt-1 text-lg font-semibold text-panel-text">{airportDetailOccurrences.length}</p>
                   </div>
                   <div className="rounded-lg border border-panel-border bg-panel-bg-subtle px-4 py-3">
+                    <p className="text-xs uppercase tracking-wide text-panel-text-faint">Hora simulada global</p>
+                    <p className="mt-1 text-lg font-semibold text-panel-text">
+                      {hasValidSimulationTime ? `${formatSimulationMoment(referenceTimeMinutes)} UTC` : 'No disponible'}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-panel-border bg-panel-bg-subtle px-4 py-3">
                     <p className="text-xs uppercase tracking-wide text-panel-text-faint">Vista de tabla</p>
-                    <div className="mt-2 flex flex-wrap gap-2">
+                    <div className="mt-2 grid gap-2 xl:grid-cols-4">
                       <Button type="button" size="sm" kind={detailFilter === 'ALL' ? 'primary' : 'secondary'} onClick={() => setDetailFilter('ALL')}>Tabla maestra</Button>
                       <Button type="button" size="sm" kind={detailFilter === 'PREPARADO' ? 'primary' : 'secondary'} onClick={() => setDetailFilter('PREPARADO')}>Programados ({airportDetailSummary.preparado})</Button>
                       <Button type="button" size="sm" kind={detailFilter === 'FINALIZADO' ? 'primary' : 'secondary'} onClick={() => setDetailFilter('FINALIZADO')}>Finalizados ({airportDetailSummary.finalizado})</Button>
@@ -928,7 +934,7 @@ export function Contingencies() {
                   </div>
                 </div>
 
-                <div className="min-h-0 flex-1 overflow-auto rounded-xl border border-panel-border bg-panel-bg shadow-sm">
+                <div className="min-h-0 flex-1 overflow-auto border border-panel-border bg-panel-bg shadow-sm">
                   <table className="w-full min-w-[1180px] border-separate border-spacing-0 text-sm">
                     <thead className="sticky top-0 z-10 bg-panel-bg-subtle text-left text-xs uppercase tracking-wide text-panel-text-faint">
                       <tr>
@@ -1012,7 +1018,7 @@ export function Contingencies() {
                   continentGroups.map((group) => (
                     <section
                       key={group.continent}
-                      className="flex min-h-[430px] min-w-0 flex-col overflow-hidden rounded-xl border border-panel-border bg-panel-bg-subtle shadow-sm"
+                      className="flex min-h-[430px] min-w-0 flex-col border border-panel-border bg-panel-bg-subtle shadow-sm"
                     >
                       <header className="border-b border-panel-border px-5 py-4">
                         <div className="flex items-start justify-between gap-3">
