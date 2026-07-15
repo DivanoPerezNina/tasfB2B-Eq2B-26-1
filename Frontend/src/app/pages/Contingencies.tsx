@@ -15,6 +15,7 @@ import { useDomain } from '../context/DomainContext';
 import { useSimulation } from '../context/SimulationContext';
 
 type FlightStatus = 'PREPARADO' | 'EN VUELO' | 'FINALIZADO' | 'CANCELADO';
+type ViewMode = 'continents' | 'airport' | 'search';
 
 interface FlightOccurrence {
   key: string;
@@ -42,6 +43,22 @@ interface SearchFilters {
   departureTimeFrom: string;
   departureTimeTo: string;
   status: 'todos' | 'PREPARADO' | 'EN VUELO' | 'FINALIZADO' | 'CANCELADO';
+}
+
+const DEFAULT_SEARCH_FILTERS: SearchFilters = {
+  continent: 'todos',
+  originCountry: '',
+  originAirport: '',
+  destinationAirport: '',
+  codeOrRoute: '',
+  departureTimeFrom: '',
+  departureTimeTo: '',
+  status: 'todos',
+};
+
+function parseHHMMToMinutes(value: string) {
+  const [hours, minutes] = value.split(':').map(Number);
+  return hours * 60 + minutes;
 }
 
 function formatMinutesAsHHMM(minutes: number) {
@@ -103,6 +120,9 @@ export function Contingencies() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [selectedAirportIata, setSelectedAirportIata] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<ViewMode>('continents');
+  const [searchPage, setSearchPage] = useState(1);
+  const [searchPageSize, setSearchPageSize] = useState(25);
   const [pendingCancellationKey, setPendingCancellationKey] = useState<string | null>(null);
   const [cancelledKeys, setCancelledKeys] = useState<Set<string>>(new Set());
   const [confirmationRow, setConfirmationRow] = useState<FlightOccurrence | null>(null);
@@ -112,18 +132,8 @@ export function Contingencies() {
 
   // Search modal state
   const [isSearchModalOpen, setIsSearchModalOpen] = useState(false);
-  const defaultFilters: SearchFilters = {
-    continent: 'todos',
-    originCountry: '',
-    originAirport: '',
-    destinationAirport: '',
-    codeOrRoute: '',
-    departureTimeFrom: '',
-    departureTimeTo: '',
-    status: 'todos',
-  };
-  const [draftFilters, setDraftFilters] = useState<SearchFilters>(defaultFilters);
-  const [appliedFilters, setAppliedFilters] = useState<SearchFilters>(defaultFilters);
+  const [draftFilters, setDraftFilters] = useState<SearchFilters>({ ...DEFAULT_SEARCH_FILTERS });
+  const [appliedFilters, setAppliedFilters] = useState<SearchFilters>({ ...DEFAULT_SEARCH_FILTERS });
 
   useEffect(() => {
     setPage(1);
@@ -132,6 +142,10 @@ export function Contingencies() {
   useEffect(() => {
     setPage(1);
   }, [selectedAirportIata]);
+
+  useEffect(() => {
+    setSearchPage(1);
+  }, [appliedFilters, searchPageSize]);
 
   useEffect(() => {
     if (hasManualDateSelectionRef.current || !hasActiveSimulation || !simulationTime) {
@@ -269,6 +283,76 @@ export function Contingencies() {
     [aeropuertosBFF],
   );
 
+  const airportByIata = useMemo(
+    () => new Map(aeropuertosBFF.map((airport) => [airport.iata, airport] as const)),
+    [aeropuertosBFF],
+  );
+
+  const searchResults = useMemo(() => {
+    const normalizedQuery = appliedFilters.codeOrRoute.trim().toUpperCase();
+    const fromMinutes = appliedFilters.departureTimeFrom
+      ? parseHHMMToMinutes(appliedFilters.departureTimeFrom)
+      : null;
+    const toMinutes = appliedFilters.departureTimeTo
+      ? parseHHMMToMinutes(appliedFilters.departureTimeTo)
+      : null;
+
+    return occurrences
+      .filter((occurrence) => {
+        const originAirport = airportByIata.get(occurrence.origen);
+        if (!originAirport) {
+          return false;
+        }
+
+        const byContinent = appliedFilters.continent === 'todos'
+          || originAirport.continente === appliedFilters.continent;
+        const byCountry = !appliedFilters.originCountry
+          || originAirport.pais === appliedFilters.originCountry;
+        const byOrigin = !appliedFilters.originAirport
+          || occurrence.origen === appliedFilters.originAirport;
+        const byDestination = !appliedFilters.destinationAirport
+          || occurrence.destino === appliedFilters.destinationAirport;
+        const byStatus = appliedFilters.status === 'todos'
+          || occurrence.estado === appliedFilters.status;
+
+        const searchableText = [
+          occurrence.code,
+          occurrence.origen,
+          occurrence.destino,
+          `${occurrence.origen}-${occurrence.destino}`,
+        ].join(' ').toUpperCase();
+        const byCodeOrRoute = !normalizedQuery || searchableText.includes(normalizedQuery);
+
+        const departureMinutes = parseHHMMToMinutes(occurrence.salidaLocal);
+        let byTime = true;
+        if (fromMinutes !== null && toMinutes !== null) {
+          byTime = fromMinutes <= toMinutes
+            ? departureMinutes >= fromMinutes && departureMinutes <= toMinutes
+            : departureMinutes >= fromMinutes || departureMinutes <= toMinutes;
+        } else if (fromMinutes !== null) {
+          byTime = departureMinutes >= fromMinutes;
+        } else if (toMinutes !== null) {
+          byTime = departureMinutes <= toMinutes;
+        }
+
+        return byContinent
+          && byCountry
+          && byOrigin
+          && byDestination
+          && byStatus
+          && byCodeOrRoute
+          && byTime;
+      })
+      .sort((a, b) => a.salidaUTC - b.salidaUTC);
+  }, [airportByIata, appliedFilters, occurrences]);
+
+  const searchTotalPages = Math.max(1, Math.ceil(searchResults.length / searchPageSize));
+  const searchSafePage = Math.min(searchPage, searchTotalPages);
+  const paginatedSearchResults = useMemo(() => {
+    const start = (searchSafePage - 1) * searchPageSize;
+    return searchResults.slice(start, start + searchPageSize);
+  }, [searchPageSize, searchResults, searchSafePage]);
+
 
   const totalPages = Math.max(1, Math.ceil(filteredOccurrences.length / pageSize));
   const safePage = Math.min(page, totalPages);
@@ -384,12 +468,15 @@ export function Contingencies() {
 
   const handleSelectAirport = (iata: string) => {
     setSelectedAirportIata(iata);
+    setViewMode('airport');
     setPage(1);
   };
 
   const handleBackToContinents = () => {
     setSelectedAirportIata(null);
+    setViewMode('continents');
     setPage(1);
+    setSearchPage(1);
   };
 
   const openSearchModal = () => {
@@ -400,11 +487,22 @@ export function Contingencies() {
 
   const applySearchFilters = () => {
     setAppliedFilters({ ...draftFilters });
+    setSelectedAirportIata(null);
+    setSearchPage(1);
+    setViewMode('search');
     setIsSearchModalOpen(false);
   };
 
   const clearSearchFilters = () => {
-    setDraftFilters(defaultFilters);
+    setDraftFilters({ ...DEFAULT_SEARCH_FILTERS });
+  };
+
+  const clearAppliedSearch = () => {
+    setAppliedFilters({ ...DEFAULT_SEARCH_FILTERS });
+    setDraftFilters({ ...DEFAULT_SEARCH_FILTERS });
+    setSelectedAirportIata(null);
+    setSearchPage(1);
+    setViewMode('continents');
   };
 
   const cancelSearchModal = () => {
@@ -510,7 +608,105 @@ export function Contingencies() {
           )}
 
           <div className="flex-1 overflow-auto rounded-lg border border-panel-border bg-panel-bg">
-            {selectedAirportIata && selectedAirportDetails ? (
+            {viewMode === 'search' ? (
+              <div className="flex h-full flex-col p-4">
+                <div className="mb-4 flex flex-wrap items-start justify-between gap-3 border-b border-panel-border pb-4">
+                  <div>
+                    <h2 className="text-lg font-semibold text-panel-text">Resultados de búsqueda</h2>
+                    <p className="mt-1 text-sm text-panel-text-faint">
+                      {searchResults.length} coincidencia{searchResults.length === 1 ? '' : 's'} para la fecha seleccionada.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button kind="secondary" size="sm" onClick={handleBackToContinents}>
+                      Volver a continentes
+                    </Button>
+                    <Button kind="secondary" size="sm" onClick={openSearchModal}>
+                      Modificar búsqueda
+                    </Button>
+                    <Button kind="ghost" size="sm" onClick={clearAppliedSearch}>
+                      Limpiar búsqueda
+                    </Button>
+                  </div>
+                </div>
+
+                {searchResults.length === 0 ? (
+                  <div className="rounded-lg border border-panel-border bg-panel-bg-subtle p-6 text-center text-sm text-panel-text-faint">
+                    No se encontraron vuelos con los filtros aplicados.
+                  </div>
+                ) : (
+                  <>
+                    <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-panel-border bg-panel-bg">
+                      <table className="min-w-full border-collapse text-sm">
+                        <thead className="sticky top-0 z-10 bg-panel-bg-subtle text-left text-xs uppercase tracking-wide text-panel-text-faint">
+                          <tr>
+                            <th className="border-b border-panel-border px-4 py-3">Código</th>
+                            <th className="border-b border-panel-border px-4 py-3">Fecha</th>
+                            <th className="border-b border-panel-border px-4 py-3">Origen</th>
+                            <th className="border-b border-panel-border px-4 py-3">Destino</th>
+                            <th className="border-b border-panel-border px-4 py-3">Salida local</th>
+                            <th className="border-b border-panel-border px-4 py-3">Llegada local</th>
+                            <th className="border-b border-panel-border px-4 py-3">Capacidad</th>
+                            <th className="border-b border-panel-border px-4 py-3">Estado</th>
+                            <th className="border-b border-panel-border px-4 py-3">Acción</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {paginatedSearchResults.map((row) => {
+                            const canCancel = hasActiveSimulation && row.estado === 'PREPARADO' && !pendingCancellationKey;
+                            return (
+                              <tr key={row.key} className="border-b border-panel-border last:border-b-0 hover:bg-panel-hover">
+                                <td className="px-4 py-3 font-mono text-xs">{row.code}</td>
+                                <td className="px-4 py-3">{formatDateLabel(selectedDate)}</td>
+                                <td className="px-4 py-3">{row.origen}</td>
+                                <td className="px-4 py-3">{row.destino}</td>
+                                <td className="px-4 py-3">{row.salidaLocal}</td>
+                                <td className="px-4 py-3">
+                                  {row.llegadaLocal}
+                                  {row.llegadaLocalDayOffset > 0 ? ` (+${row.llegadaLocalDayOffset} día${row.llegadaLocalDayOffset > 1 ? 's' : ''})` : ''}
+                                </td>
+                                <td className="px-4 py-3">{row.capacidad}</td>
+                                <td className="px-4 py-3">
+                                  <Tag type={row.estado === 'CANCELADO' ? 'red' : row.estado === 'EN VUELO' ? 'blue' : row.estado === 'FINALIZADO' ? 'purple' : 'green'}>
+                                    {statusLabel(row.estado)}
+                                  </Tag>
+                                </td>
+                                <td className="px-4 py-3">
+                                  <Button
+                                    size="sm"
+                                    kind="danger"
+                                    disabled={!canCancel}
+                                    onClick={() => setConfirmationRow(row)}
+                                  >
+                                    Cancelar
+                                  </Button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div className="mt-4 flex justify-end">
+                      <Pagination
+                        totalItems={searchResults.length}
+                        page={searchSafePage}
+                        pageSize={searchPageSize}
+                        pageSizes={[25, 50, 100]}
+                        itemsPerPageText="Registros por página"
+                        pageRangeText={(current, total) => `${current}–${total}`}
+                        pageText={(pageNumber) => `Página ${pageNumber}`}
+                        onChange={(event) => {
+                          setSearchPage(event.page);
+                          setSearchPageSize(event.pageSize);
+                        }}
+                      />
+                    </div>
+                  </>
+                )}
+              </div>
+            ) : selectedAirportIata && selectedAirportDetails ? (
               <div className="flex h-full flex-col p-4">
                 <div className="mb-4 flex flex-wrap items-start justify-between gap-3 border-b border-panel-border pb-4">
                   <div className="min-w-0">
