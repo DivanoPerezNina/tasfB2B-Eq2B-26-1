@@ -120,6 +120,24 @@ function formatSimulationMoment(epochMinutes: number) {
   }).format(new Date(epochMinutes * 60 * 1000));
 }
 
+function formatSimulationMomentAtOffset(epochMinutes: number, gmtOffsetHours: number) {
+  return formatSimulationMoment(epochMinutes + gmtOffsetHours * 60);
+}
+
+function formatUtcOffset(gmtOffsetHours: number) {
+  const totalMinutes = Math.round(gmtOffsetHours * 60);
+  if (totalMinutes === 0) return 'UTC';
+
+  const sign = totalMinutes > 0 ? '+' : '−';
+  const absoluteMinutes = Math.abs(totalMinutes);
+  const hours = Math.floor(absoluteMinutes / 60);
+  const minutes = absoluteMinutes % 60;
+
+  return minutes === 0
+    ? `UTC${sign}${hours}`
+    : `UTC${sign}${hours}:${String(minutes).padStart(2, '0')}`;
+}
+
 export function Contingencies() {
   const { vuelosBFF, aeropuertosBFF, isLoading, error } = useDomain();
   const {
@@ -654,7 +672,7 @@ export function Contingencies() {
               <Tag type="red">Cancelados: {summary.cancelado}</Tag>
               {hasValidSimulationTime && (
                 <span className="ml-auto text-xs text-panel-text-faint">
-                  Hora simulada: <strong className="font-medium text-panel-text">{formatSimulationMoment(referenceTimeMinutes)} UTC</strong>
+                  Hora simulada global: <strong className="font-medium text-panel-text">{formatSimulationMoment(referenceTimeMinutes)} UTC</strong>
                 </span>
               )}
             </div>
@@ -722,8 +740,8 @@ export function Contingencies() {
                             <th className="border-b border-panel-border px-4 py-3">Fecha</th>
                             <th className="border-b border-panel-border px-4 py-3">Origen</th>
                             <th className="border-b border-panel-border px-4 py-3">Destino</th>
-                            <th className="border-b border-panel-border px-4 py-3">Salida local</th>
-                            <th className="border-b border-panel-border px-4 py-3">Llegada local</th>
+                            <th className="border-b border-panel-border px-4 py-3">Salida local (origen)</th>
+                            <th className="border-b border-panel-border px-4 py-3">Llegada local (destino)</th>
                             <th className="border-b border-panel-border px-4 py-3">Capacidad</th>
                             <th className="border-b border-panel-border px-4 py-3">Estado</th>
                             <th className="border-b border-panel-border px-4 py-3">Acción</th>
@@ -802,11 +820,28 @@ export function Contingencies() {
                       <span className="text-base text-panel-text-faint">{selectedAirportDetails.ciudad}, {selectedAirportDetails.pais}</span>
                     </div>
                     <p className="mt-2 text-sm text-panel-text-faint">
-                      Los vuelos preparados se muestran primero para facilitar su cancelación antes de la salida.
+                      Los estados se calculan con la hora local del aeropuerto. Los vuelos preparados se muestran primero para facilitar su cancelación.
                     </p>
                   </div>
                   <Button kind="secondary" size="sm" onClick={handleBackToContinents}>Volver a continentes</Button>
                 </div>
+
+                {hasValidSimulationTime && (
+                  <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-panel-border bg-panel-bg-subtle px-4 py-3">
+                    <div>
+                      <p className="text-xs uppercase tracking-wide text-panel-text-faint">Hora local simulada en {selectedAirportDetails.iata}</p>
+                      <p className="mt-1 text-lg font-semibold text-panel-text">
+                        {formatSimulationMomentAtOffset(referenceTimeMinutes, selectedAirportDetails.gmt_offset)}
+                        <span className="ml-2 text-sm font-normal text-panel-text-faint">
+                          ({formatUtcOffset(selectedAirportDetails.gmt_offset)})
+                        </span>
+                      </p>
+                    </div>
+                    <p className="max-w-xl text-sm text-panel-text-faint">
+                      La cabecera usa UTC; las columnas de salida y llegada muestran la hora local de cada aeropuerto.
+                    </p>
+                  </div>
+                )}
 
                 <div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                   <div className="rounded-lg border border-panel-border bg-panel-bg-subtle px-4 py-3">
@@ -839,8 +874,8 @@ export function Contingencies() {
                         <th className="border-b border-panel-border px-5 py-3.5">Fecha</th>
                         <th className="border-b border-panel-border px-5 py-3.5">Origen</th>
                         <th className="border-b border-panel-border px-5 py-3.5">Destino</th>
-                        <th className="border-b border-panel-border px-5 py-3.5">Salida local</th>
-                        <th className="border-b border-panel-border px-5 py-3.5">Llegada local</th>
+                        <th className="border-b border-panel-border px-5 py-3.5">Salida local ({selectedAirportDetails.iata})</th>
+                        <th className="border-b border-panel-border px-5 py-3.5">Llegada local (destino)</th>
                         <th className="border-b border-panel-border px-5 py-3.5">Capacidad</th>
                         <th className="border-b border-panel-border px-5 py-3.5">Estado</th>
                         <th className="border-b border-panel-border px-5 py-3.5 text-center">Acción</th>
@@ -998,7 +1033,7 @@ export function Contingencies() {
                 <div><span className="text-panel-text-faint">Fecha:</span> {confirmationRow.fecha}</div>
                 <div><span className="text-panel-text-faint">Origen:</span> {confirmationRow.origen}</div>
                 <div><span className="text-panel-text-faint">Destino:</span> {confirmationRow.destino}</div>
-                <div><span className="text-panel-text-faint">Salida local:</span> {confirmationRow.salidaLocal}</div>
+                <div><span className="text-panel-text-faint">Salida local ({confirmationRow.origen}):</span> {confirmationRow.salidaLocal}</div>
                 <div><span className="text-panel-text-faint">Salida UTC:</span> {confirmationRow.salidaUTC}</div>
               </div>
               <div className="mt-4 rounded border border-red-200 bg-red-50 p-3 text-red-800">
