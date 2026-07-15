@@ -18,6 +18,7 @@ import {
   PlanTramoVisual,
   SimulationStats,
   Baggage,
+  VisualCancellation,
 } from '../types';
 import { airports } from '../data/airports';
 
@@ -71,6 +72,7 @@ interface SimulationContextType {
   planTramos: PlanTramoVisual[];
   planResumen: PlanResumenVisual | null;
   planVisualCargado: boolean;
+  visualCancellations: VisualCancellation[];
 
   // ── Configuración ──
   config: SimulationConfig;
@@ -91,6 +93,7 @@ interface SimulationContextType {
   reanudarSimulacion: () => Promise<void>;
   detenerSimulacion: () => Promise<void>;
   cancelarVuelo: (origen: string, destino: string, salidaUTC: number) => Promise<boolean>;
+  registrarCancelacionVisual: (cancelacion: VisualCancellation) => void;
   resetear: () => void;
 
   // ── Compatibilidad legacy ──
@@ -143,6 +146,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [planTramos, setPlanTramos]          = useState<PlanTramoVisual[]>([]);
   const [planResumen, setPlanResumen]        = useState<PlanResumenVisual | null>(null);
   const [planVisualCargado, setPlanVisualCargado] = useState(false);
+  const [visualCancellations, setVisualCancellations] = useState<VisualCancellation[]>([]);
   const esRef = useRef<EventSource | null>(null);
   const sseErroresRef = useRef(0);  // errores SSE consecutivos para detectar caída del BFF
 
@@ -266,6 +270,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setPlanTramos([]);
     setPlanResumen(null);
     setPlanVisualCargado(false);
+    setVisualCancellations([]);
 
     // Enviar fecha+hora local como YYYY-MM-DDTHH:MM
     // El planificador trabaja en epoch-minutos UTC y usa GMT=0 al recibir este campo
@@ -566,6 +571,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setPlanTramos([]);
     setPlanResumen(null);
     setPlanVisualCargado(false);
+    setVisualCancellations([]);
     setProgresoPct(0);
     setValidTick(null);
     setCollapseFailure(null);
@@ -622,6 +628,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const efectivo = { ...config, ...opts };
     setErrorMsg(null);
     setPlanTramos([]); setPlanResumen(null); setPlanVisualCargado(false);
+    setVisualCancellations([]);
     setProgresoPct(0);
 
     // Fecha elegida → minuto epoch UTC (GMT=0, igual que el planificador).
@@ -692,6 +699,13 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     }
   }, [fase]);
 
+  const registrarCancelacionVisual = useCallback((cancelacion: VisualCancellation) => {
+    setVisualCancellations((prev) => [
+      cancelacion,
+      ...prev.filter((item) => item.id !== cancelacion.id),
+    ].slice(0, 50));
+  }, []);
+
   // ─── Cancelar ocurrencia de vuelo (Flujo B: desde el buscador) ─────────────
   // Registra la cancelación (vuelo, día) en el orquestador, que re-planifica el
   // bloque actual de inmediato. El plan re-ruteado llega por SSE (plan-tramos).
@@ -756,6 +770,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setPlanTramos([]);
     setPlanResumen(null);
     setPlanVisualCargado(false);
+    setVisualCancellations([]);
     clearCollapseState();
   }, [clearCollapseState]);
 
@@ -775,6 +790,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setPlanTramos([]);
     setPlanResumen(null);
     setPlanVisualCargado(false);
+    setVisualCancellations([]);
     setErrorMsg(null);
     clearCollapseState();
   }, [clearCollapseState]);
@@ -867,6 +883,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       planTramos,
       planResumen,
       planVisualCargado,
+      visualCancellations,
       config,
       datasetInfo,
       stats,
@@ -883,6 +900,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       reanudarSimulacion,
       detenerSimulacion,
       cancelarVuelo,
+      registrarCancelacionVisual,
       resetear,
       startSimulation,
       pauseSimulation,

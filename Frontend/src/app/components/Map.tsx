@@ -261,8 +261,17 @@ export const Map = memo(function Map({
   warehouseCodeFilter = '',
   warehouseStatusFilter = 'all',
 }: MapProps) {
-  const { isRunning, aeropuertosState, tiempoSimUTC, contadores, planTramos, planVisualCargado, config } = useSimulation();
-  const { airports, aeropuertosBackend, vuelosBackend } = useDomain();
+  const {
+    isRunning,
+    aeropuertosState,
+    tiempoSimUTC,
+    contadores,
+    planTramos,
+    planVisualCargado,
+    config,
+    visualCancellations,
+  } = useSimulation();
+  const { airports, aeropuertosBackend, vuelosBackend, aeropuertosBFF } = useDomain();
 
   // Solo hay aviones reales cuando la simulación ha avanzado al menos un tick
   const simHasStarted = tiempoSimUTC > 0;
@@ -390,17 +399,25 @@ export const Map = memo(function Map({
   const activeFlights = activeFlightResult.flights;
   const activeFlightTotal = activeFlightResult.totalActive;
 
+  const allVisualCancellations = useMemo(() => {
+    const unique = new globalThis.Map<string, VisualCancellation>();
+    [...visualCancellations, ...canceledFlights].forEach((item) => {
+      unique.set(item.id, item);
+    });
+    return Array.from(unique.values());
+  }, [canceledFlights, visualCancellations]);
+
   const activeCancellations = useMemo(() => {
     if (!simHasStarted) return [];
-    return canceledFlights
-      .filter(c => smoothMinute >= c.createdAtUTC && smoothMinute <= c.llegadaUTC)
+    return allVisualCancellations
+      .filter(c => smoothMinute >= c.salidaUTC && smoothMinute <= c.llegadaUTC)
       .map(c => {
         const from = airports.find(a => a.code === c.origen);
         const to = airports.find(a => a.code === c.destino);
         return from && to ? { ...c, from, to } : null;
       })
       .filter(Boolean) as Array<VisualCancellation & { from: Airport; to: Airport }>;
-  }, [canceledFlights, smoothMinute, simHasStarted, airports]);
+  }, [allVisualCancellations, smoothMinute, simHasStarted, airports]);
 
   const handleZoomIn = useCallback(() => setZoom(z => Math.min(z * 1.5, 8)), []);
   const handleZoomOut = useCallback(() => setZoom(z => Math.max(z / 1.5, 1)), []);
@@ -559,12 +576,14 @@ export const Map = memo(function Map({
       {hoveredAirport && (() => {
         const ap = airports.find(a => a.id === hoveredAirport);
         if (!ap) return null;
+        const airportDetails = aeropuertosBFF.find(item => item.iata === ap.code);
+        const country = airportDetails?.pais ?? 'País no disponible';
         const { occ, cap, pct } = getLiveOccupancy(ap.code, { occ: ap.currentOccupancy, cap: ap.warehouseCapacity });
         const semColor = pct > 80 ? '#ef4444' : pct > 60 ? '#f59e0b' : '#10b981';
         return (
           <div className="absolute left-1/2 top-14 z-20 -translate-x-1/2 rounded-lg backdrop-blur px-4 py-3 shadow-xl pointer-events-none border" style={{ backgroundColor: 'var(--map-overlay-bg)', borderColor: 'var(--panel-border)' }}>
             <p className="text-sm font-medium" style={{ color: 'var(--map-overlay-text)' }}>{ap.code} — {ap.city}</p>
-            <p className="text-xs mt-0.5" style={{ color: 'var(--map-overlay-text-muted)' }}>{ap.name}</p>
+            <p className="text-xs mt-0.5" style={{ color: 'var(--map-overlay-text-muted)' }}>{country} · {ap.name}</p>
             <div className="flex gap-4 mt-1.5">
               {[
                 { label: 'Capacidad', val: cap },
@@ -648,9 +667,9 @@ export const Map = memo(function Map({
               from={[c.from.lng, c.from.lat]}
               to={[c.to.lng, c.to.lat]}
               stroke="#ef4444"
-              strokeWidth={1.8 * markerScale}
-              strokeOpacity={0.88}
-              strokeDasharray={`${4 * markerScale} ${2.5 * markerScale}`}
+              strokeWidth={1.05 * markerScale}
+              strokeOpacity={0.82}
+              strokeDasharray={`${2.4 * markerScale} ${2.4 * markerScale}`}
               strokeLinecap="round"
             />
           ))}
