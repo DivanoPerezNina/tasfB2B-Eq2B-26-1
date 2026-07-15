@@ -96,6 +96,7 @@ type ConfigColapso struct {
 	MaxDias                  int     `json:"max_dias"`
 }
 
+// Cambio de prueba de verificación - Camilo
 type ResultadoColapso struct {
 	Tipo         string     `json:"tipo"`
 	Motivo       string     `json:"motivo"`
