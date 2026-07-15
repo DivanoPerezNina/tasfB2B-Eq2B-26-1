@@ -4,10 +4,10 @@ import {
   DatePicker,
   DatePickerInput,
   InlineNotification,
+  Pagination,
   Select,
   SelectItem,
   Tag,
-  TextInput,
 } from '@carbon/react';
 import { useDomain } from '../context/DomainContext';
 import { useSimulation } from '../context/SimulationContext';
@@ -53,6 +53,19 @@ function formatDateLabel(date: Date) {
   }).format(date);
 }
 
+function getContinentLabel(continent: number | undefined) {
+  switch (continent) {
+    case 1:
+      return 'América del Sur';
+    case 2:
+      return 'Europa';
+    case 3:
+      return 'Asia';
+    default:
+      return 'Sin continente';
+  }
+}
+
 export function Contingencies() {
   const { vuelosBFF, aeropuertosBFF, isLoading, error } = useDomain();
   const { fase, tiempoSimUTC, simulationTime, cancelarVuelo } = useSimulation();
@@ -76,6 +89,7 @@ export function Contingencies() {
   const [statusFilter, setStatusFilter] = useState('todos');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
+  const [selectedAirportIata, setSelectedAirportIata] = useState<string | null>(null);
   const [pendingCancellationKey, setPendingCancellationKey] = useState<string | null>(null);
   const [cancelledKeys, setCancelledKeys] = useState<Set<string>>(new Set());
   const [confirmationRow, setConfirmationRow] = useState<FlightOccurrence | null>(null);
@@ -86,6 +100,10 @@ export function Contingencies() {
   useEffect(() => {
     setPage(1);
   }, [selectedDate, flightCodeFilter, originFilter, destinationFilter, statusFilter, pageSize]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [selectedAirportIata]);
 
   useEffect(() => {
     if (hasManualDateSelectionRef.current || !hasActiveSimulation || !simulationTime) {
@@ -215,6 +233,111 @@ export function Contingencies() {
     };
   }, [filteredOccurrences]);
 
+  const continentGroups = useMemo(() => {
+    const airportStats = new Map<string, {
+      iata: string;
+      ciudad: string;
+      pais: string;
+      continente: number;
+      vuelos: number;
+      preparado: number;
+      enVuelo: number;
+      finalizado: number;
+      cancelado: number;
+    }>();
+
+    aeropuertosBFF.forEach((airport) => {
+      airportStats.set(airport.iata, {
+        iata: airport.iata,
+        ciudad: airport.ciudad,
+        pais: airport.pais,
+        continente: airport.continente,
+        vuelos: 0,
+        preparado: 0,
+        enVuelo: 0,
+        finalizado: 0,
+        cancelado: 0,
+      });
+    });
+
+    filteredOccurrences.forEach((occurrence) => {
+      const stats = airportStats.get(occurrence.origen);
+      if (!stats) {
+        return;
+      }
+
+      stats.vuelos += 1;
+
+      if (occurrence.estado === 'PREPARADO') {
+        stats.preparado += 1;
+      } else if (occurrence.estado === 'EN VUELO') {
+        stats.enVuelo += 1;
+      } else if (occurrence.estado === 'FINALIZADO') {
+        stats.finalizado += 1;
+      } else if (occurrence.estado === 'CANCELADO') {
+        stats.cancelado += 1;
+      }
+    });
+
+    const groups = new Map<number, {
+      continent: number;
+      label: string;
+      airports: typeof airportStats extends Map<string, infer T> ? T[] : never;
+    }>();
+
+    airportStats.forEach((stats) => {
+      const group = groups.get(stats.continente) ?? {
+        continent: stats.continente,
+        label: getContinentLabel(stats.continente),
+        airports: [],
+      };
+      group.airports.push(stats);
+      groups.set(stats.continente, group);
+    });
+
+    return Array.from(groups.values())
+      .sort((a, b) => a.label.localeCompare(b.label))
+      .map((group) => ({
+        ...group,
+        airports: group.airports.sort((a, b) => a.iata.localeCompare(b.iata)),
+      }));
+  }, [aeropuertosBFF, filteredOccurrences]);
+
+  const selectedAirportDetails = useMemo(() => {
+    if (!selectedAirportIata) {
+      return null;
+    }
+
+    return aeropuertosBFF.find((airport) => airport.iata === selectedAirportIata) ?? null;
+  }, [aeropuertosBFF, selectedAirportIata]);
+
+  const airportDetailOccurrences = useMemo(() => {
+    if (!selectedAirportIata) {
+      return [];
+    }
+
+    return [...filteredOccurrences]
+      .filter((occurrence) => occurrence.origen === selectedAirportIata)
+      .sort((a, b) => a.salidaUTC - b.salidaUTC);
+  }, [filteredOccurrences, selectedAirportIata]);
+
+  const airportDetailTotalPages = Math.max(1, Math.ceil(airportDetailOccurrences.length / pageSize));
+  const airportDetailSafePage = Math.min(page, airportDetailTotalPages);
+  const paginatedAirportDetailOccurrences = useMemo(() => {
+    const start = (airportDetailSafePage - 1) * pageSize;
+    return airportDetailOccurrences.slice(start, start + pageSize);
+  }, [airportDetailOccurrences, airportDetailSafePage, pageSize]);
+
+  const handleSelectAirport = (iata: string) => {
+    setSelectedAirportIata(iata);
+    setPage(1);
+  };
+
+  const handleBackToContinents = () => {
+    setSelectedAirportIata(null);
+    setPage(1);
+  };
+
   const handleCancelConfirm = async () => {
     if (!confirmationRow || !hasActiveSimulation) {
       return;
@@ -265,8 +388,8 @@ export function Contingencies() {
 
       <div className="flex-1 overflow-hidden p-6">
         <div className="flex h-full flex-col gap-4 overflow-hidden rounded-lg border border-panel-border bg-panel-bg-subtle p-4 shadow-sm">
-          <div className="grid gap-3 xl:grid-cols-5">
-            <div className="xl:col-span-1">
+          <div className="grid gap-3 lg:grid-cols-[1fr_auto_auto]">
+            <div>
               <DatePicker datePickerType="single" value={formatDateValue(selectedDate)} onChange={(dates) => {
                 const nextDate = dates[0];
                 if (nextDate) {
@@ -274,51 +397,25 @@ export function Contingencies() {
                   setSelectedDate(new Date(nextDate));
                 }
               }}>
-                <DatePickerInput id="selected-date" labelText="Fecha" value={formatDateValue(selectedDate)} />
+                <DatePickerInput id="selected-date" labelText="Fecha" />
               </DatePicker>
             </div>
-            <div className="xl:col-span-1">
-              <Button kind="secondary" onClick={resetToToday}>Hoy</Button>
+            <div className="flex items-end">
+              <Button kind="secondary" onClick={resetToToday}>Hoy simulado</Button>
             </div>
-            <div className="xl:col-span-1">
-              <TextInput id="flight-code" labelText="Código de vuelo" value={flightCodeFilter} onChange={(event) => setFlightCodeFilter(event.target.value)} />
-            </div>
-            <div className="xl:col-span-1">
-              <Select id="origin-filter" labelText="Origen" value={originFilter} onChange={(event) => setOriginFilter(event.target.value)}>
-                <SelectItem value="todos" text="Todos" />
-                {aeropuertosBFF.map((airport) => (
-                  <SelectItem key={airport.iata} value={airport.iata} text={airport.iata} />
-                ))}
-              </Select>
-            </div>
-            <div className="xl:col-span-1">
-              <Select id="destination-filter" labelText="Destino" value={destinationFilter} onChange={(event) => setDestinationFilter(event.target.value)}>
-                <SelectItem value="todos" text="Todos" />
-                {aeropuertosBFF.map((airport) => (
-                  <SelectItem key={airport.iata} value={airport.iata} text={airport.iata} />
-                ))}
-              </Select>
+            <div className="flex items-end">
+              <Button kind="secondary" aria-label="Búsqueda especializada" disabled>
+                Búsqueda especializada
+              </Button>
             </div>
           </div>
 
-          <div className="grid gap-3 lg:grid-cols-[1fr_auto]">
-            <div className="flex flex-wrap gap-2">
-              <Tag type="gray">Total: {summary.total}</Tag>
-              <Tag type="green">Preparados: {summary.preparado}</Tag>
-              <Tag type="blue">En vuelo: {summary.enVuelo}</Tag>
-              <Tag type="purple">Finalizados: {summary.finalizado}</Tag>
-              <Tag type="red">Cancelados: {summary.cancelado}</Tag>
-            </div>
-            <div className="flex items-center gap-2">
-              <label className="text-sm text-panel-text-faint" htmlFor="status-filter">Estado</label>
-              <Select id="status-filter" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
-                <SelectItem value="todos" text="Todos" />
-                <SelectItem value="preparado" text="Preparado" />
-                <SelectItem value="en vuelo" text="En vuelo" />
-                <SelectItem value="finalizado" text="Finalizado" />
-                <SelectItem value="cancelado" text="Cancelado" />
-              </Select>
-            </div>
+          <div className="flex flex-wrap gap-2">
+            <Tag type="gray">Total: {summary.total}</Tag>
+            <Tag type="green">Preparados: {summary.preparado}</Tag>
+            <Tag type="blue">En vuelo: {summary.enVuelo}</Tag>
+            <Tag type="purple">Finalizados: {summary.finalizado}</Tag>
+            <Tag type="red">Cancelados: {summary.cancelado}</Tag>
           </div>
 
           {!hasActiveSimulation && (
@@ -339,76 +436,194 @@ export function Contingencies() {
           )}
 
           <div className="flex-1 overflow-auto rounded-lg border border-panel-border bg-panel-bg">
-            <table className="min-w-full border-collapse text-sm">
-              <thead className="sticky top-0 z-10 bg-panel-bg-subtle text-left text-xs uppercase tracking-wide text-panel-text-faint">
-                <tr>
-                  <th className="border-b border-panel-border px-4 py-3">Código</th>
-                  <th className="border-b border-panel-border px-4 py-3">Fecha</th>
-                  <th className="border-b border-panel-border px-4 py-3">Origen</th>
-                  <th className="border-b border-panel-border px-4 py-3">Destino</th>
-                  <th className="border-b border-panel-border px-4 py-3">Salida local</th>
-                  <th className="border-b border-panel-border px-4 py-3">Llegada local</th>
-                  <th className="border-b border-panel-border px-4 py-3">Capacidad</th>
-                  <th className="border-b border-panel-border px-4 py-3">Estado</th>
-                  <th className="border-b border-panel-border px-4 py-3">Acción</th>
-                </tr>
-              </thead>
-              <tbody>
-                {paginatedOccurrences.length === 0 ? (
-                  <tr>
-                    <td colSpan={9} className="px-4 py-8 text-center text-panel-text-faint">
-                      No hay ocurrencias para los filtros seleccionados.
-                    </td>
-                  </tr>
-                ) : (
-                  paginatedOccurrences.map((row) => {
-                    const canCancel = hasActiveSimulation && row.estado === 'PREPARADO' && !pendingCancellationKey;
-                    return (
-                      <tr key={row.key} className="border-b border-panel-border last:border-b-0 hover:bg-panel-hover">
-                        <td className="px-4 py-3 font-mono text-xs">{row.code}</td>
-                        <td className="px-4 py-3">{formatDateLabel(selectedDate)}</td>
-                        <td className="px-4 py-3">{row.origen}</td>
-                        <td className="px-4 py-3">{row.destino}</td>
-                        <td className="px-4 py-3">{row.salidaLocal}</td>
-                        <td className="px-4 py-3">
-                          {row.llegadaLocal}
-                          {row.llegadaLocalDayOffset > 0 ? ` (+${row.llegadaLocalDayOffset} día${row.llegadaLocalDayOffset > 1 ? 's' : ''})` : ''}
-                        </td>
-                        <td className="px-4 py-3">{row.capacidad}</td>
-                        <td className="px-4 py-3"><Tag type={row.estado === 'CANCELADO' ? 'red' : row.estado === 'EN VUELO' ? 'blue' : row.estado === 'FINALIZADO' ? 'purple' : 'green'}>{statusLabel(row.estado)}</Tag></td>
-                        <td className="px-4 py-3">
-                          <Button
-                            size="sm"
-                            kind="danger"
-                            disabled={!canCancel}
-                            onClick={() => setConfirmationRow(row)}
-                          >
-                            Cancelar
-                          </Button>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
+            {selectedAirportIata && selectedAirportDetails ? (
+              <div className="flex h-full flex-col p-4">
+                <div className="mb-4 flex flex-wrap items-start justify-between gap-3 border-b border-panel-border pb-4">
+                  <div className="min-w-0">
+                    <nav aria-label="Breadcrumb" className="mb-2 text-sm text-panel-text-faint">
+                      <span className="font-medium text-panel-text">Continentes</span>
+                      <span className="mx-2">/</span>
+                      <span>{getContinentLabel(selectedAirportDetails.continente)}</span>
+                      <span className="mx-2">/</span>
+                      <span className="font-medium text-panel-text">{selectedAirportDetails.iata}</span>
+                    </nav>
+                    <h2 className="text-lg font-semibold text-panel-text">{selectedAirportDetails.iata}</h2>
+                    <p className="mt-1 text-sm text-panel-text-faint">
+                      {selectedAirportDetails.ciudad} · {selectedAirportDetails.pais} · {getContinentLabel(selectedAirportDetails.continente)}
+                    </p>
+                  </div>
+                  <Button kind="secondary" size="sm" onClick={handleBackToContinents}>Volver a continentes</Button>
+                </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-panel-border pt-3">
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-panel-text-faint">Mostrar</span>
-              <Select id="page-size" value={String(pageSize)} onChange={(event) => setPageSize(Number(event.target.value))}>
-                <SelectItem value="25" text="25" />
-                <SelectItem value="50" text="50" />
-                <SelectItem value="100" text="100" />
-              </Select>
-              <span className="text-sm text-panel-text-faint">registros</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button kind="secondary" size="sm" disabled={safePage <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>Anterior</Button>
-              <span className="text-sm text-panel-text-faint">Página {safePage} de {totalPages}</span>
-              <Button kind="secondary" size="sm" disabled={safePage >= totalPages} onClick={() => setPage((value) => value + 1)}>Siguiente</Button>
-            </div>
+                <div className="mb-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  <div className="rounded-lg border border-panel-border bg-panel-bg-subtle p-4">
+                    <p className="text-xs uppercase tracking-wide text-panel-text-faint">IATA</p>
+                    <p className="mt-1 font-semibold text-panel-text">{selectedAirportDetails.iata}</p>
+                  </div>
+                  <div className="rounded-lg border border-panel-border bg-panel-bg-subtle p-4">
+                    <p className="text-xs uppercase tracking-wide text-panel-text-faint">Ciudad</p>
+                    <p className="mt-1 font-semibold text-panel-text">{selectedAirportDetails.ciudad}</p>
+                  </div>
+                  <div className="rounded-lg border border-panel-border bg-panel-bg-subtle p-4">
+                    <p className="text-xs uppercase tracking-wide text-panel-text-faint">País</p>
+                    <p className="mt-1 font-semibold text-panel-text">{selectedAirportDetails.pais}</p>
+                  </div>
+                  <div className="rounded-lg border border-panel-border bg-panel-bg-subtle p-4">
+                    <p className="text-xs uppercase tracking-wide text-panel-text-faint">Vuelos de salida</p>
+                    <p className="mt-1 font-semibold text-panel-text">{airportDetailOccurrences.length}</p>
+                  </div>
+                </div>
+
+                <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-panel-border bg-panel-bg">
+                  <table className="min-w-full border-collapse text-sm">
+                    <thead className="sticky top-0 z-10 bg-panel-bg-subtle text-left text-xs uppercase tracking-wide text-panel-text-faint">
+                      <tr>
+                        <th className="border-b border-panel-border px-4 py-3">Código</th>
+                        <th className="border-b border-panel-border px-4 py-3">Fecha</th>
+                        <th className="border-b border-panel-border px-4 py-3">Origen</th>
+                        <th className="border-b border-panel-border px-4 py-3">Destino</th>
+                        <th className="border-b border-panel-border px-4 py-3">Salida local</th>
+                        <th className="border-b border-panel-border px-4 py-3">Llegada local</th>
+                        <th className="border-b border-panel-border px-4 py-3">Capacidad</th>
+                        <th className="border-b border-panel-border px-4 py-3">Estado</th>
+                        <th className="border-b border-panel-border px-4 py-3">Acción</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {paginatedAirportDetailOccurrences.length === 0 ? (
+                        <tr>
+                          <td colSpan={9} className="px-4 py-8 text-center text-panel-text-faint">
+                            No hay vuelos de salida para este aeropuerto en la fecha seleccionada.
+                          </td>
+                        </tr>
+                      ) : (
+                        paginatedAirportDetailOccurrences.map((row) => {
+                          const canCancel = hasActiveSimulation && row.estado === 'PREPARADO' && !pendingCancellationKey;
+                          return (
+                            <tr key={row.key} className="border-b border-panel-border last:border-b-0 hover:bg-panel-hover">
+                              <td className="px-4 py-3 font-mono text-xs">{row.code}</td>
+                              <td className="px-4 py-3">{formatDateLabel(selectedDate)}</td>
+                              <td className="px-4 py-3">{row.origen}</td>
+                              <td className="px-4 py-3">{row.destino}</td>
+                              <td className="px-4 py-3">{row.salidaLocal}</td>
+                              <td className="px-4 py-3">
+                                {row.llegadaLocal}
+                                {row.llegadaLocalDayOffset > 0 ? ` (+${row.llegadaLocalDayOffset} día${row.llegadaLocalDayOffset > 1 ? 's' : ''})` : ''}
+                              </td>
+                              <td className="px-4 py-3">{row.capacidad}</td>
+                              <td className="px-4 py-3"><Tag type={row.estado === 'CANCELADO' ? 'red' : row.estado === 'EN VUELO' ? 'blue' : row.estado === 'FINALIZADO' ? 'purple' : 'green'}>{statusLabel(row.estado)}</Tag></td>
+                              <td className="px-4 py-3">
+                                <Button
+                                  size="sm"
+                                  kind="danger"
+                                  disabled={!canCancel}
+                                  onClick={() => setConfirmationRow(row)}
+                                >
+                                  Cancelar
+                                </Button>
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="mt-4 flex justify-end">
+                  <Pagination
+                    totalItems={airportDetailOccurrences.length}
+                    page={airportDetailSafePage}
+                    pageSize={pageSize}
+                    pageSizes={[25, 50, 100]}
+                    itemsPerPageText="Registros por página"
+                    pageRangeText={(current, total) => `${current}–${total}`}
+                    pageText={(pageNumber) => `Página ${pageNumber}`}
+                    onChange={(event) => {
+                      setPage(event.page);
+                      setPageSize(event.pageSize);
+                    }}
+                  />
+                </div>
+              </div>
+            ) : (
+              <div className="grid gap-4 p-4 [grid-template-columns:repeat(auto-fit,minmax(min(100%,680px),1fr))]">
+                {continentGroups.length === 0 ? (
+                  <div className="rounded-lg border border-panel-border bg-panel-bg-subtle p-6 text-center text-sm text-panel-text-faint">
+                    No hay aeropuertos con datos disponibles para este día.
+                  </div>
+                ) : (
+                  continentGroups.map((group) => (
+                    <section key={group.continent} className="min-w-0 overflow-hidden rounded-lg border border-panel-border bg-panel-bg-subtle">
+                      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-panel-border px-4 py-3">
+                        <div>
+                          <h2 className="text-base font-semibold text-panel-text">{group.label}</h2>
+                          <p className="text-xs uppercase tracking-wide text-panel-text-faint">
+                            {group.airports.length} aeropuertos
+                          </p>
+                        </div>
+                        <Tag type="gray">{group.airports.length} aeropuertos</Tag>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="min-w-full border-collapse text-sm">
+                          <thead className="bg-panel-bg text-left text-xs uppercase tracking-wide text-panel-text-faint">
+                            <tr>
+                              <th className="border-b border-panel-border px-4 py-3">IATA</th>
+                              <th className="border-b border-panel-border px-4 py-3">Ciudad</th>
+                              <th className="border-b border-panel-border px-4 py-3">País</th>
+                              <th className="border-b border-panel-border px-4 py-3">Vuelos</th>
+                              <th className="border-b border-panel-border px-4 py-3">Preparados</th>
+                              <th className="border-b border-panel-border px-4 py-3">En vuelo</th>
+                              <th className="border-b border-panel-border px-4 py-3">Finalizados</th>
+                              <th className="border-b border-panel-border px-4 py-3">Cancelados</th>
+                              <th className="border-b border-panel-border px-4 py-3">Acción</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {group.airports.map((airport) => (
+                              <tr
+                                key={airport.iata}
+                                tabIndex={0}
+                                role="button"
+                                className="cursor-pointer border-b border-panel-border last:border-b-0 hover:bg-panel-hover"
+                                onClick={() => handleSelectAirport(airport.iata)}
+                                onKeyDown={(event) => {
+                                  if (event.key === 'Enter' || event.key === ' ') {
+                                    event.preventDefault();
+                                    handleSelectAirport(airport.iata);
+                                  }
+                                }}
+                              >
+                                <td className="px-4 py-3 font-mono text-xs">{airport.iata}</td>
+                                <td className="px-4 py-3">{airport.ciudad}</td>
+                                <td className="px-4 py-3">{airport.pais}</td>
+                                <td className="px-4 py-3">{airport.vuelos}</td>
+                                <td className="px-4 py-3">{airport.preparado}</td>
+                                <td className="px-4 py-3">{airport.enVuelo}</td>
+                                <td className="px-4 py-3">{airport.finalizado}</td>
+                                <td className="px-4 py-3">{airport.cancelado}</td>
+                                <td className="px-4 py-3">
+                                  <Button
+                                    size="sm"
+                                    kind="secondary"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      handleSelectAirport(airport.iata);
+                                    }}
+                                  >
+                                    Ver vuelos
+                                  </Button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </section>
+                  ))
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>
