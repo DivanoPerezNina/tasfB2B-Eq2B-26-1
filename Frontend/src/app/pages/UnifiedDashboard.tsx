@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 
 const COLLAPSE_ALL_SECTIONS_EVENT = 'tasfb2b:collapse-all-sections';
+const FLEET_PAGE_SIZE = 50;
 
 // ─── Collapsible Section ───
 function Section({
@@ -166,6 +167,22 @@ function csvCell(value: unknown) {
   return `"${text.replace(/"/g, '""')}"`;
 }
 
+function normalizeLookupText(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .trim();
+}
+
+function baggageGroupLabel(shipmentId: string, baggageCount: number) {
+  if (baggageCount <= 0) return 'Sin maletas';
+  const first = `${shipmentId}-M001`;
+  if (baggageCount === 1) return first;
+  const last = `${shipmentId}-M${String(baggageCount).padStart(3, '0')}`;
+  return `${first} … ${last}`;
+}
+
 
 export function UnifiedDashboard() {
   const {
@@ -198,6 +215,8 @@ export function UnifiedDashboard() {
   const [shipmentMetadataByIndex, setShipmentMetadataByIndex] = useState<Map<number, ShipmentMetadata>>(new Map());
   const [selectedShipmentIndex, setSelectedShipmentIndex] = useState<number | null>(null);
   const [showStableReport, setShowStableReport] = useState(false);
+  const [fleetQuery, setFleetQuery] = useState('');
+  const [fleetPage, setFleetPage] = useState(1);
   const [realClockMs, setRealClockMs] = useState(() => Date.now());
   const [executionTiming, setExecutionTiming] = useState<{ startedAtMs: number | null; endedAtMs: number | null }>(() => {
     try {
@@ -559,6 +578,93 @@ export function UnifiedDashboard() {
     }).filter((row) => row.flight).sort((a, b) => b.percentage - a.percentage || b.maletas - a.maletas);
   }, [aeropuertosBackend, planTramos, tiempoSimUTC, vuelosBD]);
 
+  const activeFlightBySchedule = useMemo(() => {
+    const result = new globalThis.Map<string, typeof activeFlightsByOccupancy[number]>();
+    for (const row of activeFlightsByOccupancy) {
+      if (!row.flight) continue;
+      const key = `${row.flight.idOrigen}-${row.flight.idDestino}-${normalizarMinutoDia(row.flight.salidaUTC)}`;
+      result.set(key, row);
+    }
+    return result;
+  }, [activeFlightsByOccupancy]);
+
+  const fleetRows = useMemo(() => {
+    const q = normalizeLookupText(fleetQuery);
+    return vuelosBD.map((flight, index) => {
+      const origin = aeropuertosBackend.find((airport) => airport.id === flight.idOrigen);
+      const destination = aeropuertosBackend.find((airport) => airport.id === flight.idDestino);
+      const originDetails = aeropuertosBFF.find((airport) => airport.iata === origin?.iata);
+      const destinationDetails = aeropuertosBFF.find((airport) => airport.iata === destination?.iata);
+      const key = `${flight.idOrigen}-${flight.idDestino}-${normalizarMinutoDia(flight.salidaUTC)}`;
+      const active = activeFlightBySchedule.get(key);
+      const load = active?.maletas ?? 0;
+      const capacity = flight.capacidadMaxima ?? 0;
+      const percentage = capacity > 0 ? (load / capacity) * 100 : 0;
+      const unitCode = `${origin?.iata ?? flight.idOrigen}-${destination?.iata ?? flight.idDestino}-${String(Math.floor(normalizarMinutoDia(flight.salidaUTC) / 60)).padStart(2, '0')}${String(normalizarMinutoDia(flight.salidaUTC) % 60).padStart(2, '0')}`;
+      const selectionFlight: Vuelo = active?.flight ?? { ...flight, ocupacionActual: load };
+      const haystack = normalizeLookupText([
+        unitCode,
+        origin?.iata,
+        destination?.iata,
+        originDetails?.ciudad,
+        originDetails?.pais,
+        destinationDetails?.ciudad,
+        destinationDetails?.pais,
+      ].filter(Boolean).join(' '));
+      return {
+        index,
+        unitCode,
+        flight: selectionFlight,
+        origin,
+        destination,
+        originDetails,
+        destinationDetails,
+        load,
+        capacity,
+        percentage,
+        active: Boolean(active),
+        haystack,
+      };
+    }).filter((row) => !q || row.haystack.includes(q))
+      .sort((a, b) => Number(b.active) - Number(a.active) || b.percentage - a.percentage || a.unitCode.localeCompare(b.unitCode));
+  }, [activeFlightBySchedule, aeropuertosBFF, aeropuertosBackend, fleetQuery, vuelosBD]);
+
+  useEffect(() => {
+    setFleetPage(1);
+  }, [fleetQuery]);
+
+  const fleetPageCount = Math.max(1, Math.ceil(fleetRows.length / FLEET_PAGE_SIZE));
+  const fleetSafePage = Math.min(fleetPage, fleetPageCount);
+  const fleetPageRows = useMemo(() => {
+    const start = (fleetSafePage - 1) * FLEET_PAGE_SIZE;
+    return fleetRows.slice(start, start + FLEET_PAGE_SIZE);
+  }, [fleetRows, fleetSafePage]);
+
+  const globalFleetSummary = useMemo(() => {
+    const occupied = activeFlightsByOccupancy.reduce((sum, row) => sum + row.maletas, 0);
+    const capacity = activeFlightsByOccupancy.reduce((sum, row) => sum + Math.max(0, row.capacity), 0);
+    const percentage = capacity > 0 ? (occupied / capacity) * 100 : 0;
+    const status = occupied <= 0
+      ? 'vacio'
+      : percentage <= config.thresholds.flight.green
+        ? 'verde'
+        : percentage <= config.thresholds.flight.yellow
+          ? 'ambar'
+          : 'rojo';
+    const counts = { vacio: 0, verde: 0, ambar: 0, rojo: 0 };
+    for (const row of activeFlightsByOccupancy) {
+      const rowStatus = row.maletas <= 0
+        ? 'vacio'
+        : row.percentage <= config.thresholds.flight.green
+          ? 'verde'
+          : row.percentage <= config.thresholds.flight.yellow
+            ? 'ambar'
+            : 'rojo';
+      counts[rowStatus] += 1;
+    }
+    return { occupied, capacity, percentage, status, counts, activeUnits: activeFlightsByOccupancy.length };
+  }, [activeFlightsByOccupancy, config.thresholds.flight]);
+
   const getWarehouseOccupancy = (iata: string) => {
     const front = airports.find(a => a.code === iata);
     const liveStats = front ? getAirportStats(front.id) : null;
@@ -582,8 +688,8 @@ export function UnifiedDashboard() {
   const getWarehouseStatus = (iata: string): WarehouseStatusFilter => {
     const { occ, pct } = getWarehouseOccupancy(iata);
     if (occ <= 0) return 'vacio';
-    if (pct > 80) return 'rojo';
-    if (pct > 60) return 'ambar';
+    if (pct > config.thresholds.warehouse.yellow) return 'rojo';
+    if (pct > config.thresholds.warehouse.green) return 'ambar';
     return 'verde';
   };
 
@@ -603,7 +709,7 @@ export function UnifiedDashboard() {
         return byQuery && byStatus;
       })
       .sort((a, b) => b.stats.pct - a.stats.pct || a.ap.iata.localeCompare(b.ap.iata));
-  }, [warehouseQuery, warehouseStatusFilter, aeropuertosBFF, airports, aeropuertosState]);
+  }, [warehouseQuery, warehouseStatusFilter, aeropuertosBFF, airports, aeropuertosState, config.thresholds.warehouse]);
 
   const globalWarehouseSummary = useMemo(() => {
     const liveByCode = new globalThis.Map(aeropuertosState.map((airport) => [airport.iata, airport]));
@@ -707,6 +813,64 @@ export function UnifiedDashboard() {
       esVueloReal: Boolean(vueloReal),
     };
   }, [selectedVuelo, vuelosBD]);
+
+  const selectedFlightOccurrence = useMemo(() => {
+    if (!selectedVuelo) return null;
+    const origin = getAeropuertoById(selectedVuelo.idOrigen);
+    const destination = getAeropuertoById(selectedVuelo.idDestino);
+    if (!origin || !destination) return null;
+
+    const selectedDepartureDay = normalizarMinutoDia(selectedVuelo.salidaUTC);
+    const selectedDuration = duracionMinDia(
+      selectedDepartureDay,
+      normalizarMinutoDia(selectedVuelo.llegadaUTC),
+    );
+    const candidates = planTramos.filter((leg) =>
+      leg.desde === origin.iata
+      && leg.hasta === destination.iata
+      && Math.abs(normalizarMinutoDia(leg.salidaUTC) - selectedDepartureDay) <= 2
+      && Math.abs(duracionMinDia(normalizarMinutoDia(leg.salidaUTC), normalizarMinutoDia(leg.llegadaUTC)) - selectedDuration) <= 5,
+    );
+    if (candidates.length === 0) return null;
+
+    const selectedIsAbsolute = selectedVuelo.salidaUTC > 1440;
+    return [...candidates].sort((a, b) => {
+      if (selectedIsAbsolute) {
+        return Math.abs(a.salidaUTC - selectedVuelo.salidaUTC) - Math.abs(b.salidaUTC - selectedVuelo.salidaUTC);
+      }
+      const score = (leg: PlanTramoVisual) => {
+        if (tiempoSimUTC >= leg.salidaUTC && tiempoSimUTC < leg.llegadaUTC) return 0;
+        if (leg.salidaUTC >= tiempoSimUTC) return 1_000 + (leg.salidaUTC - tiempoSimUTC);
+        return 1_000_000 + (tiempoSimUTC - leg.salidaUTC);
+      };
+      return score(a) - score(b);
+    })[0];
+  }, [aeropuertosBackend, planTramos, selectedVuelo, tiempoSimUTC]);
+
+  const selectedFlightAssignments = useMemo(() => {
+    if (!selectedFlightOccurrence) return [];
+    const assignments = new globalThis.Map<number, { envioIndice: number; maletas: number }>();
+    for (const leg of planTramos) {
+      if (
+        leg.desde !== selectedFlightOccurrence.desde
+        || leg.hasta !== selectedFlightOccurrence.hasta
+        || Math.abs(leg.salidaUTC - selectedFlightOccurrence.salidaUTC) > 1
+        || Math.abs(leg.llegadaUTC - selectedFlightOccurrence.llegadaUTC) > 1
+      ) continue;
+      const current = assignments.get(leg.envioIndice);
+      assignments.set(leg.envioIndice, {
+        envioIndice: leg.envioIndice,
+        maletas: Math.max(current?.maletas ?? 0, leg.maletas),
+      });
+    }
+    return Array.from(assignments.values()).sort((a, b) => a.envioIndice - b.envioIndice);
+  }, [planTramos, selectedFlightOccurrence]);
+
+  useEffect(() => {
+    ensureShipmentMetadata(selectedFlightAssignments.map((assignment) => assignment.envioIndice));
+  }, [ensureShipmentMetadata, selectedFlightAssignments]);
+
+  const selectedFlightBaggageTotal = selectedFlightAssignments.reduce((sum, assignment) => sum + assignment.maletas, 0);
 
   const realCurrentTimeText = new Intl.DateTimeFormat('es-PE', {
     hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
@@ -1119,6 +1283,79 @@ export function UnifiedDashboard() {
             </div>
           </Section>
 
+          {/* G01/G02 — ocupación global de la flota activa */}
+          <Section
+            title="Ocupación global de flota"
+            icon={<Plane className="h-3.5 w-3.5" />}
+            badge={`${globalFleetSummary.percentage.toFixed(1)}%`}
+          >
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className={`h-3 w-3 rounded-full ${globalFleetSummary.status === 'rojo' ? 'bg-red-500' : globalFleetSummary.status === 'ambar' ? 'bg-yellow-500' : globalFleetSummary.status === 'verde' ? 'bg-green-500' : 'bg-slate-400'}`} />
+                  <span className="text-[11px] font-semibold capitalize text-panel-text">{globalFleetSummary.status === 'vacio' ? 'Vacío' : globalFleetSummary.status}</span>
+                </div>
+                <span className="text-[11px] font-semibold text-panel-text">{globalFleetSummary.occupied.toLocaleString('es-PE')} / {globalFleetSummary.capacity.toLocaleString('es-PE')} maletas</span>
+              </div>
+              <div className="h-2 overflow-hidden rounded-full bg-panel-section-bg">
+                <div
+                  className={`h-full ${globalFleetSummary.status === 'rojo' ? 'bg-red-500' : globalFleetSummary.status === 'ambar' ? 'bg-yellow-500' : globalFleetSummary.status === 'verde' ? 'bg-green-500' : 'bg-slate-400'}`}
+                  style={{ width: `${Math.min(globalFleetSummary.percentage, 100)}%` }}
+                />
+              </div>
+              <div className="flex items-center justify-between text-[9px] text-panel-text-faint">
+                <span>{globalFleetSummary.activeUnits} unidades activas</span>
+                <span>{vuelosBD.length.toLocaleString('es-PE')} unidades catalogadas</span>
+              </div>
+              <div className="grid grid-cols-4 gap-1 text-center text-[9px]">
+                <span className="rounded bg-slate-500/10 px-1 py-1 text-panel-text-muted">Vacíos {globalFleetSummary.counts.vacio}</span>
+                <span className="rounded bg-green-500/10 px-1 py-1 text-green-500">Verdes {globalFleetSummary.counts.verde}</span>
+                <span className="rounded bg-yellow-500/10 px-1 py-1 text-yellow-500">Ámbar {globalFleetSummary.counts.ambar}</span>
+                <span className="rounded bg-red-500/10 px-1 py-1 text-red-500">Rojos {globalFleetSummary.counts.rojo}</span>
+              </div>
+            </div>
+          </Section>
+
+          {/* E02 — catálogo completo de unidades de transporte */}
+          <Section title="Unidades de transporte" icon={<Plane className="h-3.5 w-3.5" />} badge={vuelosBD.length}>
+            <div className="space-y-2">
+              <input
+                value={fleetQuery}
+                onChange={(event) => setFleetQuery(event.target.value)}
+                placeholder="Buscar ruta, ciudad o país"
+                className="w-full rounded border border-panel-border bg-panel-bg px-2.5 py-2 text-[10px] text-panel-text outline-none focus:border-blue-500"
+              />
+              <div className="max-h-64 space-y-1 overflow-y-auto pr-1">
+                {fleetPageRows.map((row) => (
+                  <button
+                    key={`${row.index}-${row.unitCode}`}
+                    type="button"
+                    onClick={() => handleFlightSelect(row.flight)}
+                    className={`w-full rounded border px-2 py-2 text-left transition ${selectedVuelo && selectedVuelo.idOrigen === row.flight.idOrigen && selectedVuelo.idDestino === row.flight.idDestino && normalizarMinutoDia(selectedVuelo.salidaUTC) === normalizarMinutoDia(row.flight.salidaUTC) ? 'border-indigo-500 bg-indigo-500/10' : 'border-panel-border hover:bg-panel-hover'}`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate font-mono text-[10px] font-semibold text-panel-text">{row.unitCode}</span>
+                      <span className={`rounded px-1.5 py-0.5 text-[8px] font-semibold ${row.active ? 'bg-green-500/15 text-green-500' : 'bg-slate-500/10 text-panel-text-faint'}`}>{row.active ? 'Activa' : 'Programada'}</span>
+                    </div>
+                    <p className="mt-1 truncate text-[9px] text-panel-text-faint">
+                      {row.origin?.iata} — {row.originDetails?.pais ?? 'Sin país'} → {row.destination?.iata} — {row.destinationDetails?.pais ?? 'Sin país'}
+                    </p>
+                    <div className="mt-1 flex items-center justify-between text-[9px] text-panel-text-faint">
+                      <span>{formatMinutesUTC(row.flight.salidaUTC)} UTC</span>
+                      <span>{row.load}/{row.capacity || '—'} maletas {row.capacity > 0 ? `· ${row.percentage.toFixed(0)}%` : ''}</span>
+                    </div>
+                  </button>
+                ))}
+                {fleetPageRows.length === 0 && <p className="rounded bg-panel-section-bg px-3 py-3 text-center text-[10px] text-panel-text-faint">No se encontraron unidades.</p>}
+              </div>
+              <div className="flex items-center justify-between gap-2 border-t border-panel-border pt-2 text-[9px] text-panel-text-faint">
+                <button type="button" disabled={fleetSafePage <= 1} onClick={() => setFleetPage((page) => Math.max(1, page - 1))} className="rounded border border-panel-border px-2 py-1 disabled:opacity-40">Anterior</button>
+                <span>Página {fleetSafePage} de {fleetPageCount} · {fleetRows.length.toLocaleString('es-PE')} unidades</span>
+                <button type="button" disabled={fleetSafePage >= fleetPageCount} onClick={() => setFleetPage((page) => Math.min(fleetPageCount, page + 1))} className="rounded border border-panel-border px-2 py-1 disabled:opacity-40">Siguiente</button>
+              </div>
+            </div>
+          </Section>
+
           {/* E12 — vuelos activos ordenados por ocupación */}
           <Section title="Vuelos por ocupación" icon={<Plane className="h-3.5 w-3.5" />} badge={activeFlightsByOccupancy.length}>
             <div className="space-y-1.5">
@@ -1404,7 +1641,7 @@ export function UnifiedDashboard() {
             {selectedVuelo ? (() => {
               const orig = getAeropuertoById(selectedVuelo.idOrigen);
               const dest = getAeropuertoById(selectedVuelo.idDestino);
-              const occ = selectedFlightMeta?.maletasTramo ?? 0;
+              const occ = selectedFlightAssignments.length > 0 ? selectedFlightBaggageTotal : (selectedFlightMeta?.maletasTramo ?? 0);
               const cap = selectedFlightMeta?.capacidadReal ?? 0;
               const pct = cap > 0 ? (occ / cap) * 100 : 0;
               return (
@@ -1463,6 +1700,36 @@ export function UnifiedDashboard() {
                       <p className="text-[10px] text-panel-text-faint">
                         La capacidad real del vuelo no pudo resolverse con certeza desde los datos actuales.
                       </p>
+                    )}
+                  </div>
+                  <div className="border-t border-panel-border pt-2">
+                    <div className="mb-1.5 flex items-center justify-between gap-2">
+                      <p className="text-[10px] font-semibold text-panel-text">Envíos y maletas transportadas</p>
+                      <span className="text-[9px] text-panel-text-faint">{selectedFlightAssignments.length} envíos · {selectedFlightBaggageTotal} maletas</span>
+                    </div>
+                    {selectedFlightAssignments.length > 0 ? (
+                      <div className="max-h-44 space-y-1 overflow-y-auto pr-1">
+                        {selectedFlightAssignments.map((assignment) => {
+                          const metadata = shipmentMetadataByIndex.get(assignment.envioIndice);
+                          const shipmentId = shipmentLabel(metadata, assignment.envioIndice);
+                          return (
+                            <button
+                              key={assignment.envioIndice}
+                              type="button"
+                              onClick={() => selectShipment(assignment.envioIndice, metadata)}
+                              className="w-full rounded border border-panel-border px-2 py-2 text-left hover:bg-panel-hover"
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="truncate font-mono text-[10px] font-semibold text-panel-text">{shipmentId}</span>
+                                <span className="text-[9px] font-semibold text-panel-text">{assignment.maletas} maletas</span>
+                              </div>
+                              <p className="mt-1 truncate font-mono text-[8px] text-panel-text-faint">{baggageGroupLabel(shipmentId, assignment.maletas)}</p>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p className="rounded bg-panel-section-bg px-2 py-2 text-center text-[9px] text-panel-text-faint">Esta ocurrencia no tiene envíos asignados en el plan vigente.</p>
                     )}
                   </div>
                 </div>

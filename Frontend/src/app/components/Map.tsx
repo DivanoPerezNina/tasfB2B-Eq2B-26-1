@@ -169,6 +169,19 @@ function getFlightOccupancyColor(
   return '#881337';
 }
 
+function getWarehouseOccupancyColor(status: 'vacio' | 'verde' | 'ambar' | 'rojo', isDarkTheme: boolean): string {
+  if (isDarkTheme) {
+    if (status === 'vacio') return '#94a3b8';
+    if (status === 'verde') return '#22c55e';
+    if (status === 'ambar') return '#f59e0b';
+    return '#ef4444';
+  }
+  if (status === 'vacio') return '#64748b';
+  if (status === 'verde') return '#15803d';
+  if (status === 'ambar') return '#b45309';
+  return '#991b1b';
+}
+
 function airportContinentFromBackend(a?: Aeropuerto): Continent | undefined {
   if (!a) return undefined;
   if (a.continente === 1) return 'America';
@@ -449,14 +462,14 @@ export const Map = memo(function Map({
 
   const getAirportStatus = useCallback((airport: Airport): 'verde' | 'ambar' | 'rojo' | 'vacio' => {
     const live = aeropuertosState.find(a => a.iata === airport.code);
-    const occ = live?.maletas_almacen ?? airport.currentOccupancy;
-    if (occ <= 0) return 'vacio';
-    if (live?.semaforo) return live.semaforo;
-    const pct = airport.warehouseCapacity > 0 ? (occ / airport.warehouseCapacity) * 100 : 0;
-    if (pct > 80) return 'rojo';
-    if (pct > 60) return 'ambar';
+    const occupied = live?.maletas_almacen ?? airport.currentOccupancy;
+    const capacity = live?.capacidad_almacen ?? airport.warehouseCapacity;
+    if (occupied <= 0) return 'vacio';
+    const percentage = capacity > 0 ? (occupied / capacity) * 100 : 0;
+    if (percentage > config.thresholds.warehouse.yellow) return 'rojo';
+    if (percentage > config.thresholds.warehouse.green) return 'ambar';
     return 'verde';
-  }, [aeropuertosState]);
+  }, [aeropuertosState, config.thresholds.warehouse]);
 
   const filteredByContinent = useMemo(() =>
     airports.filter(a => {
@@ -562,20 +575,32 @@ export const Map = memo(function Map({
   const visibleCount = visibleAirports.length;
   const compactCount = compactAirports.length;
 
-  // Los aeropuertos usan un marcador azul constante. La ocupación sigue
-  // disponible en el panel operativo y en sus indicadores, sin mezclarla con
-  // el semáforo de carga de los aviones.
-  const getAirportColor = useCallback((): string => mc.airport, [mc.airport]);
-
   const getLiveOccupancy = useCallback((airportCode: string, fallback: { occ: number; cap: number }) => {
     const live = aeropuertosState.find(a => a.iata === airportCode);
     if (live) {
-      const pct = live.ocupacion * 100;
+      const pct = live.capacidad_almacen > 0 ? (live.maletas_almacen / live.capacidad_almacen) * 100 : 0;
       return { occ: live.maletas_almacen, cap: live.capacidad_almacen, pct };
     }
     const pct = fallback.cap > 0 ? (fallback.occ / fallback.cap) * 100 : 0;
     return { occ: fallback.occ, cap: fallback.cap, pct };
   }, [aeropuertosState]);
+
+  // C21: el propio ícono del aeropuerto refleja el semáforo de ocupación
+  // del almacén, tanto en marcador principal como en marcador compacto.
+  const getAirportColor = useCallback((airport: Airport): string => {
+    const { occ, pct } = getLiveOccupancy(airport.code, {
+      occ: airport.currentOccupancy,
+      cap: airport.warehouseCapacity,
+    });
+    const status = occ <= 0
+      ? 'vacio'
+      : pct <= config.thresholds.warehouse.green
+        ? 'verde'
+        : pct <= config.thresholds.warehouse.yellow
+          ? 'ambar'
+          : 'rojo';
+    return getWarehouseOccupancyColor(status, isDarkTheme);
+  }, [config.thresholds.warehouse, getLiveOccupancy, isDarkTheme]);
 
   return (
     <div className="relative h-full w-full overflow-hidden rounded-lg border border-panel-border" style={{ backgroundColor: mc.bg }}>
@@ -963,6 +988,7 @@ export const Map = memo(function Map({
             const isHovered = hoveredAirport === airport.id;
             const compactRadius = (isHovered ? 3.1 : 1.8) * markerScale;
             const compactLabelSize = 7 / zoom;
+            const compactColor = getAirportColor(airport);
             return (
               <Marker
                 key={`compact-airport-${airport.id}`}
@@ -978,13 +1004,13 @@ export const Map = memo(function Map({
                 {isHovered && (
                   <circle
                     r={compactRadius + 3 * markerScale}
-                    fill={mc.compactAirport}
+                    fill={compactColor}
                     opacity={0.2}
                   />
                 )}
                 <circle
                   r={compactRadius}
-                  fill={mc.compactAirport}
+                  fill={compactColor}
                   stroke={mc.bg}
                   strokeWidth={0.9 * markerScale}
                 />
@@ -1014,7 +1040,7 @@ export const Map = memo(function Map({
           {visibleAirports.map(airport => {
             const isSelected = selectedAirportId === airport.id;
             const isHovered = hoveredAirport === airport.id;
-            const color = getAirportColor(airport.code, (airport.currentOccupancy / airport.warehouseCapacity) * 100);
+            const color = getAirportColor(airport);
 
             const tierR = 4.2;
             const r = ((isSelected || isHovered) ? tierR + 1.3 : tierR) * markerScale;
@@ -1170,17 +1196,19 @@ export const Map = memo(function Map({
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '.375rem', borderTop: '1px solid var(--panel-border)', paddingTop: '.5rem' }}>
-            <p style={{ fontWeight: 600, margin: 0, color: 'var(--panel-text-faint)' }}>Aeropuertos</p>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '.375rem' }}>
-                <div className="h-3 w-3 rounded-full" style={{ backgroundColor: 'var(--airport-marker)', flexShrink: 0 }} />
-                <span style={{ fontSize: 11, color: 'var(--map-overlay-text-muted)' }}>Marcador principal</span>
+            <p style={{ fontWeight: 600, margin: 0, color: 'var(--panel-text-faint)' }}>Ocupación de almacenes en aeropuertos</p>
+            {[
+              { color: getWarehouseOccupancyColor('vacio', isDarkTheme), label: 'Vacío (0 maletas)' },
+              { color: getWarehouseOccupancyColor('verde', isDarkTheme), label: `Verde (≤${config.thresholds.warehouse.green}%)` },
+              { color: getWarehouseOccupancyColor('ambar', isDarkTheme), label: `Ámbar (${config.thresholds.warehouse.green}-${config.thresholds.warehouse.yellow}%)` },
+              { color: getWarehouseOccupancyColor('rojo', isDarkTheme), label: `Rojo (>${config.thresholds.warehouse.yellow}%)` },
+            ].map((item) => (
+              <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: '.5rem' }}>
+                <div className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color, flexShrink: 0 }} />
+                <span style={{ fontSize: 11, color: 'var(--map-overlay-text-muted)' }}>{item.label}</span>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '.375rem' }}>
-                <div className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: 'var(--airport-marker-compact)', flexShrink: 0 }} />
-                <span style={{ fontSize: 11, color: 'var(--map-overlay-text-muted)' }}>Marcador compacto al alejar</span>
-              </div>
-            </div>
+            ))}
+            <span style={{ fontSize: 10, color: 'var(--map-overlay-text-muted)' }}>El marcador compacto conserva el mismo semáforo al alejar el mapa.</span>
           </div>
         </div>
         )}
