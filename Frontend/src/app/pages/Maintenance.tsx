@@ -299,49 +299,51 @@ export function Maintenance() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-panel-bg text-panel-text">
-      <header className="flex-shrink-0 border-b border-panel-border px-6 py-5">
-        <div className="mx-auto w-full max-w-[1760px]">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <h1 className="text-3xl font-semibold tracking-tight">Mantenimiento</h1>
-              <p className="mt-2 max-w-4xl text-sm leading-6 text-panel-text-faint">
-                Administración individual de los datos maestros utilizados por el planificador. Realiza cambios fuera de una simulación activa.
-              </p>
-            </div>
-            {section && <Button kind="ghost" onClick={() => navigate('/mantenimiento')}>Volver al menú</Button>}
-          </div>
+      <div
+        className="flex flex-shrink-0 flex-wrap items-center justify-between gap-4 border-b border-panel-border px-6 py-3"
+        style={{ background: 'var(--cds-background)' }}
+      >
+        <div className="flex flex-wrap items-center gap-3 text-sm">
+          <strong className="text-panel-text">Mantenimiento</strong>
+          <span className="text-panel-text-faint">Administración de datos maestros del planificador</span>
+          {section && <Tag size="sm" type="blue">{cards.find((card) => card.id === section)?.title}</Tag>}
         </div>
-      </header>
+        {section && <Button size="sm" kind="ghost" onClick={() => navigate('/mantenimiento')}>Volver al menú</Button>}
+      </div>
 
       <main className="min-h-0 flex-1 overflow-auto px-6 py-5">
         <div className="mx-auto w-full max-w-[1760px]">
-          <div className="grid gap-4 md:grid-cols-3">
+          <div className="flex flex-wrap border-b border-panel-border" role="tablist" aria-label="Módulos de mantenimiento">
             {cards.map((card) => (
               <button
                 type="button"
+                role="tab"
+                aria-selected={section === card.id}
                 key={card.id}
                 onClick={() => navigate(`/mantenimiento/${card.id}`)}
-                className={`border p-5 text-left transition hover:border-blue-500 hover:bg-panel-hover ${section === card.id ? 'border-blue-500 bg-blue-500/10' : 'border-panel-border bg-panel-bg-subtle'}`}
+                className={`min-w-[220px] border-b-2 px-5 py-3 text-left transition ${section === card.id ? 'border-blue-500 bg-panel-hover text-panel-text' : 'border-transparent text-panel-text-faint hover:bg-panel-hover hover:text-panel-text'}`}
               >
-                <div className="flex items-start justify-between gap-3">
-                  <h2 className="text-lg font-semibold">{card.title}</h2>
-                </div>
-                <p className="mt-2 text-sm leading-5 text-panel-text-faint">{card.description}</p>
+                <span className="block text-sm font-semibold">{card.title}</span>
+                <span className="mt-1 block text-xs">{card.description}</span>
               </button>
             ))}
           </div>
 
           {!section ? (
-            <section className="mt-6 border border-panel-border bg-panel-bg-subtle p-8 text-center">
-              <h2 className="text-xl font-semibold">Selecciona un mantenimiento</h2>
-              <p className="mt-2 text-sm text-panel-text-faint">Cada opción abre su tabla y las acciones Crear, Editar y Eliminar.</p>
-            </section>
+            <InlineNotification
+              className="mt-5 max-w-3xl"
+              kind="info"
+              lowContrast
+              hideCloseButton
+              title="Selecciona un mantenimiento"
+              subtitle="Abre Aeropuertos y almacenes, Unidades de transporte o Tramos y horarios para consultar y administrar sus registros."
+            />
           ) : (
-            <section className="mt-6 border border-panel-border bg-panel-bg-subtle">
+            <section className="mt-5 border border-panel-border bg-panel-bg-subtle">
               <div className="flex flex-wrap items-end justify-between gap-4 border-b border-panel-border p-5">
                 <div>
                   <p className="text-xs uppercase tracking-wide text-panel-text-faint">Módulo activo</p>
-                  <h2 className="mt-1 text-2xl font-semibold">{cards.find((card) => card.id === section)?.title}</h2>
+                  <h2 className="mt-1 text-xl font-semibold">{cards.find((card) => card.id === section)?.title}</h2>
                   {section === 'tramos' && (
                     <p className="mt-1 text-sm text-panel-text-faint">Los tramos comparten el catálogo operativo de vuelos; aquí se administran específicamente ruta y horarios.</p>
                   )}

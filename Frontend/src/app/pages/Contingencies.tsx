@@ -770,22 +770,39 @@ export function Contingencies() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-panel-bg text-panel-text">
-      <header className="flex-shrink-0 border-b border-panel-border bg-panel-bg px-6 py-5">
-        <div className="mx-auto w-full max-w-[1760px]">
-          <h1 className="text-3xl font-semibold tracking-tight text-panel-text">Vuelos y cancelaciones</h1>
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-panel-text-faint">
-            Consulta la programación por continente y cancela ocurrencias futuras antes de su salida.
-          </p>
+      <div
+        className="flex flex-shrink-0 flex-wrap items-center justify-between gap-4 border-b border-panel-border px-6 py-3"
+        style={{ background: 'var(--cds-background)' }}
+      >
+        <div className="flex flex-wrap items-center gap-3 text-sm">
+          <strong className="text-panel-text">Cancelaciones</strong>
+          <span className="text-panel-text-faint">Consulta y cancelación de ocurrencias futuras</span>
+          <Tag size="sm" type={hasCancelablePeriodSimulation ? 'green' : 'gray'}>
+            {hasCancelablePeriodSimulation ? 'Disponible' : 'Solo lectura'}
+          </Tag>
+          {hasValidSimulationTime && (
+            <span className="font-mono text-xs text-panel-text-faint">{formatSimulationMoment(referenceTimeMinutes)} UTC</span>
+          )}
         </div>
-      </header>
+        <Button
+          type="button"
+          kind="ghost"
+          size="sm"
+          aria-label="Abrir búsqueda especializada"
+          aria-expanded={isSearchModalOpen}
+          onClick={openSearchModal}
+        >
+          Búsqueda especializada
+        </Button>
+      </div>
 
       <main className="min-h-0 flex-1 overflow-hidden px-6 py-5">
-        <div className="mx-auto flex h-full w-full max-w-[1760px] flex-col gap-5 overflow-hidden">
+        <div className="mx-auto flex h-full w-full max-w-[1760px] flex-col gap-4 overflow-hidden">
           {viewMode !== 'airport' && (
-            <section className="flex-shrink-0 rounded-xl border border-panel-border bg-panel-bg-subtle p-5 shadow-sm">
+            <section className="flex-shrink-0 border-b border-panel-border pb-4">
               <div className="flex flex-wrap items-end justify-between gap-4">
                 <div className="flex flex-wrap items-end gap-3">
-                  <div className="w-full min-w-[280px] max-w-[340px]">
+                  <div className="w-full min-w-[260px] max-w-[320px]">
                     <DatePicker datePickerType="single" value={formatDateValue(selectedDate)} onChange={(dates) => {
                       const nextDate = dates[0];
                       if (nextDate) {
@@ -802,13 +819,13 @@ export function Contingencies() {
                   </div>
 
                   {isDateFilterApplied && (
-                    <div className="inline-flex h-10 items-center gap-2 rounded-full border border-blue-500/50 bg-blue-500/10 px-4 text-sm text-panel-text">
-                      <span>Filtro aplicado: <strong>{formatDateLabel(selectedDate)}</strong></span>
+                    <div className="inline-flex h-10 items-center gap-2 border border-blue-500/50 bg-blue-500/10 px-3 text-sm text-panel-text">
+                      <span>Filtro: <strong>{formatDateLabel(selectedDate)}</strong></span>
                       <button
                         type="button"
                         aria-label="Quitar filtro de fecha"
                         title="Quitar filtro de fecha"
-                        className="flex h-6 w-6 items-center justify-center rounded-full text-lg leading-none text-panel-text-faint transition-colors hover:bg-panel-hover hover:text-panel-text"
+                        className="flex h-6 w-6 items-center justify-center text-lg leading-none text-panel-text-faint transition-colors hover:bg-panel-hover hover:text-panel-text"
                         onClick={clearDateFilter}
                       >
                         ×
@@ -817,29 +834,13 @@ export function Contingencies() {
                   )}
                 </div>
 
-                <Button
-                  type="button"
-                  kind="secondary"
-                  size="sm"
-                  aria-label="Abrir búsqueda especializada"
-                  aria-expanded={isSearchModalOpen}
-                  onClick={openSearchModal}
-                >
-                  Búsqueda especializada
-                </Button>
-              </div>
-
-              <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-panel-border pt-5">
-                <Tag type="gray">Total: {summary.total}</Tag>
-                <Tag type="green">Preparados: {summary.preparado}</Tag>
-                <Tag type="blue">En vuelo: {summary.enVuelo}</Tag>
-                <Tag type="purple">Finalizados: {summary.finalizado}</Tag>
-                <Tag type="red">Cancelados: {summary.cancelado}</Tag>
-                {hasValidSimulationTime && (
-                  <span className="ml-auto text-xs text-panel-text-faint">
-                    Hora simulada global: <strong className="font-medium text-panel-text">{formatSimulationMoment(referenceTimeMinutes)} UTC</strong>
-                  </span>
-                )}
+                <div className="flex flex-wrap items-center gap-2">
+                  <Tag type="gray">Total: {summary.total}</Tag>
+                  <Tag type="green">Preparados: {summary.preparado}</Tag>
+                  <Tag type="blue">En vuelo: {summary.enVuelo}</Tag>
+                  <Tag type="purple">Finalizados: {summary.finalizado}</Tag>
+                  <Tag type="red">Cancelados: {summary.cancelado}</Tag>
+                </div>
               </div>
             </section>
           )}
@@ -870,7 +871,7 @@ export function Contingencies() {
             <InlineNotification kind="error" lowContrast title="No se pudieron cargar los vuelos" subtitle={error} />
           )}
 
-          <div className="flex-1 overflow-auto rounded-lg border border-panel-border bg-panel-bg">
+          <div className="flex-1 overflow-auto border border-panel-border bg-panel-bg">
             {viewMode === 'search' ? (
               <div className="flex h-full flex-col p-4">
                 <div className="mb-4 flex flex-wrap items-start justify-between gap-3 border-b border-panel-border pb-4">

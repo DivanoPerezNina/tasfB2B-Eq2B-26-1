@@ -171,10 +171,6 @@ function duracionMinutosDia(salidaMin: number, llegadaMin: number): number {
   return diff >= 0 ? diff : diff + 1440;
 }
 
-function normalizarMinutoDia(minuto: number): number {
-  return ((minuto % 1440) + 1440) % 1440;
-}
-
 function getActiveFlightsFromPlan(
   simMinuteUTC: number,
   planTramos: PlanTramoVisual[],
@@ -183,154 +179,109 @@ function getActiveFlightsFromPlan(
   vuelosBackend: Vuelo[],
   filter: Continent | 'all',
 ): ActiveFlightResult {
-  type Occurrence = {
+  type ActiveOccurrence = {
     key: string;
-    vueloReal: Vuelo;
+    desde: string;
+    hasta: string;
     salidaUTC: number;
     llegadaUTC: number;
     maletas: number;
     envioIndice: number;
     tramoIndex: number;
-    origFront: Airport;
-    destFront: Airport;
-    origCont: Continent;
-    destCont: Continent;
   };
 
   const currentMinute = simMinuteUTC;
-  const occurrences = new globalThis.Map<string, Occurrence>();
-  const dayStartUTC = Math.floor(currentMinute / 1440) * 1440;
+  const occurrences = new globalThis.Map<string, ActiveOccurrence>();
 
-  const addScheduledOccurrence = (vueloReal: Vuelo, salidaUTC: number, llegadaUTC: number, suffix: string) => {
-    if (currentMinute < salidaUTC || currentMinute >= llegadaUTC) return;
-    const origBack = aeropuertosBackend.find((airport) => airport.id === vueloReal.idOrigen);
-    const destBack = aeropuertosBackend.find((airport) => airport.id === vueloReal.idDestino);
-    const origFront = airports.find((airport) => airport.code === origBack?.iata);
-    const destFront = airports.find((airport) => airport.code === destBack?.iata);
-    if (!origBack || !destBack || !origFront || !destFront) return;
-    const origCont = airportContinentFromBackend(origBack) ?? origFront.continent;
-    const destCont = airportContinentFromBackend(destBack) ?? destFront.continent;
-    if (filter !== 'all' && origCont !== filter && destCont !== filter) return;
+  // Importante: el mapa solo debe dibujar vuelos que realmente estén siendo
+  // utilizados por el plan vigente. No se crean aviones a partir del catálogo
+  // completo de vuelos, porque eso hacía aparecer cientos de vuelos vacíos al
+  // inicio de la simulación.
+  for (const tramo of planTramos) {
+    if (currentMinute < tramo.salidaUTC || currentMinute >= tramo.llegadaUTC) continue;
 
-    const key = `${origBack.iata}-${destBack.iata}-${salidaUTC}-${llegadaUTC}-${suffix}`;
-    occurrences.set(key, {
-      key,
-      vueloReal,
-      salidaUTC,
-      llegadaUTC,
-      maletas: 0,
-      envioIndice: -1,
-      tramoIndex: -1,
-      origFront,
-      destFront,
-      origCont,
-      destCont,
-    });
-  };
-
-  vuelosBackend.forEach((vueloReal, index) => {
-    const salidaDia = normalizarMinutoDia(vueloReal.salidaUTC);
-    const llegadaDia = normalizarMinutoDia(vueloReal.llegadaUTC);
-    let salidaUTC = dayStartUTC + salidaDia;
-    let llegadaUTC = dayStartUTC + llegadaDia;
-    if (llegadaUTC <= salidaUTC) llegadaUTC += 1440;
-    addScheduledOccurrence(vueloReal, salidaUTC, llegadaUTC, String(index));
-    addScheduledOccurrence(vueloReal, salidaUTC - 1440, llegadaUTC - 1440, `${index}-prev`);
-  });
-
-  const activePlanLegs = planTramos.filter((tramo) => currentMinute >= tramo.salidaUTC && currentMinute < tramo.llegadaUTC);
-  for (const tramo of activePlanLegs) {
-    const matchingOccurrence = Array.from(occurrences.values()).find((occurrence) => {
-      const origBack = aeropuertosBackend.find((airport) => airport.id === occurrence.vueloReal.idOrigen);
-      const destBack = aeropuertosBackend.find((airport) => airport.id === occurrence.vueloReal.idDestino);
-      return origBack?.iata === tramo.desde
-        && destBack?.iata === tramo.hasta
-        && Math.abs(occurrence.salidaUTC - tramo.salidaUTC) <= 2;
-    });
-
-    if (matchingOccurrence) {
-      matchingOccurrence.maletas += tramo.maletas;
-      if (matchingOccurrence.envioIndice < 0) {
-        matchingOccurrence.envioIndice = tramo.envioIndice;
-        matchingOccurrence.tramoIndex = tramo.tramoIndex;
-      }
+    const key = `${tramo.desde}|${tramo.hasta}|${Math.round(tramo.salidaUTC)}|${Math.round(tramo.llegadaUTC)}`;
+    const existing = occurrences.get(key);
+    if (existing) {
+      existing.maletas += Math.max(0, tramo.maletas ?? 0);
       continue;
     }
 
-    const origBack = aeropuertosBackend.find((airport) => airport.iata === tramo.desde);
-    const destBack = aeropuertosBackend.find((airport) => airport.iata === tramo.hasta);
-    const origFront = airports.find((airport) => airport.code === tramo.desde);
-    const destFront = airports.find((airport) => airport.code === tramo.hasta);
-    if (!origBack || !destBack || !origFront || !destFront) continue;
+    occurrences.set(key, {
+      key,
+      desde: tramo.desde,
+      hasta: tramo.hasta,
+      salidaUTC: tramo.salidaUTC,
+      llegadaUTC: tramo.llegadaUTC,
+      maletas: Math.max(0, tramo.maletas ?? 0),
+      envioIndice: tramo.envioIndice,
+      tramoIndex: tramo.tramoIndex,
+    });
+  }
+
+  const flights: ActiveFlight[] = [];
+  let totalActive = 0;
+
+  for (const occurrence of occurrences.values()) {
+    const origFront = airports.find((airport) => airport.code === occurrence.desde);
+    const destFront = airports.find((airport) => airport.code === occurrence.hasta);
+    if (!origFront || !destFront) continue;
+
+    const origBack = aeropuertosBackend.find((airport) => airport.iata === occurrence.desde);
+    const destBack = aeropuertosBackend.find((airport) => airport.iata === occurrence.hasta);
     const origCont = airportContinentFromBackend(origBack) ?? origFront.continent;
     const destCont = airportContinentFromBackend(destBack) ?? destFront.continent;
     if (filter !== 'all' && origCont !== filter && destCont !== filter) continue;
-    const realFlight = vuelosBackend.find((flight) =>
-      flight.idOrigen === origBack.id
-      && flight.idDestino === destBack.id
-      && Math.abs(normalizarMinutoDia(flight.salidaUTC) - normalizarMinutoDia(tramo.salidaUTC)) <= 2,
-    ) ?? vuelosBackend.find((flight) => flight.idOrigen === origBack.id && flight.idDestino === destBack.id);
-    const key = `${tramo.desde}-${tramo.hasta}-${tramo.salidaUTC}-${tramo.llegadaUTC}-plan`;
-    const existing = occurrences.get(key);
-    if (existing) {
-      existing.maletas += tramo.maletas;
-    } else {
-      occurrences.set(key, {
-        key,
-        vueloReal: realFlight ?? {
-          idOrigen: origBack.id,
-          idDestino: destBack.id,
-          salidaUTC: normalizarMinutoDia(tramo.salidaUTC),
-          llegadaUTC: normalizarMinutoDia(tramo.llegadaUTC),
-          capacidadMaxima: 0,
-        },
-        salidaUTC: tramo.salidaUTC,
-        llegadaUTC: tramo.llegadaUTC,
-        maletas: tramo.maletas,
-        envioIndice: tramo.envioIndice,
-        tramoIndex: tramo.tramoIndex,
-        origFront,
-        destFront,
-        origCont,
-        destCont,
-      });
-    }
-  }
 
-  const allOccurrences = Array.from(occurrences.values());
-  const flights: ActiveFlight[] = [];
-  for (const occurrence of allOccurrences.slice(0, MAX_VISIBLE_ACTIVE_FLIGHTS)) {
-    const duration = occurrence.llegadaUTC - occurrence.salidaUTC;
+    totalActive += 1;
+    if (flights.length >= MAX_VISIBLE_ACTIVE_FLIGHTS) continue;
+
+    const duration = Math.max(1, occurrence.llegadaUTC - occurrence.salidaUTC);
     const progress = clamp((currentMinute - occurrence.salidaUTC) / duration);
-    const lat = lerp(occurrence.origFront.lat, occurrence.destFront.lat, progress);
-    const lng = lerpLng(occurrence.origFront.lng, occurrence.destFront.lng, progress);
-    const angle = getPlaneRotationToDestination(lat, lng, occurrence.destFront.lat, occurrence.destFront.lng);
+    const lat = lerp(origFront.lat, destFront.lat, progress);
+    const lng = lerpLng(origFront.lng, destFront.lng, progress);
+    const angle = getPlaneRotationToDestination(lat, lng, destFront.lat, destFront.lng);
+
+    const salidaDia = ((occurrence.salidaUTC % 1440) + 1440) % 1440;
+    const llegadaDia = ((occurrence.llegadaUTC % 1440) + 1440) % 1440;
+    const duracion = duracionMinutosDia(salidaDia, llegadaDia);
+    const vueloReal = vuelosBackend.find((flight) =>
+      flight.idOrigen === origBack?.id
+      && flight.idDestino === destBack?.id
+      && Math.abs(flight.salidaUTC - salidaDia) < 2
+      && Math.abs(duracionMinutosDia(flight.salidaUTC, flight.llegadaUTC) - duracion) < 5,
+    ) ?? vuelosBackend.find((flight) =>
+      flight.idOrigen === origBack?.id
+      && flight.idDestino === destBack?.id
+      && flight.capacidadMaxima > 0,
+    );
+
     flights.push({
       vuelo: {
-        idOrigen: occurrence.vueloReal.idOrigen,
-        idDestino: occurrence.vueloReal.idDestino,
+        idOrigen: origBack?.id ?? 0,
+        idDestino: destBack?.id ?? 0,
         salidaUTC: occurrence.salidaUTC,
         llegadaUTC: occurrence.llegadaUTC,
-        capacidadMaxima: occurrence.vueloReal.capacidadMaxima,
+        capacidadMaxima: vueloReal?.capacidadMaxima ?? 0,
         ocupacionActual: occurrence.maletas,
       },
       envioIndice: occurrence.envioIndice,
       tramoIndex: occurrence.tramoIndex,
       progress,
-      fromLat: occurrence.origFront.lat,
-      fromLng: occurrence.origFront.lng,
-      toLat: occurrence.destFront.lat,
-      toLng: occurrence.destFront.lng,
-      trailLat: occurrence.origFront.lat,
-      trailLng: occurrence.origFront.lng,
+      fromLat: origFront.lat,
+      fromLng: origFront.lng,
+      toLat: destFront.lat,
+      toLng: destFront.lng,
+      trailLat: origFront.lat,
+      trailLng: origFront.lng,
       lat,
       lng,
       angle,
-      isSameCont: occurrence.origCont === occurrence.destCont,
+      isSameCont: origCont === destCont,
     });
   }
 
-  return { flights, totalActive: allOccurrences.length };
+  return { flights, totalActive };
 }
 
 interface MapProps {
@@ -841,15 +792,15 @@ export const Map = memo(function Map({
             );
           })}
 
-          {/* Cancelaciones visibles: ruta roja durante la ventana del vuelo cancelado, sin avión. */}
+          {/* Cancelaciones visibles: ruta blanca punteada durante la ventana del vuelo cancelado, sin avión. */}
           {activeCancellations.map(c => (
             <Line
               key={`cancel-${c.id}`}
               from={[c.from.lng, c.from.lat]}
               to={[c.to.lng, c.to.lat]}
-              stroke="#ef4444"
+              stroke="#ffffff"
               strokeWidth={1.05 * markerScale}
-              strokeOpacity={0.82}
+              strokeOpacity={0.9}
               strokeDasharray={`${2.4 * markerScale} ${2.4 * markerScale}`}
               strokeLinecap="round"
             />
@@ -1102,6 +1053,10 @@ export const Map = memo(function Map({
             <div style={{ display: 'flex', alignItems: 'center', gap: '.5rem' }}>
               <div className="h-0.5 w-6 border-t-2 border-dashed" style={{ borderColor: '#fbbf24', flexShrink: 0 }} />
               <span style={{ fontSize: 11, color: 'var(--map-overlay-text-muted)' }}>Pendiente al destino</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '.5rem' }}>
+              <div className="h-0.5 w-6 border-t-2 border-dashed" style={{ borderColor: '#ffffff', flexShrink: 0 }} />
+              <span style={{ fontSize: 11, color: 'var(--map-overlay-text-muted)' }}>Vuelo cancelado</span>
             </div>
           </div>
 
