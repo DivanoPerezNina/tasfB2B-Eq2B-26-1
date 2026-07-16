@@ -330,10 +330,12 @@ html, body, #root {
   --map-overlay-text: #17243a;
   --map-overlay-text-muted: #43566d;
   --airport-marker: #2563eb;
+  --airport-marker-compact: #db2777;
   --cancelled-route: #1e293b;
 }
 
 .dark {
   --airport-marker: #3b82f6;
+  --airport-marker-compact: #f472b6;
   --cancelled-route: #ffffff;
 }

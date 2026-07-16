@@ -150,11 +150,23 @@ function getFlightOccupancyStatus(
   return 'rojo';
 }
 
-function getFlightOccupancyColor(status: Exclude<FlightOccupancyFilter, 'all'>): string {
-  if (status === 'vacio') return '#94a3b8';
-  if (status === 'verde') return '#22c55e';
-  if (status === 'ambar') return '#f59e0b';
-  return '#ef4444';
+function getFlightOccupancyColor(
+  status: Exclude<FlightOccupancyFilter, 'all'>,
+  isDarkTheme: boolean,
+): string {
+  if (isDarkTheme) {
+    if (status === 'vacio') return '#94a3b8';
+    if (status === 'verde') return '#22c55e';
+    if (status === 'ambar') return '#f59e0b';
+    return '#ef4444';
+  }
+
+  // En modo claro se usan tonos más profundos para que las rutas conserven
+  // contraste sobre el océano y los países claros.
+  if (status === 'vacio') return '#475569';
+  if (status === 'verde') return '#166534';
+  if (status === 'ambar') return '#a16207';
+  return '#881337';
 }
 
 function airportContinentFromBackend(a?: Aeropuerto): Continent | undefined {
@@ -332,13 +344,19 @@ export const Map = memo(function Map({
   const [zoomInfoOpen, setZoomInfoOpen] = useState(true); // tarjeta superior derecha minimizable
   const [tipsOpen, setTipsOpen] = useState(true);        // indicaciones de arrastre minimizables
   const [showPlanes, setShowPlanes] = useState(true);
-  const [, setTick] = useState(0);
+  const [, setThemeVersion] = useState(0);
 
   React.useEffect(() => {
-    const observer = new MutationObserver(() => setTick(t => t + 1));
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+    const observer = new MutationObserver(() => setThemeVersion(version => version + 1));
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class', 'data-carbon-theme'],
+    });
     return () => observer.disconnect();
   }, []);
+
+  const isDarkTheme = document.documentElement.classList.contains('dark')
+    || document.documentElement.getAttribute('data-carbon-theme') === 'g100';
 
   React.useEffect(() => {
     if (!selectedAirportId) return;
@@ -425,6 +443,7 @@ export const Map = memo(function Map({
     label: cssVar('--map-label'),
     labelStroke: cssVar('--map-label-stroke'),
     airport: cssVar('--airport-marker') || '#2563eb',
+    compactAirport: cssVar('--airport-marker-compact') || '#ec4899',
     cancelledRoute: cssVar('--cancelled-route') || '#ffffff',
   };
 
@@ -458,6 +477,15 @@ export const Map = memo(function Map({
     }
     return decluttered;
   }, [filteredByContinent, zoom, selectedAirportId]);
+
+  // Los aeropuertos omitidos por el decluttering siguen presentes como
+  // marcadores compactos. Así ninguna ruta termina visualmente en un punto
+  // vacío cuando el mapa está alejado. Al acercar el zoom, pasan
+  // automáticamente al marcador azul normal.
+  const compactAirports = useMemo(() => {
+    const regularIds = new Set(visibleAirports.map((airport) => airport.id));
+    return filteredByContinent.filter((airport) => !regularIds.has(airport.id));
+  }, [filteredByContinent, visibleAirports]);
 
   const activeFlightResult = useMemo(() => {
     if (!showPlanes || !simHasStarted || !planVisualCargado || planTramos.length === 0) {
@@ -532,6 +560,7 @@ export const Map = memo(function Map({
   const showCityNames = zoom >= 3.5;
   const totalInFilter = filteredByContinent.length;
   const visibleCount = visibleAirports.length;
+  const compactCount = compactAirports.length;
 
   // Los aeropuertos usan un marcador azul constante. La ocupación sigue
   // disponible en el panel operativo y en sus indicadores, sin mezclarla con
@@ -596,7 +625,10 @@ export const Map = memo(function Map({
           <button
             onClick={() => setShowPlanes(!showPlanes)}
             className="flex items-center gap-1.5 rounded-lg backdrop-blur px-3 py-1.5 shadow-md transition-colors"
-            style={{ backgroundColor: 'var(--map-overlay-bg)', color: showPlanes ? '#fbbf24' : 'var(--map-overlay-text-muted)' }}
+            style={{
+              backgroundColor: 'var(--map-overlay-bg)',
+              color: showPlanes ? (isDarkTheme ? '#fbbf24' : '#0f172a') : 'var(--map-overlay-text-muted)',
+            }}
             title={showPlanes ? 'Ocultar aviones' : 'Mostrar aviones'}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
@@ -646,8 +678,13 @@ export const Map = memo(function Map({
             </div>
 
             <p className="text-[11px]" style={{ color: 'var(--panel-text-faint)', margin: 0 }}>
-              {visibleCount}/{totalInFilter} aeropuertos
+              {totalInFilter}/{totalInFilter} aeropuertos
             </p>
+            {compactCount > 0 && (
+              <p className="text-[10px]" style={{ color: 'var(--panel-text-faint)', margin: 0 }}>
+                {visibleCount} principales · {compactCount} compactos
+              </p>
+            )}
 
             {showPlanes && simHasStarted && (activeFlightTotal > 0 || contadores.en_vuelo > 0) && (
               <p className="text-[11px]" style={{ color: '#fbbf24', margin: 0 }}>
@@ -809,7 +846,7 @@ export const Map = memo(function Map({
             const selectedRouteKey = `${af.vuelo.idOrigen}-${af.vuelo.idDestino}-${af.vuelo.salidaUTC}`;
             const isSelected = selectedFlightKey === selectedRouteKey;
             const occupancyStatus = getFlightOccupancyStatus(af.vuelo.ocupacionActual ?? 0, af.vuelo.capacidadMaxima, config.thresholds.flight);
-            const activeColor = isSelected ? '#a855f7' : getFlightOccupancyColor(occupancyStatus);
+            const activeColor = isSelected ? '#a855f7' : getFlightOccupancyColor(occupancyStatus, isDarkTheme);
             const baseWidth = (isSelected ? 1.8 : 1.0) * markerScale;
 
             return (
@@ -844,7 +881,9 @@ export const Map = memo(function Map({
             const isSelected = selectedFlightKey === flightKey;
             const planeSize = 4.4 * markerScale;
             const occupancyStatus = getFlightOccupancyStatus(af.vuelo.ocupacionActual ?? 0, af.vuelo.capacidadMaxima, config.thresholds.flight);
-            const color = getFlightOccupancyColor(occupancyStatus);
+            const routeColor = getFlightOccupancyColor(occupancyStatus, isDarkTheme);
+            const planeColor = isDarkTheme ? routeColor : '#0f172a';
+            const emphasisColor = isSelected ? '#a855f7' : routeColor;
             return (
               <Marker
                 key={`plane-${flightKey}-${af.vuelo.llegadaUTC}-${index}`}
@@ -860,13 +899,13 @@ export const Map = memo(function Map({
                   <circle
                     r={planeSize * 3.2}
                     fill="none"
-                    stroke={color}
+                    stroke={emphasisColor}
                     strokeWidth={1.5 * markerScale}
                     opacity={0.85}
                   />
                 )}
                 {/* Glow */}
-                <circle r={planeSize * (isSelected ? 2.7 : 1.9)} fill={color} opacity={isSelected ? 0.32 : 0.16} />
+                <circle r={planeSize * (isSelected ? 2.7 : 1.9)} fill={emphasisColor} opacity={isSelected ? 0.32 : 0.16} />
                 <circle r={planeSize * 0.65} fill={mc.bg} opacity={0.45} />
                 {/* Avión real: el path está centrado y su nariz apunta hacia arriba en 0°. */}
                 <g transform={`rotate(${af.angle}) scale(${planeSize / 32})`}>
@@ -892,7 +931,7 @@ export const Map = memo(function Map({
                       C 23 4 27 3 30 0
                       Z
                     "
-                    fill={color}
+                    fill={planeColor}
                     stroke={mc.bg}
                     strokeWidth={2}
                     strokeLinejoin="round"
@@ -914,6 +953,59 @@ export const Map = memo(function Map({
                     opacity={0.55}
                   />
                 </g>
+              </Marker>
+            );
+          })}
+
+          {/* Aeropuertos compactos: visibles cuando el zoom alejado
+              oculta el marcador principal por proximidad. */}
+          {compactAirports.map((airport) => {
+            const isHovered = hoveredAirport === airport.id;
+            const compactRadius = (isHovered ? 3.1 : 1.8) * markerScale;
+            const compactLabelSize = 7 / zoom;
+            return (
+              <Marker
+                key={`compact-airport-${airport.id}`}
+                coordinates={[airport.lng, airport.lat]}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onAirportSelect?.(airport.id);
+                }}
+                onMouseEnter={() => setHoveredAirport(airport.id)}
+                onMouseLeave={() => setHoveredAirport(null)}
+                style={{ cursor: 'pointer' }}
+              >
+                {isHovered && (
+                  <circle
+                    r={compactRadius + 3 * markerScale}
+                    fill={mc.compactAirport}
+                    opacity={0.2}
+                  />
+                )}
+                <circle
+                  r={compactRadius}
+                  fill={mc.compactAirport}
+                  stroke={mc.bg}
+                  strokeWidth={0.9 * markerScale}
+                />
+                {isHovered && (
+                  <text
+                    textAnchor="middle"
+                    y={-(compactRadius + 5 / zoom)}
+                    style={{
+                      fontSize: compactLabelSize,
+                      fontWeight: 700,
+                      fill: mc.label,
+                      paintOrder: 'stroke',
+                      stroke: mc.labelStroke,
+                      strokeWidth: 1.5 / zoom,
+                      pointerEvents: 'none',
+                      fontFamily: 'system-ui, sans-serif',
+                    }}
+                  >
+                    {airport.code}
+                  </text>
+                )}
               </Marker>
             );
           })}
@@ -1048,10 +1140,10 @@ export const Map = memo(function Map({
           <div style={{ display: 'flex', flexDirection: 'column', gap: '.375rem', borderTop: '1px solid var(--panel-border)', paddingTop: '.5rem' }}>
             <p style={{ fontWeight: 600, margin: 0, color: 'var(--panel-text-faint)' }}>Ocupación de aviones</p>
             {[
-              { color: '#94a3b8', label: 'Vacío (0 maletas)' },
-              { color: '#22c55e', label: `Verde (≤${config.thresholds.flight.green}%)` },
-              { color: '#f59e0b', label: `Ámbar (${config.thresholds.flight.green}-${config.thresholds.flight.yellow}%)` },
-              { color: '#ef4444', label: `Rojo (>${config.thresholds.flight.yellow}%)` },
+              { color: getFlightOccupancyColor('vacio', isDarkTheme), label: 'Vacío (0 maletas)' },
+              { color: getFlightOccupancyColor('verde', isDarkTheme), label: `Verde (≤${config.thresholds.flight.green}%)` },
+              { color: getFlightOccupancyColor('ambar', isDarkTheme), label: `Ámbar (${config.thresholds.flight.green}-${config.thresholds.flight.yellow}%)` },
+              { color: getFlightOccupancyColor('rojo', isDarkTheme), label: `Rojo (>${config.thresholds.flight.yellow}%)` },
             ].map((item) => (
               <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: '.5rem' }}>
                 <div className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color, flexShrink: 0 }} />
@@ -1081,7 +1173,11 @@ export const Map = memo(function Map({
             <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '.375rem' }}>
                 <div className="h-3 w-3 rounded-full" style={{ backgroundColor: 'var(--airport-marker)', flexShrink: 0 }} />
-                <span style={{ fontSize: 11, color: 'var(--map-overlay-text-muted)' }}>Marcador azul uniforme</span>
+                <span style={{ fontSize: 11, color: 'var(--map-overlay-text-muted)' }}>Marcador principal</span>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '.375rem' }}>
+                <div className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: 'var(--airport-marker-compact)', flexShrink: 0 }} />
+                <span style={{ fontSize: 11, color: 'var(--map-overlay-text-muted)' }}>Marcador compacto al alejar</span>
               </div>
             </div>
           </div>
