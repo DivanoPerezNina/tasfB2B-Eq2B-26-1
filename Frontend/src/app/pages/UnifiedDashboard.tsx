@@ -1040,7 +1040,7 @@ export function UnifiedDashboard() {
               title="Contraer todas las secciones del panel"
             >
               <ChevronUp className="h-3.5 w-3.5" />
-              Colapsar todo
+              Contraer todo
             </button>
           </div>
 

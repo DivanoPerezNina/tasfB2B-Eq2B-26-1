@@ -627,7 +627,7 @@ export const Map = memo(function Map({
             className="flex items-center gap-1.5 rounded-lg backdrop-blur px-3 py-1.5 shadow-md transition-colors"
             style={{
               backgroundColor: 'var(--map-overlay-bg)',
-              color: showPlanes ? (isDarkTheme ? '#fbbf24' : '#0f172a') : 'var(--map-overlay-text-muted)',
+              color: showPlanes ? (isDarkTheme ? '#fbbf24' : '#f97316') : 'var(--map-overlay-text-muted)',
             }}
             title={showPlanes ? 'Ocultar aviones' : 'Mostrar aviones'}
           >
@@ -882,7 +882,7 @@ export const Map = memo(function Map({
             const planeSize = 4.4 * markerScale;
             const occupancyStatus = getFlightOccupancyStatus(af.vuelo.ocupacionActual ?? 0, af.vuelo.capacidadMaxima, config.thresholds.flight);
             const routeColor = getFlightOccupancyColor(occupancyStatus, isDarkTheme);
-            const planeColor = isDarkTheme ? routeColor : '#0f172a';
+            const planeColor = isDarkTheme ? routeColor : '#f97316';
             const emphasisColor = isSelected ? '#a855f7' : routeColor;
             return (
               <Marker
@@ -1102,15 +1102,16 @@ export const Map = memo(function Map({
       <div
         className="absolute right-4 rounded-lg backdrop-blur shadow-md border"
         style={{
-          top: zoomInfoOpen ? '9.75rem' : '4.5rem',
+          top: zoomInfoOpen ? '17.25rem' : '4.5rem',
           bottom: '1rem',
-          width: 'min(260px, calc(100% - 2rem))',
-          maxHeight: zoomInfoOpen ? 'calc(100% - 10.75rem)' : 'calc(100% - 5.5rem)',
+          width: 'min(220px, calc(100% - 2rem))',
+          maxHeight: zoomInfoOpen ? 'calc(100% - 18.25rem)' : 'calc(100% - 5.5rem)',
           overflowY: legendOpen ? 'auto' : 'hidden',
+          overscrollBehavior: 'contain',
           scrollbarGutter: 'stable',
           backgroundColor: 'var(--map-overlay-bg)',
           borderColor: 'var(--panel-border)',
-          padding: legendOpen ? '.9rem' : '.65rem .8rem',
+          padding: legendOpen ? '.7rem .75rem' : '.55rem .7rem',
         }}
       >
         <button
@@ -1123,7 +1124,7 @@ export const Map = memo(function Map({
             : <ChevronUp className="h-3.5 w-3.5" style={{ color: 'var(--map-overlay-text-muted)' }} />}
         </button>
         {legendOpen && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '.625rem', fontSize: 12, lineHeight: 1.4 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '.5rem', fontSize: 11, lineHeight: 1.3 }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '.375rem' }}>
             {[
               { color: 'bg-green-500', text: 'Capacidad OK (<60%)' },
