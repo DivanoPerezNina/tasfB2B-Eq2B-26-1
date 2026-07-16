@@ -304,3 +304,36 @@ html, body, #root {
   margin: 0;
   overflow: hidden;
 }
+
+/* Ajustes UX por tema para el mapa y los paneles operativos. En claro se usa
+ * una paleta azul-gris de mayor contraste; en oscuro se conserva el fondo
+ * profundo y se unifica el marcador de aeropuerto en azul. */
+:root:not(.dark) {
+  --map-bg: #eef4fb;
+  --map-land: #d7e3f0;
+  --map-land-hover: #c6d6e7;
+  --map-border: #9eb2c8;
+  --map-route: #5f7893;
+  --map-label: #17324f;
+  --map-label-stroke: #eef4fb;
+  --map-ocean-rect: #eef4fb;
+
+  --panel-bg: #ffffff;
+  --panel-border: #cbd7e4;
+  --panel-hover: #edf4fb;
+  --panel-section-bg: #f4f8fc;
+  --panel-text: #17243a;
+  --panel-text-muted: #43566d;
+  --panel-text-faint: #64748b;
+
+  --map-overlay-bg: rgba(255, 255, 255, 0.96);
+  --map-overlay-text: #17243a;
+  --map-overlay-text-muted: #43566d;
+  --airport-marker: #2563eb;
+  --cancelled-route: #1e293b;
+}
+
+.dark {
+  --airport-marker: #3b82f6;
+  --cancelled-route: #ffffff;
+}

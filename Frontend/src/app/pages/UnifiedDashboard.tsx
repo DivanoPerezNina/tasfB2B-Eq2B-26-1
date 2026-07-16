@@ -31,6 +31,8 @@ import {
   FileText,
 } from 'lucide-react';
 
+const COLLAPSE_ALL_SECTIONS_EVENT = 'tasfb2b:collapse-all-sections';
+
 // ─── Collapsible Section ───
 function Section({
   title,
@@ -48,6 +50,13 @@ function Section({
   accentColor?: string;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+
+  useEffect(() => {
+    const collapse = () => setOpen(false);
+    window.addEventListener(COLLAPSE_ALL_SECTIONS_EVENT, collapse);
+    return () => window.removeEventListener(COLLAPSE_ALL_SECTIONS_EVENT, collapse);
+  }, []);
+
   return (
     <div className="border-b border-panel-border">
       <button
@@ -328,6 +337,13 @@ export function UnifiedDashboard() {
   const [query, setQuery] = useState('');
   const [showResults, setShowResults] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
+
+  const clearMapSelection = useCallback(() => {
+    setSelectedShipmentIndex(null);
+    setSelectedAirportId(undefined);
+    setSelectedVuelo(null);
+    setShowResults(false);
+  }, []);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -1016,6 +1032,18 @@ export function UnifiedDashboard() {
             </div>
           </div>
 
+          <div className="border-b border-panel-border px-4 py-2">
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new Event(COLLAPSE_ALL_SECTIONS_EVENT))}
+              className="flex w-full items-center justify-center gap-2 rounded border border-panel-border bg-panel-section-bg px-3 py-2 text-[11px] font-medium text-panel-text transition-colors hover:bg-panel-hover"
+              title="Contraer todas las secciones del panel"
+            >
+              <ChevronUp className="h-3.5 w-3.5" />
+              Colapsar todo
+            </button>
+          </div>
+
           {/* Envío seleccionado — F01/F03/F09 */}
           <Section
             title={selectedShipmentIndex != null ? `Envío ${shipmentLabel(selectedShipmentMetadata, selectedShipmentIndex)}` : 'Envío / maleta'}
@@ -1550,6 +1578,7 @@ export function UnifiedDashboard() {
           selectedAirportId={selectedAirportId}
           onAirportSelect={(id) => { setSelectedShipmentIndex(null); setSelectedAirportId(id); setSelectedVuelo(null); }}
           onFlightSelect={handleFlightSelect}
+          onClearSelection={clearMapSelection}
           selectedFlightKey={selectedFlightKey}
           selectedFlight={selectedVuelo}
           warehouseCodeFilter={warehouseQuery}

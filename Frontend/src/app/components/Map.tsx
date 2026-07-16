@@ -288,6 +288,7 @@ interface MapProps {
   selectedAirportId?: string;
   onAirportSelect?: (airportId: string) => void;
   onFlightSelect?: (vuelo: Vuelo) => void;
+  onClearSelection?: () => void;
   selectedFlightKey?: string; // `${idOrigen}-${idDestino}-${salidaUTC}`
   selectedFlight?: Vuelo | null;
   canceledFlights?: VisualCancellation[];
@@ -300,6 +301,7 @@ export const Map = memo(function Map({
   selectedAirportId,
   onAirportSelect,
   onFlightSelect,
+  onClearSelection,
   selectedFlightKey,
   selectedFlight,
   canceledFlights = [],
@@ -422,6 +424,8 @@ export const Map = memo(function Map({
     route: cssVar('--map-route'),
     label: cssVar('--map-label'),
     labelStroke: cssVar('--map-label-stroke'),
+    airport: cssVar('--airport-marker') || '#2563eb',
+    cancelledRoute: cssVar('--cancelled-route') || '#ffffff',
   };
 
   const getAirportStatus = useCallback((airport: Airport): 'verde' | 'ambar' | 'rojo' | 'vacio' => {
@@ -529,18 +533,10 @@ export const Map = memo(function Map({
   const totalInFilter = filteredByContinent.length;
   const visibleCount = visibleAirports.length;
 
-  // ─── Live airport color from SSE aeropuertosState ───
-  const getAirportColor = useCallback((airportCode: string, fallbackPct: number): string => {
-    const live = aeropuertosState.find(a => a.iata === airportCode);
-    if (live) {
-      if (live.semaforo === 'rojo')  return '#ef4444';
-      if (live.semaforo === 'ambar') return '#f59e0b';
-      return '#10b981';
-    }
-    if (fallbackPct > 80) return '#ef4444';
-    if (fallbackPct > 60) return '#f59e0b';
-    return '#10b981';
-  }, [aeropuertosState]);
+  // Los aeropuertos usan un marcador azul constante. La ocupación sigue
+  // disponible en el panel operativo y en sus indicadores, sin mezclarla con
+  // el semáforo de carga de los aviones.
+  const getAirportColor = useCallback((): string => mc.airport, [mc.airport]);
 
   const getLiveOccupancy = useCallback((airportCode: string, fallback: { occ: number; cap: number }) => {
     const live = aeropuertosState.find(a => a.iata === airportCode);
@@ -717,7 +713,8 @@ export const Map = memo(function Map({
       <ComposableMap
         projection="geoMercator"
         projectionConfig={{ scale: 150, center: [0, 20] }}
-        style={{ width: '100%', height: '100%' }}
+        style={{ width: '100%', height: '100%', cursor: 'default' }}
+        onClick={() => onClearSelection?.()}
       >
         <ZoomableGroup
           zoom={zoom}
@@ -798,7 +795,7 @@ export const Map = memo(function Map({
               key={`cancel-${c.id}`}
               from={[c.from.lng, c.from.lat]}
               to={[c.to.lng, c.to.lat]}
-              stroke="#ffffff"
+              stroke={mc.cancelledRoute}
               strokeWidth={1.05 * markerScale}
               strokeOpacity={0.9}
               strokeDasharray={`${2.4 * markerScale} ${2.4 * markerScale}`}
@@ -852,7 +849,10 @@ export const Map = memo(function Map({
               <Marker
                 key={`plane-${flightKey}-${af.vuelo.llegadaUTC}-${index}`}
                 coordinates={[af.lng, af.lat]}
-                onClick={() => onFlightSelect?.(af.vuelo)}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onFlightSelect?.(af.vuelo);
+                }}
                 style={{ cursor: 'pointer' }}
               >
                 {/* Selection ring */}
@@ -936,7 +936,10 @@ export const Map = memo(function Map({
               <Marker
                 key={airport.id}
                 coordinates={[airport.lng, airport.lat]}
-                onClick={() => onAirportSelect?.(airport.id)}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onAirportSelect?.(airport.id);
+                }}
                 onMouseEnter={() => setHoveredAirport(airport.id)}
                 onMouseLeave={() => setHoveredAirport(null)}
                 style={{ cursor: 'pointer' }}
@@ -1004,7 +1007,20 @@ export const Map = memo(function Map({
       </ComposableMap>
 
       {/* Legend */}
-      <div className="absolute bottom-4 right-4 rounded-lg backdrop-blur shadow-md border" style={{ backgroundColor: 'var(--map-overlay-bg)', borderColor: 'var(--panel-border)', maxWidth: 280, padding: '1.25rem' }}>
+      <div
+        className="absolute right-4 rounded-lg backdrop-blur shadow-md border"
+        style={{
+          top: zoomInfoOpen ? '9.75rem' : '4.5rem',
+          bottom: '1rem',
+          width: 'min(260px, calc(100% - 2rem))',
+          maxHeight: zoomInfoOpen ? 'calc(100% - 10.75rem)' : 'calc(100% - 5.5rem)',
+          overflowY: legendOpen ? 'auto' : 'hidden',
+          scrollbarGutter: 'stable',
+          backgroundColor: 'var(--map-overlay-bg)',
+          borderColor: 'var(--panel-border)',
+          padding: legendOpen ? '.9rem' : '.65rem .8rem',
+        }}
+      >
         <button
           onClick={() => setLegendOpen(o => !o)}
           style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', gap: '.5rem', marginBottom: legendOpen ? '.5rem' : 0 }}
@@ -1055,7 +1071,7 @@ export const Map = memo(function Map({
               <span style={{ fontSize: 11, color: 'var(--map-overlay-text-muted)' }}>Pendiente al destino</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '.5rem' }}>
-              <div className="h-0.5 w-6 border-t-2 border-dashed" style={{ borderColor: '#ffffff', flexShrink: 0 }} />
+              <div className="h-0.5 w-6 border-t-2 border-dashed" style={{ borderColor: 'var(--cancelled-route)', flexShrink: 0 }} />
               <span style={{ fontSize: 11, color: 'var(--map-overlay-text-muted)' }}>Vuelo cancelado</span>
             </div>
           </div>
@@ -1063,15 +1079,10 @@ export const Map = memo(function Map({
           <div style={{ display: 'flex', flexDirection: 'column', gap: '.375rem', borderTop: '1px solid var(--panel-border)', paddingTop: '.5rem' }}>
             <p style={{ fontWeight: 600, margin: 0, color: 'var(--panel-text-faint)' }}>Aeropuertos</p>
             <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-              {[
-                { size: 'h-3 w-3', label: 'Tamaño uniforme' },
-                { size: 'h-3 w-3', label: 'Color por ocupación' },
-              ].map(t => (
-                <div key={t.label} style={{ display: 'flex', alignItems: 'center', gap: '.375rem' }}>
-                  <div className={`${t.size} rounded-full`} style={{ backgroundColor: 'var(--map-overlay-text-muted)', flexShrink: 0 }} />
-                  <span style={{ fontSize: 11, color: 'var(--map-overlay-text-muted)' }}>{t.label}</span>
-                </div>
-              ))}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '.375rem' }}>
+                <div className="h-3 w-3 rounded-full" style={{ backgroundColor: 'var(--airport-marker)', flexShrink: 0 }} />
+                <span style={{ fontSize: 11, color: 'var(--map-overlay-text-muted)' }}>Marcador azul uniforme</span>
+              </div>
             </div>
           </div>
         </div>
