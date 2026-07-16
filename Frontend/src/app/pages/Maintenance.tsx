@@ -50,6 +50,14 @@ function continentName(value: number) {
   return value === 1 ? 'América del Sur' : value === 2 ? 'Europa' : value === 3 ? 'Asia' : 'Sin definir';
 }
 
+function normalizeSearch(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toUpperCase();
+}
+
 async function apiRequest(path: string, options: RequestInit) {
   const response = await fetch(`${BFF}${path}`, {
     ...options,
@@ -98,17 +106,32 @@ export function Maintenance() {
     setModalOpen(false);
   }, [section]);
 
+  const airportSearchLabelByIata = useMemo(() => new Map(
+    aeropuertosBFF.map((airport) => [
+      airport.iata,
+      normalizeSearch(`${airport.iata} ${airport.ciudad} ${airport.pais} ${continentName(airport.continente)}`),
+    ]),
+  ), [aeropuertosBFF]);
+
   const filteredAirports = useMemo(() => {
-    const q = search.trim().toUpperCase();
+    const q = normalizeSearch(search);
     if (!q) return aeropuertosBFF;
-    return aeropuertosBFF.filter((a) => `${a.iata} ${a.ciudad} ${a.pais}`.toUpperCase().includes(q));
+    return aeropuertosBFF.filter((airport) =>
+      normalizeSearch(`${airport.iata} ${airport.ciudad} ${airport.pais} ${continentName(airport.continente)}`).includes(q),
+    );
   }, [aeropuertosBFF, search]);
 
   const filteredFlights = useMemo(() => {
-    const q = search.trim().toUpperCase();
+    const q = normalizeSearch(search);
     if (!q) return vuelosBFF;
-    return vuelosBFF.filter((v) => `${v.id} ${v.origen_iata} ${v.destino_iata}`.toUpperCase().includes(q));
-  }, [vuelosBFF, search]);
+    return vuelosBFF.filter((flight) => normalizeSearch([
+      String(flight.id),
+      flight.origen_iata,
+      flight.destino_iata,
+      airportSearchLabelByIata.get(flight.origen_iata) ?? '',
+      airportSearchLabelByIata.get(flight.destino_iata) ?? '',
+    ].join(' ')).includes(q));
+  }, [airportSearchLabelByIata, search, vuelosBFF]);
 
   const totalItems = section === 'aeropuertos' ? filteredAirports.length : filteredFlights.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
@@ -244,10 +267,10 @@ export function Maintenance() {
     }
   };
 
-  const cards: Array<{ id: MaintenanceSection; title: string; description: string; code: string }> = [
-    { id: 'aeropuertos', title: 'Aeropuertos y almacenes', description: 'Alta, consulta, edición y eliminación de ubicación, zona horaria y capacidad.', code: 'B03' },
-    { id: 'vuelos', title: 'Unidades de transporte', description: 'CRUD individual de vuelos, rutas y capacidad máxima.', code: 'B04' },
-    { id: 'tramos', title: 'Tramos y horarios', description: 'CRUD de origen, destino, salida, llegada y capacidad del tramo.', code: 'B11' },
+  const cards: Array<{ id: MaintenanceSection; title: string; description: string }> = [
+    { id: 'aeropuertos', title: 'Aeropuertos y almacenes', description: 'Alta, consulta, edición y eliminación de ubicación, zona horaria y capacidad.' },
+    { id: 'vuelos', title: 'Unidades de transporte', description: 'CRUD individual de vuelos, rutas y capacidad máxima.' },
+    { id: 'tramos', title: 'Tramos y horarios', description: 'CRUD de origen, destino, salida, llegada y capacidad del tramo.' },
   ];
 
   return (
@@ -278,7 +301,6 @@ export function Maintenance() {
               >
                 <div className="flex items-start justify-between gap-3">
                   <h2 className="text-lg font-semibold">{card.title}</h2>
-                  <Tag type="blue">{card.code}</Tag>
                 </div>
                 <p className="mt-2 text-sm leading-5 text-panel-text-faint">{card.description}</p>
               </button>
@@ -305,7 +327,7 @@ export function Maintenance() {
                     className={`${inputClass} min-w-[260px]`}
                     value={search}
                     onChange={(event) => { setSearch(event.target.value); setPage(1); }}
-                    placeholder={section === 'aeropuertos' ? 'Buscar IATA, ciudad o país' : 'Buscar ID, origen o destino'}
+                    placeholder={section === 'aeropuertos' ? 'Buscar IATA, ciudad, país o continente' : 'Buscar ID, aeropuerto, ciudad o país'}
                   />
                   <Button kind="secondary" renderIcon={Renew} disabled={isLoading || busy} onClick={() => reloadDomain().catch((error) => setFeedback({ kind: 'error', title: 'Error de recarga', detail: error.message }))}>Actualizar</Button>
                   <Button renderIcon={Add} onClick={openCreate}>Crear</Button>
@@ -320,29 +342,39 @@ export function Maintenance() {
 
               <div className="overflow-auto">
                 {section === 'aeropuertos' ? (
-                  <table className="w-full min-w-[1160px] border-collapse text-sm">
+                  <table className="w-full min-w-[1420px] table-fixed border-collapse text-sm">
+                    <colgroup>
+                      <col className="w-[90px]" />
+                      <col className="w-[210px]" />
+                      <col className="w-[180px]" />
+                      <col className="w-[190px]" />
+                      <col className="w-[110px]" />
+                      <col className="w-[190px]" />
+                      <col className="w-[220px]" />
+                      <col className="w-[230px]" />
+                    </colgroup>
                     <thead className="bg-panel-bg text-left text-xs uppercase tracking-wide text-panel-text-faint">
                       <tr>
-                        <th className="border-b border-panel-border px-4 py-3">IATA</th>
-                        <th className="border-b border-panel-border px-4 py-3">Ciudad</th>
-                        <th className="border-b border-panel-border px-4 py-3">País</th>
-                        <th className="border-b border-panel-border px-4 py-3">Continente</th>
-                        <th className="border-b border-panel-border px-4 py-3">GMT</th>
-                        <th className="border-b border-panel-border px-4 py-3 text-right">Capacidad almacén</th>
-                        <th className="border-b border-panel-border px-4 py-3">Coordenadas</th>
-                        <th className="border-b border-panel-border px-4 py-3 text-right">Acciones</th>
+                        <th className="whitespace-nowrap border-b border-panel-border px-5 py-3">IATA</th>
+                        <th className="whitespace-nowrap border-b border-panel-border px-5 py-3">Ciudad</th>
+                        <th className="whitespace-nowrap border-b border-panel-border px-5 py-3">País</th>
+                        <th className="whitespace-nowrap border-b border-panel-border px-5 py-3">Continente</th>
+                        <th className="whitespace-nowrap border-b border-panel-border px-5 py-3">GMT</th>
+                        <th className="whitespace-nowrap border-b border-panel-border px-5 py-3 text-right">Capacidad de almacén</th>
+                        <th className="whitespace-nowrap border-b border-panel-border px-5 py-3">Coordenadas</th>
+                        <th className="whitespace-nowrap border-b border-panel-border px-5 py-3 text-right">Acciones</th>
                       </tr>
                     </thead>
                     <tbody>
                       {visibleAirports.map((airport) => (
                         <tr key={airport.id} className="hover:bg-panel-hover">
-                          <td className="border-b border-panel-border px-4 py-3 font-mono font-semibold">{airport.iata}</td>
-                          <td className="border-b border-panel-border px-4 py-3">{airport.ciudad}</td>
-                          <td className="border-b border-panel-border px-4 py-3">{airport.pais}</td>
-                          <td className="border-b border-panel-border px-4 py-3">{continentName(airport.continente)}</td>
-                          <td className="border-b border-panel-border px-4 py-3">UTC{airport.gmt_offset >= 0 ? '+' : ''}{airport.gmt_offset}</td>
-                          <td className="border-b border-panel-border px-4 py-3 text-right">{airport.capacidad_almacen}</td>
-                          <td className="border-b border-panel-border px-4 py-3 font-mono text-xs">{airport.lat.toFixed(4)}, {airport.lng.toFixed(4)}</td>
+                          <td className="whitespace-nowrap border-b border-panel-border px-5 py-3 font-mono font-semibold">{airport.iata}</td>
+                          <td className="border-b border-panel-border px-5 py-3">{airport.ciudad}</td>
+                          <td className="border-b border-panel-border px-5 py-3">{airport.pais}</td>
+                          <td className="border-b border-panel-border px-5 py-3">{continentName(airport.continente)}</td>
+                          <td className="whitespace-nowrap border-b border-panel-border px-5 py-3">UTC{airport.gmt_offset >= 0 ? '+' : ''}{airport.gmt_offset}</td>
+                          <td className="whitespace-nowrap border-b border-panel-border px-5 py-3 text-right">{airport.capacidad_almacen}</td>
+                          <td className="whitespace-nowrap border-b border-panel-border px-5 py-3 font-mono text-xs">{airport.lat.toFixed(4)}, {airport.lng.toFixed(4)}</td>
                           <td className="border-b border-panel-border px-4 py-3">
                             <div className="flex justify-end gap-2">
                               <Button size="sm" kind="secondary" renderIcon={Edit} onClick={() => openEditAirport(airport)}>Editar</Button>

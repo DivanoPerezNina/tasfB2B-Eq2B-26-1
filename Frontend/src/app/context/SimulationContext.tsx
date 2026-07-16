@@ -152,6 +152,8 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [planVisualCargado, setPlanVisualCargado] = useState(false);
   const [visualCancellations, setVisualCancellations] = useState<VisualCancellation[]>([]);
   const [cancellationAudits, setCancellationAudits] = useState<CancellationAudit[]>([]);
+  const planTramosRef = useRef<PlanTramoVisual[]>([]);
+  const cancellationAuditsRef = useRef<CancellationAudit[]>([]);
   const esRef = useRef<EventSource | null>(null);
   const sseErroresRef = useRef(0);  // errores SSE consecutivos para detectar caída del BFF
 
@@ -200,6 +202,14 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       if (esRef.current)   esRef.current.close();
     };
   }, []);
+
+  useEffect(() => {
+    planTramosRef.current = planTramos;
+  }, [planTramos]);
+
+  useEffect(() => {
+    cancellationAuditsRef.current = cancellationAudits;
+  }, [cancellationAudits]);
 
 
   // ─── Cargar tramos reales del plan para la visualización del mapa ─────────
@@ -479,8 +489,12 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         salidaUTC: Number(v.salidaUTC), llegadaUTC: Number(v.llegadaUTC),
         maletas: Number(v.maletas ?? 1),
       })).filter(t => Number.isFinite(t.salidaUTC) && Number.isFinite(t.llegadaUTC) && t.llegadaUTC > t.salidaUTC);
+      planTramosRef.current = tramos;
       setPlanTramos(tramos);
-      setCancellationAudits((prev) => prev.map((audit) => {
+
+      // El nuevo plan puede llegar por SSE casi inmediatamente después del POST.
+      // El ref conserva de forma síncrona la foto "antes" y evita perder la auditoría.
+      const nextAudits = cancellationAuditsRef.current.map((audit) => {
         if (audit.estado === 'sin_envios' || audit.envios.length === 0) return audit;
 
         let anyReassigned = false;
@@ -491,7 +505,9 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             return { ...envio, rutaNueva, estado: 'sin_ruta' as const };
           }
           const stillUsesCancelledFlight = rutaNueva.some((tramo) =>
-            tramo.desde === audit.origen && tramo.hasta === audit.destino && tramo.salidaUTC === audit.salidaUTC,
+            tramo.desde === audit.origen
+            && tramo.hasta === audit.destino
+            && Math.abs(tramo.salidaUTC - audit.salidaUTC) <= 1,
           );
           const changed = routeSignature(rutaNueva) !== routeSignature(envio.rutaAnterior);
           const estado = !stillUsesCancelledFlight && changed ? 'reasignado' : stillUsesCancelledFlight ? 'esperando' : 'sin_cambio';
@@ -505,7 +521,9 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           envios,
           estado: anyWaiting ? 'esperando_plan' : anyReassigned ? 'replanificado' : 'sin_cambio',
         };
-      }));
+      });
+      cancellationAuditsRef.current = nextAudits;
+      setCancellationAudits(nextAudits);
       setPlanVisualCargado(true);
       console.log(`[Sim:${scenario}] plan-tramos actualizado: ${tramos.length} tramos`);
     });
@@ -760,9 +778,14 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const cancelarVuelo = useCallback(async (origen: string, destino: string, salidaUTC: number): Promise<boolean> => {
     const normalizedOrigin = origen.toUpperCase();
     const normalizedDestination = destino.toUpperCase();
+    const currentPlan = planTramosRef.current.length > 0 ? planTramosRef.current : planTramos;
     const affectedIndices = Array.from(new Set(
-      planTramos
-        .filter((tramo) => tramo.desde === normalizedOrigin && tramo.hasta === normalizedDestination && tramo.salidaUTC === salidaUTC)
+      currentPlan
+        .filter((tramo) =>
+          tramo.desde === normalizedOrigin
+          && tramo.hasta === normalizedDestination
+          && Math.abs(tramo.salidaUTC - salidaUTC) <= 1,
+        )
         .map((tramo) => tramo.envioIndice),
     ));
     const auditId = `${normalizedOrigin}-${normalizedDestination}-${salidaUTC}`;
@@ -774,15 +797,17 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       solicitadoUTC: lastValidTickRef.current?.tiempo_sim_utc ?? tiempoSimUTC,
       estado: affectedIndices.length > 0 ? 'esperando_plan' : 'sin_envios',
       envios: affectedIndices.map((envioIndice) => {
-        const rutaAnterior = routeForShipment(planTramos, envioIndice);
-        const maletas = planTramos.find((tramo) => tramo.envioIndice === envioIndice)?.maletas ?? 0;
+        const rutaAnterior = routeForShipment(currentPlan, envioIndice);
+        const maletas = currentPlan.find((tramo) => tramo.envioIndice === envioIndice)?.maletas ?? 0;
         return { envioIndice, maletas, rutaAnterior, rutaNueva: [], estado: 'esperando' as const };
       }),
     };
 
     // Registrar la foto "antes" antes de llamar al backend. Así, aunque el
     // evento SSE del nuevo plan llegue inmediatamente, la comparación no se pierde.
-    setCancellationAudits((prev) => [audit, ...prev.filter((item) => item.id !== auditId)].slice(0, 50));
+    const nextAudits = [audit, ...cancellationAuditsRef.current.filter((item) => item.id !== auditId)].slice(0, 50);
+    cancellationAuditsRef.current = nextAudits;
+    setCancellationAudits(nextAudits);
 
     try {
       const res = await fetch(`${BFF}/api/simulacion/cancelar`, {
@@ -791,13 +816,17 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         body: JSON.stringify({ origen: normalizedOrigin, destino: normalizedDestination, salidaUTC }),
       });
       if (!res.ok) {
-        setCancellationAudits((prev) => prev.filter((item) => item.id !== auditId));
+        const rollbackAudits = cancellationAuditsRef.current.filter((item) => item.id !== auditId);
+        cancellationAuditsRef.current = rollbackAudits;
+        setCancellationAudits(rollbackAudits);
         console.warn('[Sim] cancelar vuelo rechazado por el backend:', res.status);
         return false;
       }
       return true;
     } catch (e) {
-      setCancellationAudits((prev) => prev.filter((item) => item.id !== auditId));
+      const rollbackAudits = cancellationAuditsRef.current.filter((item) => item.id !== auditId);
+      cancellationAuditsRef.current = rollbackAudits;
+      setCancellationAudits(rollbackAudits);
       console.warn('[Sim] error al cancelar vuelo:', e);
       return false;
     }

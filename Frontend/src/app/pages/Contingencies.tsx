@@ -158,6 +158,17 @@ function formatEvidenceRoute(route: ReassignmentLeg[]) {
   ).join(' · ');
 }
 
+function legSignature(leg: ReassignmentLeg) {
+  return `${leg.desde}-${leg.hasta}-${leg.salidaUTC}-${leg.llegadaUTC}`;
+}
+
+function formatReplacementFlight(previous: ReassignmentLeg[], next: ReassignmentLeg[]) {
+  const previousLegs = new Set(previous.map(legSignature));
+  const replacement = next.find((leg) => !previousLegs.has(legSignature(leg))) ?? next[0];
+  if (!replacement) return 'Sin nuevo vuelo';
+  return `${replacement.desde} → ${replacement.hasta} · ${formatUtcDate(replacement.salidaUTC)} ${formatUtcTime(replacement.salidaUTC)} UTC`;
+}
+
 export function Contingencies() {
   const { vuelosBFF, aeropuertosBFF, isLoading, error } = useDomain();
   const {
@@ -168,6 +179,7 @@ export function Contingencies() {
     registrarCancelacionVisual,
     visualCancellations,
     cancellationAudits,
+    planTramos,
     config,
     lastValidTick,
   } = useSimulation();
@@ -342,6 +354,20 @@ export function Contingencies() {
       }];
     });
   }, [aeropuertosBFF, cancelledKeys, referenceTimeMinutes, selectedDate, visualCancellations, vuelosBFF]);
+
+  const assignmentsByFlight = useMemo(() => {
+    const result = new Map<string, { envioIndices: Set<number>; maletas: number }>();
+    planTramos.forEach((tramo) => {
+      const key = `${tramo.desde}|${tramo.hasta}|${Math.round(tramo.salidaUTC)}`;
+      const current = result.get(key) ?? { envioIndices: new Set<number>(), maletas: 0 };
+      if (!current.envioIndices.has(tramo.envioIndice)) {
+        current.envioIndices.add(tramo.envioIndice);
+        current.maletas += tramo.maletas;
+      }
+      result.set(key, current);
+    });
+    return result;
+  }, [planTramos]);
 
   const filteredOccurrences = useMemo(() => {
     const normalizedCode = flightCodeFilter.trim().toUpperCase();
@@ -693,8 +719,22 @@ export function Contingencies() {
   };
 
   const auditForRow = (row: FlightOccurrence) => cancellationAudits.find((audit) =>
-    audit.origen === row.origenIata && audit.destino === row.destinoIata && audit.salidaUTC === row.salidaUTC,
+    audit.origen === row.origenIata
+    && audit.destino === row.destinoIata
+    && Math.abs(audit.salidaUTC - row.salidaUTC) <= 1,
   );
+
+  const assignmentSummaryForRow = (row: FlightOccurrence) => {
+    const audit = auditForRow(row);
+    if (audit) {
+      return {
+        envios: audit.envios.length,
+        maletas: audit.envios.reduce((total, envio) => total + envio.maletas, 0),
+      };
+    }
+    const current = assignmentsByFlight.get(`${row.origenIata}|${row.destinoIata}|${Math.round(row.salidaUTC)}`);
+    return { envios: current?.envioIndices.size ?? 0, maletas: current?.maletas ?? 0 };
+  };
   const trackingAudit = trackingAuditId
     ? cancellationAudits.find((audit) => audit.id === trackingAuditId) ?? null
     : null;
@@ -702,15 +742,16 @@ export function Contingencies() {
   const renderRowAction = (row: FlightOccurrence) => {
     if (row.estado === 'CANCELADO') {
       const audit = auditForRow(row);
+      const assigned = assignmentSummaryForRow(row);
       return (
         <Button
           type="button"
           size="sm"
-          kind="tertiary"
-          disabled={!audit}
-          onClick={() => audit && setTrackingAuditId(audit.id)}
+          kind={assigned.envios > 0 ? 'tertiary' : 'ghost'}
+          disabled={!audit || assigned.envios === 0}
+          onClick={() => audit && assigned.envios > 0 && setTrackingAuditId(audit.id)}
         >
-          Rastrear envíos
+          {assigned.envios > 0 ? `Rastrear envíos (${assigned.envios})` : 'Sin envíos asignados'}
         </Button>
       );
     }
@@ -971,7 +1012,7 @@ export function Contingencies() {
                 </div>
 
                 <div className="min-h-0 flex-1 overflow-auto border border-panel-border bg-panel-bg shadow-sm">
-                  <table className="w-full min-w-[1180px] border-separate border-spacing-0 text-sm">
+                  <table className="w-full min-w-[1320px] border-separate border-spacing-0 text-sm">
                     <thead className="sticky top-0 z-10 bg-panel-bg-subtle text-left text-xs uppercase tracking-wide text-panel-text-faint">
                       <tr>
                         <th className="border-b border-panel-border px-5 py-3.5">Código</th>
@@ -980,6 +1021,7 @@ export function Contingencies() {
                         <th className="border-b border-panel-border px-5 py-3.5">Salida UTC</th>
                         <th className="border-b border-panel-border px-5 py-3.5">Llegada UTC</th>
                         <th className="border-b border-panel-border px-5 py-3.5">Capacidad</th>
+                        <th className="border-b border-panel-border px-5 py-3.5 text-right">Maletas asignadas</th>
                         <th className="border-b border-panel-border px-5 py-3.5">Estado</th>
                         <th className="border-b border-panel-border px-5 py-3.5 text-center">Acción</th>
                       </tr>
@@ -987,13 +1029,14 @@ export function Contingencies() {
                     <tbody>
                       {paginatedAirportDetailOccurrences.length === 0 ? (
                         <tr>
-                          <td colSpan={8} className="px-5 py-10 text-center text-panel-text-faint">
+                          <td colSpan={9} className="px-5 py-10 text-center text-panel-text-faint">
                             No hay vuelos para la vista seleccionada en este aeropuerto y fecha.
                           </td>
                         </tr>
                       ) : (
                         paginatedAirportDetailOccurrences.map((row) => {
                           const destinationAirport = airportByIata.get(row.destino);
+                          const assigned = assignmentSummaryForRow(row);
                           return (
                             <tr key={row.key} className="border-b border-panel-border transition-colors last:border-b-0 hover:bg-panel-hover">
                               <td className="whitespace-nowrap border-b border-panel-border px-5 py-3.5 font-mono text-xs font-semibold tracking-wide">{row.code}</td>
@@ -1002,6 +1045,10 @@ export function Contingencies() {
                               <td className="whitespace-nowrap border-b border-panel-border px-5 py-3.5 font-mono">{formatUtcTime(row.salidaUTC)}</td>
                               <td className="whitespace-nowrap border-b border-panel-border px-5 py-3.5 font-mono">{formatUtcTime(row.llegadaUTC)}</td>
                               <td className="whitespace-nowrap border-b border-panel-border px-5 py-3.5">{row.capacidad}</td>
+                              <td className="whitespace-nowrap border-b border-panel-border px-5 py-3.5 text-right">
+                                <span className="font-semibold text-panel-text">{assigned.maletas}</span>
+                                <span className="ml-1 text-xs text-panel-text-faint">({assigned.envios} envíos)</span>
+                              </td>
                               <td className="whitespace-nowrap border-b border-panel-border px-5 py-3.5">
                                 <Tag type={row.estado === 'CANCELADO' ? 'red' : row.estado === 'EN VUELO' ? 'blue' : row.estado === 'FINALIZADO' ? 'purple' : 'green'}>
                                   {statusLabel(row.estado)}
@@ -1163,17 +1210,19 @@ export function Contingencies() {
                 <InlineNotification
                   kind="info"
                   lowContrast
-                  title="El vuelo no tenía maletas asignadas"
-                  subtitle="La cancelación fue aplicada, pero el plan vigente no contenía envíos en esta ocurrencia."
+                  title="Vuelo cancelado sin carga asignada"
+                  subtitle="Es un resultado válido: el último plan no tenía maletas en esta ocurrencia, por lo que no existe una reasignación que mostrar. Para demostrar la reprogramación, cancela un vuelo cuya columna “Maletas asignadas” sea mayor que cero."
                 />
               ) : (
-                <table className="w-full min-w-[1050px] border-collapse text-sm">
+                <table className="w-full min-w-[1680px] border-collapse text-sm">
                   <thead className="bg-panel-bg-subtle text-left text-xs uppercase tracking-wide text-panel-text-faint">
                     <tr>
                       <th className="border-b border-panel-border px-4 py-3">Envío</th>
-                      <th className="border-b border-panel-border px-4 py-3 text-right">Maletas</th>
-                      <th className="border-b border-panel-border px-4 py-3">Ruta antes de cancelar</th>
-                      <th className="border-b border-panel-border px-4 py-3">Ruta después de replanificar</th>
+                      <th className="border-b border-panel-border px-4 py-3 text-right">Maletas retiradas</th>
+                      <th className="border-b border-panel-border px-4 py-3">Vuelo cancelado</th>
+                      <th className="border-b border-panel-border px-4 py-3">Nuevo vuelo asignado</th>
+                      <th className="border-b border-panel-border px-4 py-3">Ruta anterior</th>
+                      <th className="border-b border-panel-border px-4 py-3">Ruta reprogramada</th>
                       <th className="border-b border-panel-border px-4 py-3">Resultado</th>
                     </tr>
                   </thead>
@@ -1181,7 +1230,13 @@ export function Contingencies() {
                     {trackingAudit.envios.map((envio) => (
                       <tr key={envio.envioIndice} className="align-top hover:bg-panel-hover">
                         <td className="border-b border-panel-border px-4 py-3 font-mono font-semibold">ENV-{envio.envioIndice}</td>
-                        <td className="border-b border-panel-border px-4 py-3 text-right">{envio.maletas}</td>
+                        <td className="border-b border-panel-border px-4 py-3 text-right font-semibold">{envio.maletas}</td>
+                        <td className="border-b border-panel-border px-4 py-3 font-medium">
+                          {trackingAudit.origen} → {trackingAudit.destino} · {formatUtcDate(trackingAudit.salidaUTC)} {formatUtcTime(trackingAudit.salidaUTC)} UTC
+                        </td>
+                        <td className="border-b border-panel-border px-4 py-3 font-medium">
+                          {envio.estado === 'reasignado' ? formatReplacementFlight(envio.rutaAnterior, envio.rutaNueva) : 'Pendiente de reasignación'}
+                        </td>
                         <td className="border-b border-panel-border px-4 py-3 leading-6">{formatEvidenceRoute(envio.rutaAnterior)}</td>
                         <td className="border-b border-panel-border px-4 py-3 leading-6">{formatEvidenceRoute(envio.rutaNueva)}</td>
                         <td className="border-b border-panel-border px-4 py-3">
