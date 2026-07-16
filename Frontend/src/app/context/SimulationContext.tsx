@@ -19,6 +19,8 @@ import {
   SimulationStats,
   Baggage,
   VisualCancellation,
+  CancellationAudit,
+  ReassignmentLeg,
 } from '../types';
 import { airports } from '../data/airports';
 
@@ -73,6 +75,8 @@ interface SimulationContextType {
   planResumen: PlanResumenVisual | null;
   planVisualCargado: boolean;
   visualCancellations: VisualCancellation[];
+  /** Evidencia antes/después de cada cancelación interactiva. */
+  cancellationAudits: CancellationAudit[];
 
   // ── Configuración ──
   config: SimulationConfig;
@@ -147,6 +151,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [planResumen, setPlanResumen]        = useState<PlanResumenVisual | null>(null);
   const [planVisualCargado, setPlanVisualCargado] = useState(false);
   const [visualCancellations, setVisualCancellations] = useState<VisualCancellation[]>([]);
+  const [cancellationAudits, setCancellationAudits] = useState<CancellationAudit[]>([]);
   const esRef = useRef<EventSource | null>(null);
   const sseErroresRef = useRef(0);  // errores SSE consecutivos para detectar caída del BFF
 
@@ -271,6 +276,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setPlanResumen(null);
     setPlanVisualCargado(false);
     setVisualCancellations([]);
+    setCancellationAudits([]);
 
     // Enviar fecha+hora local como YYYY-MM-DDTHH:MM
     // El planificador trabaja en epoch-minutos UTC y usa GMT=0 al recibir este campo
@@ -474,6 +480,32 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         maletas: Number(v.maletas ?? 1),
       })).filter(t => Number.isFinite(t.salidaUTC) && Number.isFinite(t.llegadaUTC) && t.llegadaUTC > t.salidaUTC);
       setPlanTramos(tramos);
+      setCancellationAudits((prev) => prev.map((audit) => {
+        if (audit.estado === 'sin_envios' || audit.envios.length === 0) return audit;
+
+        let anyReassigned = false;
+        let anyWaiting = false;
+        const envios = audit.envios.map((envio) => {
+          const rutaNueva = routeForShipment(tramos, envio.envioIndice);
+          if (rutaNueva.length === 0) {
+            return { ...envio, rutaNueva, estado: 'sin_ruta' as const };
+          }
+          const stillUsesCancelledFlight = rutaNueva.some((tramo) =>
+            tramo.desde === audit.origen && tramo.hasta === audit.destino && tramo.salidaUTC === audit.salidaUTC,
+          );
+          const changed = routeSignature(rutaNueva) !== routeSignature(envio.rutaAnterior);
+          const estado = !stillUsesCancelledFlight && changed ? 'reasignado' : stillUsesCancelledFlight ? 'esperando' : 'sin_cambio';
+          if (estado === 'reasignado') anyReassigned = true;
+          if (estado === 'esperando') anyWaiting = true;
+          return { ...envio, rutaNueva, estado };
+        });
+
+        return {
+          ...audit,
+          envios,
+          estado: anyWaiting ? 'esperando_plan' : anyReassigned ? 'replanificado' : 'sin_cambio',
+        };
+      }));
       setPlanVisualCargado(true);
       console.log(`[Sim:${scenario}] plan-tramos actualizado: ${tramos.length} tramos`);
     });
@@ -572,6 +604,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setPlanResumen(null);
     setPlanVisualCargado(false);
     setVisualCancellations([]);
+    setCancellationAudits([]);
     setProgresoPct(0);
     setValidTick(null);
     setCollapseFailure(null);
@@ -629,6 +662,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setErrorMsg(null);
     setPlanTramos([]); setPlanResumen(null); setPlanVisualCargado(false);
     setVisualCancellations([]);
+    setCancellationAudits([]);
     setProgresoPct(0);
 
     // Fecha elegida → minuto epoch UTC (GMT=0, igual que el planificador).
@@ -706,26 +740,68 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     ].slice(0, 50));
   }, []);
 
+  const routeForShipment = useCallback((tramos: PlanTramoVisual[], envioIndice: number): ReassignmentLeg[] =>
+    tramos
+      .filter((tramo) => tramo.envioIndice === envioIndice)
+      .sort((a, b) => a.tramoIndex - b.tramoIndex)
+      .map((tramo) => ({
+        desde: tramo.desde,
+        hasta: tramo.hasta,
+        salidaUTC: tramo.salidaUTC,
+        llegadaUTC: tramo.llegadaUTC,
+      })), []);
+
+  const routeSignature = useCallback((ruta: ReassignmentLeg[]) =>
+    ruta.map((tramo) => `${tramo.desde}-${tramo.hasta}-${tramo.salidaUTC}-${tramo.llegadaUTC}`).join('|'), []);
+
   // ─── Cancelar ocurrencia de vuelo (Flujo B: desde el buscador) ─────────────
   // Registra la cancelación (vuelo, día) en el orquestador, que re-planifica el
   // bloque actual de inmediato. El plan re-ruteado llega por SSE (plan-tramos).
   const cancelarVuelo = useCallback(async (origen: string, destino: string, salidaUTC: number): Promise<boolean> => {
+    const normalizedOrigin = origen.toUpperCase();
+    const normalizedDestination = destino.toUpperCase();
+    const affectedIndices = Array.from(new Set(
+      planTramos
+        .filter((tramo) => tramo.desde === normalizedOrigin && tramo.hasta === normalizedDestination && tramo.salidaUTC === salidaUTC)
+        .map((tramo) => tramo.envioIndice),
+    ));
+    const auditId = `${normalizedOrigin}-${normalizedDestination}-${salidaUTC}`;
+    const audit: CancellationAudit = {
+      id: auditId,
+      origen: normalizedOrigin,
+      destino: normalizedDestination,
+      salidaUTC,
+      solicitadoUTC: lastValidTickRef.current?.tiempo_sim_utc ?? tiempoSimUTC,
+      estado: affectedIndices.length > 0 ? 'esperando_plan' : 'sin_envios',
+      envios: affectedIndices.map((envioIndice) => {
+        const rutaAnterior = routeForShipment(planTramos, envioIndice);
+        const maletas = planTramos.find((tramo) => tramo.envioIndice === envioIndice)?.maletas ?? 0;
+        return { envioIndice, maletas, rutaAnterior, rutaNueva: [], estado: 'esperando' as const };
+      }),
+    };
+
+    // Registrar la foto "antes" antes de llamar al backend. Así, aunque el
+    // evento SSE del nuevo plan llegue inmediatamente, la comparación no se pierde.
+    setCancellationAudits((prev) => [audit, ...prev.filter((item) => item.id !== auditId)].slice(0, 50));
+
     try {
       const res = await fetch(`${BFF}/api/simulacion/cancelar`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ origen, destino, salidaUTC }),
+        body: JSON.stringify({ origen: normalizedOrigin, destino: normalizedDestination, salidaUTC }),
       });
       if (!res.ok) {
+        setCancellationAudits((prev) => prev.filter((item) => item.id !== auditId));
         console.warn('[Sim] cancelar vuelo rechazado por el backend:', res.status);
         return false;
       }
       return true;
     } catch (e) {
+      setCancellationAudits((prev) => prev.filter((item) => item.id !== auditId));
       console.warn('[Sim] error al cancelar vuelo:', e);
       return false;
     }
-  }, []);
+  }, [planTramos, routeForShipment, tiempoSimUTC]);
 
   const setValidTick = useCallback((tick: { tiempo_sim_utc: number; contadores: Contadores; tick?: number; progreso_pct?: string } | null) => {
     lastValidTickRef.current = tick;
@@ -771,6 +847,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setPlanResumen(null);
     setPlanVisualCargado(false);
     setVisualCancellations([]);
+    setCancellationAudits([]);
     clearCollapseState();
   }, [clearCollapseState]);
 
@@ -791,6 +868,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setPlanResumen(null);
     setPlanVisualCargado(false);
     setVisualCancellations([]);
+    setCancellationAudits([]);
     setErrorMsg(null);
     clearCollapseState();
   }, [clearCollapseState]);
@@ -884,6 +962,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       planResumen,
       planVisualCargado,
       visualCancellations,
+      cancellationAudits,
       config,
       datasetInfo,
       stats,

@@ -135,6 +135,31 @@ export interface PlanTramoVisual {
   maletas: number;
 }
 
+export interface ReassignmentLeg {
+  desde: string;
+  hasta: string;
+  salidaUTC: number;
+  llegadaUTC: number;
+}
+
+export interface ShipmentReassignmentEvidence {
+  envioIndice: number;
+  maletas: number;
+  rutaAnterior: ReassignmentLeg[];
+  rutaNueva: ReassignmentLeg[];
+  estado: 'esperando' | 'reasignado' | 'sin_cambio' | 'sin_ruta';
+}
+
+export interface CancellationAudit {
+  id: string;
+  origen: string;
+  destino: string;
+  salidaUTC: number;
+  solicitadoUTC: number;
+  estado: 'esperando_plan' | 'replanificado' | 'sin_envios' | 'sin_cambio';
+  envios: ShipmentReassignmentEvidence[];
+}
+
 export interface PlanResumenVisual {
   totalEnvios?: number;
   exitosos?: number;

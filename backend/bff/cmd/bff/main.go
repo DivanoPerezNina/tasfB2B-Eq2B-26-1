@@ -21,6 +21,7 @@ func main() {
 	log.Printf("MySQL conectado en %s:%s/%s", cfg.DBHost, cfg.DBPort, cfg.DBName)
 
 	dom := &handler.DominioHandler{DB: db}
+	mant := &handler.MantenimientoHandler{DB: db}
 	hlth := &handler.HealthHandler{
 		DB:              db,
 		CargaMasivaURL:  cfg.CargaMasivaURL,
@@ -38,20 +39,32 @@ func main() {
 
 	// ── Endpoints propios del BFF ────────────────────────────────────────────
 	mux.HandleFunc("GET /api/aeropuertos", dom.Aeropuertos)
-	mux.HandleFunc("GET /api/vuelos",      dom.Vuelos)
-	mux.HandleFunc("GET /api/dataset",     dom.Dataset)
-	mux.HandleFunc("GET /api/health",      hlth.Health)
+	mux.HandleFunc("GET /api/vuelos", dom.Vuelos)
+	mux.HandleFunc("GET /api/dataset", dom.Dataset)
+	mux.HandleFunc("GET /api/health", hlth.Health)
+
+	// ── Mantenimiento individual (CRUD) ─────────────────────────────────────
+	mux.HandleFunc("POST /api/mantenimiento/aeropuertos", mant.CrearAeropuerto)
+	mux.HandleFunc("PUT /api/mantenimiento/aeropuertos/{id}", mant.ActualizarAeropuerto)
+	mux.HandleFunc("DELETE /api/mantenimiento/aeropuertos/{id}", mant.EliminarAeropuerto)
+	mux.HandleFunc("POST /api/mantenimiento/vuelos", mant.CrearVuelo)
+	mux.HandleFunc("PUT /api/mantenimiento/vuelos/{id}", mant.ActualizarVuelo)
+	mux.HandleFunc("DELETE /api/mantenimiento/vuelos/{id}", mant.EliminarVuelo)
+	// Un tramo es el registro operativo de un vuelo (ruta + horario + capacidad).
+	mux.HandleFunc("POST /api/mantenimiento/tramos", mant.CrearVuelo)
+	mux.HandleFunc("PUT /api/mantenimiento/tramos/{id}", mant.ActualizarVuelo)
+	mux.HandleFunc("DELETE /api/mantenimiento/tramos/{id}", mant.EliminarVuelo)
 
 	// ── Login (credencial compartida) + Muro de comentarios ──────────────────
 	mux.HandleFunc("POST /api/login", auth.Login)
-	mux.HandleFunc("POST /api/muro",  muro.Crear)
-	mux.HandleFunc("GET /api/muro",   muro.Listar)
+	mux.HandleFunc("POST /api/muro", muro.Crear)
+	mux.HandleFunc("GET /api/muro", muro.Listar)
 
 	// ── Simulación de Periodo (orquestación BFF) ──────────────────────────────
 	// Único punto de entrada: recibe fechaInicio+dias+criterio+duracion_real_min
-	mux.HandleFunc("POST /api/periodo/iniciar",            per.Iniciar)
-	mux.HandleFunc("GET /api/periodo/status/{jobId}",      per.Status)
-	mux.HandleFunc("POST /api/periodo/ejecutar/{jobId}",   per.Ejecutar)
+	mux.HandleFunc("POST /api/periodo/iniciar", per.Iniciar)
+	mux.HandleFunc("GET /api/periodo/status/{jobId}", per.Status)
+	mux.HandleFunc("POST /api/periodo/ejecutar/{jobId}", per.Ejecutar)
 
 	// ── Proxy → Carga Masiva (:8082) ─────────────────────────────────────────
 	// /api/carga/upload/aeropuertos → /upload/aeropuertos
@@ -79,7 +92,7 @@ func main() {
 				origin = "*"
 			}
 			w.Header().Set("Access-Control-Allow-Origin", origin)
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-Confirmar-Borrado")
 			if strings.ToUpper(r.Method) == "OPTIONS" {
 				w.WriteHeader(http.StatusNoContent)

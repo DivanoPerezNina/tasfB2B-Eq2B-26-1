@@ -12,6 +12,7 @@ import {
 } from '@carbon/react';
 import { useDomain } from '../context/DomainContext';
 import { useSimulation } from '../context/SimulationContext';
+import { ReassignmentLeg } from '../types';
 
 type FlightStatus = 'PREPARADO' | 'EN VUELO' | 'FINALIZADO' | 'CANCELADO';
 type ViewMode = 'continents' | 'airport' | 'search';
@@ -150,6 +151,13 @@ function formatUtcTime(epochMinutes: number) {
   }).format(new Date(epochMinutes * 60 * 1000));
 }
 
+function formatEvidenceRoute(route: ReassignmentLeg[]) {
+  if (route.length === 0) return 'Sin ruta asignada';
+  return route.map((leg) =>
+    `${leg.desde} ${formatUtcDate(leg.salidaUTC)} ${formatUtcTime(leg.salidaUTC)} → ${leg.hasta} ${formatUtcTime(leg.llegadaUTC)}`,
+  ).join(' · ');
+}
+
 export function Contingencies() {
   const { vuelosBFF, aeropuertosBFF, isLoading, error } = useDomain();
   const {
@@ -159,6 +167,7 @@ export function Contingencies() {
     cancelarVuelo,
     registrarCancelacionVisual,
     visualCancellations,
+    cancellationAudits,
     config,
     lastValidTick,
   } = useSimulation();
@@ -202,6 +211,7 @@ export function Contingencies() {
   const [pendingCancellationKey, setPendingCancellationKey] = useState<string | null>(null);
   const [cancelledKeys, setCancelledKeys] = useState<Set<string>>(new Set());
   const [confirmationRow, setConfirmationRow] = useState<FlightOccurrence | null>(null);
+  const [trackingAuditId, setTrackingAuditId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<{ kind: 'success' | 'error' | 'info'; title: string; detail: string } | null>(null);
   const [isDateFilterApplied, setIsDateFilterApplied] = useState(false);
 
@@ -682,6 +692,41 @@ export function Contingencies() {
     }
   };
 
+  const auditForRow = (row: FlightOccurrence) => cancellationAudits.find((audit) =>
+    audit.origen === row.origenIata && audit.destino === row.destinoIata && audit.salidaUTC === row.salidaUTC,
+  );
+  const trackingAudit = trackingAuditId
+    ? cancellationAudits.find((audit) => audit.id === trackingAuditId) ?? null
+    : null;
+
+  const renderRowAction = (row: FlightOccurrence) => {
+    if (row.estado === 'CANCELADO') {
+      const audit = auditForRow(row);
+      return (
+        <Button
+          type="button"
+          size="sm"
+          kind="tertiary"
+          disabled={!audit}
+          onClick={() => audit && setTrackingAuditId(audit.id)}
+        >
+          Rastrear envíos
+        </Button>
+      );
+    }
+    return (
+      <Button
+        type="button"
+        size="sm"
+        kind="danger"
+        disabled={!canCancelOccurrence(row)}
+        onClick={() => setConfirmationRow(row)}
+      >
+        Cancelar
+      </Button>
+    );
+  };
+
   return (
     <div className="flex h-full flex-col overflow-hidden bg-panel-bg text-panel-text">
       <header className="flex-shrink-0 border-b border-panel-border bg-panel-bg px-6 py-5">
@@ -830,7 +875,6 @@ export function Contingencies() {
                         </thead>
                         <tbody>
                           {paginatedSearchResults.map((row) => {
-                            const canCancel = canCancelOccurrence(row);
                             const destinationAirport = airportByIata.get(row.destino);
                             return (
                               <tr key={row.key} className="border-b border-panel-border last:border-b-0 hover:bg-panel-hover">
@@ -847,15 +891,7 @@ export function Contingencies() {
                                   </Tag>
                                 </td>
                                 <td className="whitespace-nowrap px-5 py-3.5">
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    kind="danger"
-                                    disabled={!canCancel}
-                                    onClick={() => setConfirmationRow(row)}
-                                  >
-                                    Cancelar
-                                  </Button>
+{renderRowAction(row)}
                                 </td>
                               </tr>
                             );
@@ -957,7 +993,6 @@ export function Contingencies() {
                         </tr>
                       ) : (
                         paginatedAirportDetailOccurrences.map((row) => {
-                          const canCancel = canCancelOccurrence(row);
                           const destinationAirport = airportByIata.get(row.destino);
                           return (
                             <tr key={row.key} className="border-b border-panel-border transition-colors last:border-b-0 hover:bg-panel-hover">
@@ -973,15 +1008,7 @@ export function Contingencies() {
                                 </Tag>
                               </td>
                               <td className="whitespace-nowrap border-b border-panel-border px-5 py-3.5 text-center">
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  kind="danger"
-                                  disabled={!canCancel}
-                                  onClick={() => setConfirmationRow(row)}
-                                >
-                                  Cancelar
-                                </Button>
+{renderRowAction(row)}
                               </td>
                             </tr>
                           );
@@ -1111,6 +1138,62 @@ export function Contingencies() {
               >
                 {pendingCancellationKey === confirmationRow.key ? 'Cancelando…' : 'Confirmar cancelación'}
               </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {trackingAudit && (
+        <div className="fixed inset-0 z-[115] flex items-center justify-center bg-black/55 p-4">
+          <div className="flex max-h-[90vh] w-full max-w-6xl flex-col overflow-hidden border border-panel-border bg-panel-bg shadow-2xl">
+            <div className="flex flex-wrap items-start justify-between gap-4 border-b border-panel-border p-5">
+              <div>
+                <p className="text-xs uppercase tracking-wide text-panel-text-faint">Evidencia de replanificación</p>
+                <h2 className="mt-1 text-2xl font-semibold">Envíos del vuelo {trackingAudit.origen} → {trackingAudit.destino}</h2>
+                <p className="mt-2 text-sm text-panel-text-faint">
+                  Salida cancelada: {formatUtcDate(trackingAudit.salidaUTC)} {formatUtcTime(trackingAudit.salidaUTC)} UTC ·
+                  Estado: {trackingAudit.estado === 'replanificado' ? 'Replanificación confirmada' : trackingAudit.estado === 'esperando_plan' ? 'Esperando el nuevo plan' : trackingAudit.estado === 'sin_envios' ? 'No tenía envíos asignados' : 'Sin cambio de ruta comprobado'}.
+                </p>
+              </div>
+              <Button kind="secondary" size="sm" onClick={() => setTrackingAuditId(null)}>Cerrar</Button>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-auto p-5">
+              {trackingAudit.envios.length === 0 ? (
+                <InlineNotification
+                  kind="info"
+                  lowContrast
+                  title="El vuelo no tenía maletas asignadas"
+                  subtitle="La cancelación fue aplicada, pero el plan vigente no contenía envíos en esta ocurrencia."
+                />
+              ) : (
+                <table className="w-full min-w-[1050px] border-collapse text-sm">
+                  <thead className="bg-panel-bg-subtle text-left text-xs uppercase tracking-wide text-panel-text-faint">
+                    <tr>
+                      <th className="border-b border-panel-border px-4 py-3">Envío</th>
+                      <th className="border-b border-panel-border px-4 py-3 text-right">Maletas</th>
+                      <th className="border-b border-panel-border px-4 py-3">Ruta antes de cancelar</th>
+                      <th className="border-b border-panel-border px-4 py-3">Ruta después de replanificar</th>
+                      <th className="border-b border-panel-border px-4 py-3">Resultado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {trackingAudit.envios.map((envio) => (
+                      <tr key={envio.envioIndice} className="align-top hover:bg-panel-hover">
+                        <td className="border-b border-panel-border px-4 py-3 font-mono font-semibold">ENV-{envio.envioIndice}</td>
+                        <td className="border-b border-panel-border px-4 py-3 text-right">{envio.maletas}</td>
+                        <td className="border-b border-panel-border px-4 py-3 leading-6">{formatEvidenceRoute(envio.rutaAnterior)}</td>
+                        <td className="border-b border-panel-border px-4 py-3 leading-6">{formatEvidenceRoute(envio.rutaNueva)}</td>
+                        <td className="border-b border-panel-border px-4 py-3">
+                          <Tag type={envio.estado === 'reasignado' ? 'green' : envio.estado === 'esperando' ? 'blue' : envio.estado === 'sin_ruta' ? 'red' : 'gray'}>
+                            {envio.estado === 'reasignado' ? 'Reasignado' : envio.estado === 'esperando' ? 'Esperando' : envio.estado === 'sin_ruta' ? 'Sin ruta' : 'Sin cambio'}
+                          </Tag>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </div>
           </div>
         </div>

@@ -3,7 +3,7 @@
  * Reemplaza los datos mock estáticos de airports.ts / aeropuertos.ts / vuelosRaw.ts.
  * Todos los componentes que necesiten estos datos consumen este contexto.
  */
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useCallback, useContext, useState, useEffect } from 'react';
 import { Airport, Aeropuerto, Vuelo, Flight, Continent } from '../types';
 // Fallbacks estáticos mientras carga o si el BFF no está disponible
 import { airports as staticAirports }       from '../data/airports';
@@ -54,6 +54,8 @@ interface DomainContextType {
 
   isLoading: boolean;
   error:     string | null;
+  /** Recarga aeropuertos y vuelos luego de una operación CRUD. */
+  reloadDomain: () => Promise<void>;
 }
 
 const DomainContext = createContext<DomainContextType | undefined>(undefined);
@@ -148,49 +150,45 @@ export const DomainProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [isLoading,      setIsLoading]      = useState(true);
   const [error,          setError]          = useState<string | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
+  const reloadDomain = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const [resA, resV] = await Promise.all([
+        fetch(`${BFF}/api/aeropuertos`),
+        fetch(`${BFF}/api/vuelos`),
+      ]);
 
-    const load = async () => {
-      setIsLoading(true);
-      setError(null);
-      try {
-        const [resA, resV] = await Promise.all([
-          fetch(`${BFF}/api/aeropuertos`),
-          fetch(`${BFF}/api/vuelos`),
-        ]);
+      const jsonA = await resA.json();
+      const jsonV = await resV.json();
+      if (!resA.ok) throw new Error(jsonA.mensaje ?? 'No se pudieron cargar los aeropuertos');
+      if (!resV.ok) throw new Error(jsonV.mensaje ?? 'No se pudieron cargar los vuelos');
 
-        const jsonA = await resA.json();
-        const jsonV = await resV.json();
+      const aeros: AeroBFF[] = jsonA.data ?? jsonA;
+      const vuelos: VueloBFF[] = jsonV.data ?? jsonV;
 
-        if (cancelled) return;
-
-        // Desenvolver generic response: { success, data: [...], message }
-        const aeros: AeroBFF[] = jsonA.data ?? jsonA;
-        const vuelos: VueloBFF[] = jsonV.data ?? jsonV;
-
-        if (!Array.isArray(aeros) || aeros.length === 0) {
-          console.warn('[Domain] Aeropuertos vacíos desde BFF — usando datos estáticos');
-        }
-        if (!Array.isArray(vuelos) || vuelos.length === 0) {
-          console.warn('[Domain] Vuelos vacíos desde BFF — usando datos estáticos');
-        }
-
-        setAeropuertosBFF(Array.isArray(aeros) ? aeros : []);
-        setVuelosBFF(Array.isArray(vuelos) ? vuelos : []);
-        console.log(`[Domain] ✓ ${aeros.length} aeropuertos | ${vuelos.length} vuelos cargados desde BD`);
-      } catch (e: any) {
-        if (cancelled) return;
-        console.warn('[Domain] BFF no disponible, usando datos estáticos:', e.message);
-        setError(e.message);
-      } finally {
-        if (!cancelled) setIsLoading(false);
+      if (!Array.isArray(aeros) || aeros.length === 0) {
+        console.warn('[Domain] Aeropuertos vacíos desde BFF — usando datos estáticos');
       }
-    };
+      if (!Array.isArray(vuelos) || vuelos.length === 0) {
+        console.warn('[Domain] Vuelos vacíos desde BFF — usando datos estáticos');
+      }
 
-    load();
-    return () => { cancelled = true; };
+      setAeropuertosBFF(Array.isArray(aeros) ? aeros : []);
+      setVuelosBFF(Array.isArray(vuelos) ? vuelos : []);
+      console.log(`[Domain] ✓ ${Array.isArray(aeros) ? aeros.length : 0} aeropuertos | ${Array.isArray(vuelos) ? vuelos.length : 0} vuelos cargados desde BD`);
+    } catch (e: any) {
+      console.warn('[Domain] BFF no disponible, usando datos estáticos:', e.message);
+      setError(e.message);
+      throw e;
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    reloadDomain().catch(() => undefined);
+  }, [reloadDomain]);
 
   // ─── Derivar las 4 listas desde BFF; fallback a estáticos ─────────────────
   const airports = aeropuertosBFF.length > 0
@@ -224,6 +222,7 @@ export const DomainProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       vuelosBFF,
       isLoading,
       error,
+      reloadDomain,
     }}>
       {children}
     </DomainContext.Provider>
