@@ -5,7 +5,7 @@ import {
   formatMinutesUTC,
   getContinentLabel,
 } from '../data/envios';
-import { Map } from '../components/Map';
+import { Map as SimulationMap } from '../components/Map';
 import { PlanTramoVisual, ShipmentMetadata, Vuelo } from '../types';
 import { format } from 'date-fns';
 import { formatUtcMinute, loadShipmentMetadataByIndices, planWindow, searchShipmentMetadata, shipmentLabel, shipmentRoutes } from '../lib/operations';
@@ -1317,7 +1317,7 @@ export function UnifiedDashboard() {
 
       {/* Map */}
       <div className="flex-1 min-w-0">
-        <Map
+        <SimulationMap
           selectedAirportId={selectedAirportId}
           onAirportSelect={(id) => { setSelectedShipmentIndex(null); setSelectedAirportId(id); setSelectedVuelo(null); }}
           onFlightSelect={handleFlightSelect}
