@@ -182,6 +182,16 @@ export interface PlanResumenVisual {
   ventanaFinUTC?: number;
 }
 
+export interface StablePlanSnapshot {
+  generatedAtRealISO: string;
+  simulationTimeUTC: number;
+  scenario: SimulationScenario;
+  fase: FaseSimulacion;
+  contadores: Contadores;
+  resumen: PlanResumenVisual | null;
+  tramos: PlanTramoVisual[];
+}
+
 export interface DatasetInfo {
   fecha_min:    string;
   fecha_max:    string;

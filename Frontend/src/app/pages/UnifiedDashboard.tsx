@@ -27,6 +27,8 @@ import {
   ArrowRight,
   XCircle,
   Trophy,
+  Download,
+  FileText,
 } from 'lucide-react';
 
 // ─── Collapsible Section ───
@@ -122,12 +124,45 @@ function duracionMinDia(salida: number, llegada: number) {
   return diff >= 0 ? diff : diff + 1440;
 }
 
+function formatElapsedMilliseconds(milliseconds: number) {
+  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+function formatElapsedSimulationMinutes(totalMinutes: number) {
+  const safeMinutes = Math.max(0, Math.floor(totalMinutes));
+  const days = Math.floor(safeMinutes / 1440);
+  const hours = Math.floor((safeMinutes % 1440) / 60);
+  const minutes = safeMinutes % 60;
+  return `${days > 0 ? `${days}d ` : ''}${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+}
+
+function downloadTextFile(filename: string, content: string, mimeType: string) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+function csvCell(value: unknown) {
+  const text = String(value ?? '');
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
 
 export function UnifiedDashboard() {
   const {
     stats, getAirportStats,aeropuertosState,
     fase, contadores, progresoPct, warmupPct, simulationTime, tiempoSimUTC,
-    collapseFailure, lastValidTick, config, planTramos, planResumen,
+    collapseFailure, lastValidTick, config, planTramos, planResumen, lastStablePlan,
     pausarSimulacion, reanudarSimulacion, detenerSimulacion, resetear,
   } = useSimulation();
   const {
@@ -153,6 +188,41 @@ export function UnifiedDashboard() {
   const [shipmentSearchLoading, setShipmentSearchLoading] = useState(false);
   const [shipmentMetadataByIndex, setShipmentMetadataByIndex] = useState<Map<number, ShipmentMetadata>>(new Map());
   const [selectedShipmentIndex, setSelectedShipmentIndex] = useState<number | null>(null);
+  const [showStableReport, setShowStableReport] = useState(false);
+  const [realClockMs, setRealClockMs] = useState(() => Date.now());
+  const [executionTiming, setExecutionTiming] = useState<{ startedAtMs: number | null; endedAtMs: number | null }>(() => {
+    try {
+      const stored = sessionStorage.getItem('tasfb2b.executionTiming');
+      return stored ? JSON.parse(stored) : { startedAtMs: null, endedAtMs: null };
+    } catch {
+      return { startedAtMs: null, endedAtMs: null };
+    }
+  });
+  const previousPhaseRef = useRef(fase);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setRealClockMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    const activePhases = new Set(['planificando', 'listo', 'calentando', 'ejecutando', 'pausado']);
+    const wasActive = activePhases.has(previousPhaseRef.current);
+    const isActive = activePhases.has(fase);
+    let next = executionTiming;
+
+    if (isActive && (!wasActive || executionTiming.startedAtMs == null)) {
+      next = { startedAtMs: Date.now(), endedAtMs: null };
+    } else if (!isActive && wasActive && executionTiming.startedAtMs != null && executionTiming.endedAtMs == null) {
+      next = { ...executionTiming, endedAtMs: Date.now() };
+    }
+
+    if (next !== executionTiming) {
+      setExecutionTiming(next);
+      sessionStorage.setItem('tasfb2b.executionTiming', JSON.stringify(next));
+    }
+    previousPhaseRef.current = fase;
+  }, [executionTiming, fase]);
 
   // Show completion overlay when simulation finishes
   useEffect(() => {
@@ -519,6 +589,36 @@ export function UnifiedDashboard() {
       .sort((a, b) => b.stats.pct - a.stats.pct || a.ap.iata.localeCompare(b.ap.iata));
   }, [warehouseQuery, warehouseStatusFilter, aeropuertosBFF, airports, aeropuertosState]);
 
+  const globalWarehouseSummary = useMemo(() => {
+    const liveByCode = new globalThis.Map(aeropuertosState.map((airport) => [airport.iata, airport]));
+    let occupied = 0;
+    let capacity = 0;
+    const counts = { vacio: 0, verde: 0, ambar: 0, rojo: 0 };
+
+    for (const airport of aeropuertosBFF) {
+      const live = liveByCode.get(airport.iata);
+      const airportCapacity = live?.capacidad_almacen ?? airport.capacidad_almacen ?? 0;
+      const airportOccupied = live?.maletas_almacen ?? 0;
+      const percentage = airportCapacity > 0 ? (airportOccupied / airportCapacity) * 100 : 0;
+      occupied += airportOccupied;
+      capacity += airportCapacity;
+      if (airportOccupied <= 0) counts.vacio += 1;
+      else if (percentage <= config.thresholds.warehouse.green) counts.verde += 1;
+      else if (percentage <= config.thresholds.warehouse.yellow) counts.ambar += 1;
+      else counts.rojo += 1;
+    }
+
+    const percentage = capacity > 0 ? (occupied / capacity) * 100 : 0;
+    const status = occupied <= 0
+      ? 'vacio'
+      : percentage <= config.thresholds.warehouse.green
+        ? 'verde'
+        : percentage <= config.thresholds.warehouse.yellow
+          ? 'ambar'
+          : 'rojo';
+    return { occupied, capacity, percentage, status, counts };
+  }, [aeropuertosBFF, aeropuertosState, config.thresholds.warehouse]);
+
   const statusData = [
     { name: 'Entregadas', value: stats.delivered, color: '#10b981' },
     { name: 'En Tránsito', value: stats.inTransit, color: '#3b82f6' },
@@ -592,6 +692,37 @@ export function UnifiedDashboard() {
     };
   }, [selectedVuelo, vuelosBD]);
 
+  const realCurrentTimeText = new Intl.DateTimeFormat('es-PE', {
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  }).format(new Date(realClockMs));
+  const elapsedRealMs = executionTiming.startedAtMs == null
+    ? 0
+    : (executionTiming.endedAtMs ?? realClockMs) - executionTiming.startedAtMs;
+  const elapsedSimulatedMinutes = tiempoSimUTC > 0 ? Math.max(0, tiempoSimUTC - inicioSimMin) : 0;
+
+  const downloadStablePlanJson = useCallback(() => {
+    if (!lastStablePlan) return;
+    const suffix = new Date(lastStablePlan.generatedAtRealISO).toISOString().replace(/[:.]/g, '-');
+    downloadTextFile(`planificacion-estable-${suffix}.json`, JSON.stringify(lastStablePlan, null, 2), 'application/json;charset=utf-8');
+  }, [lastStablePlan]);
+
+  const downloadStablePlanCsv = useCallback(() => {
+    if (!lastStablePlan) return;
+    const header = ['envio_indice', 'tramo', 'origen', 'destino', 'salida_utc', 'llegada_utc', 'maletas'];
+    const rows = lastStablePlan.tramos.map((tramo) => [
+      tramo.envioIndice,
+      tramo.tramoIndex,
+      tramo.desde,
+      tramo.hasta,
+      new Date(tramo.salidaUTC * 60000).toISOString(),
+      new Date(tramo.llegadaUTC * 60000).toISOString(),
+      tramo.maletas,
+    ]);
+    const csv = [header, ...rows].map((row) => row.map(csvCell).join(',')).join('\n');
+    const suffix = new Date(lastStablePlan.generatedAtRealISO).toISOString().replace(/[:.]/g, '-');
+    downloadTextFile(`planificacion-estable-${suffix}.csv`, csv, 'text/csv;charset=utf-8');
+  }, [lastStablePlan]);
+
   return (
     <div className="relative flex h-full flex-col bg-background">
 
@@ -635,6 +766,21 @@ export function UnifiedDashboard() {
           <span className="font-mono text-xs text-panel-text">
             {contadores.total > 0 || tiempoSimUTC > 0 ? tiempoSimuladoTexto : '—'}
           </span>
+        </div>
+        <div className="h-4 w-px bg-panel-border" />
+        <div className="flex items-center gap-1.5" title="Hora del reloj real del navegador">
+          <span className="text-[11px] text-panel-text-muted">Hora real:</span>
+          <span className="font-mono text-xs font-semibold text-panel-text">{realCurrentTimeText}</span>
+        </div>
+        <div className="h-4 w-px bg-panel-border" />
+        <div className="flex items-center gap-1.5" title="Tiempo de pared transcurrido desde el inicio de la ejecución">
+          <span className="text-[11px] text-panel-text-muted">Real transcurrido:</span>
+          <span className="font-mono text-xs font-semibold text-panel-text">{executionTiming.startedAtMs ? formatElapsedMilliseconds(elapsedRealMs) : '—'}</span>
+        </div>
+        <div className="h-4 w-px bg-panel-border" />
+        <div className="flex items-center gap-1.5" title="Tiempo del escenario que ya fue simulado">
+          <span className="text-[11px] text-panel-text-muted">Simulado transcurrido:</span>
+          <span className="font-mono text-xs font-semibold text-panel-text">{tiempoSimUTC > 0 ? formatElapsedSimulationMinutes(elapsedSimulatedMinutes) : '—'}</span>
         </div>
         {/* Warm-up progress bar (pre-roll acelerado) */}
         {fase === 'calentando' && (
@@ -704,6 +850,38 @@ export function UnifiedDashboard() {
         </div>
       </div>
 
+      {showStableReport && lastStablePlan && (
+        <div className="absolute inset-0 z-[60] flex items-center justify-center bg-black/45 p-4 backdrop-blur-sm">
+          <div className="relative flex max-h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-panel-border bg-panel-bg shadow-2xl">
+            <div className="flex items-start justify-between gap-4 border-b border-panel-border p-5">
+              <div>
+                <p className="text-xs uppercase tracking-wide text-panel-text-faint">Última planificación estable</p>
+                <h2 className="mt-1 text-xl font-semibold text-panel-text">{lastStablePlan.tramos.length.toLocaleString('es-PE')} tramos planificados</h2>
+                <p className="mt-1 text-sm text-panel-text-muted">Capturada {new Date(lastStablePlan.generatedAtRealISO).toLocaleString('es-PE')} · escenario {lastStablePlan.scenario} · tiempo simulado {formatSimDateTimeUTCFromMinute(lastStablePlan.simulationTimeUTC)} UTC</p>
+              </div>
+              <button type="button" onClick={() => setShowStableReport(false)} className="rounded p-2 text-panel-text-faint hover:bg-panel-hover hover:text-panel-text"><X className="h-5 w-5" /></button>
+            </div>
+            <div className="grid gap-3 border-b border-panel-border p-4 sm:grid-cols-4">
+              <div className="rounded bg-panel-section-bg p-3"><p className="text-[10px] text-panel-text-faint">Total envíos</p><p className="text-lg font-semibold text-panel-text">{lastStablePlan.contadores.total}</p></div>
+              <div className="rounded bg-panel-section-bg p-3"><p className="text-[10px] text-panel-text-faint">Entregados</p><p className="text-lg font-semibold text-green-500">{lastStablePlan.contadores.entregado}</p></div>
+              <div className="rounded bg-panel-section-bg p-3"><p className="text-[10px] text-panel-text-faint">En tránsito</p><p className="text-lg font-semibold text-blue-500">{lastStablePlan.contadores.en_vuelo + lastStablePlan.contadores.en_escala}</p></div>
+              <div className="rounded bg-panel-section-bg p-3"><p className="text-[10px] text-panel-text-faint">Rechazados</p><p className="text-lg font-semibold text-red-500">{lastStablePlan.contadores.rechazado}</p></div>
+            </div>
+            <div className="min-h-0 flex-1 overflow-auto">
+              <table className="w-full min-w-[860px] text-left text-xs">
+                <thead className="sticky top-0 bg-panel-bg-subtle text-panel-text-faint"><tr><th className="px-4 py-3">Envío</th><th className="px-4 py-3">Tramo</th><th className="px-4 py-3">Origen</th><th className="px-4 py-3">Destino</th><th className="px-4 py-3">Salida UTC</th><th className="px-4 py-3">Llegada UTC</th><th className="px-4 py-3">Maletas</th></tr></thead>
+                <tbody>{lastStablePlan.tramos.slice(0, 500).map((tramo) => <tr key={`${tramo.envioIndice}-${tramo.tramoIndex}-${tramo.salidaUTC}`} className="border-t border-panel-border"><td className="px-4 py-2 font-mono">{tramo.envioIndice}</td><td className="px-4 py-2">{tramo.tramoIndex}</td><td className="px-4 py-2 font-semibold">{tramo.desde}</td><td className="px-4 py-2 font-semibold">{tramo.hasta}</td><td className="px-4 py-2">{formatUtcMinute(tramo.salidaUTC)}</td><td className="px-4 py-2">{formatUtcMinute(tramo.llegadaUTC)}</td><td className="px-4 py-2">{tramo.maletas}</td></tr>)}</tbody>
+              </table>
+              {lastStablePlan.tramos.length > 500 && <p className="p-3 text-center text-xs text-panel-text-faint">Vista previa limitada a 500 filas. Los archivos descargados incluyen el plan completo.</p>}
+            </div>
+            <div className="flex flex-wrap justify-end gap-2 border-t border-panel-border p-4">
+              <button type="button" onClick={downloadStablePlanJson} className="inline-flex items-center gap-2 rounded border border-panel-border px-4 py-2 text-sm font-medium text-panel-text hover:bg-panel-hover"><Download className="h-4 w-4" />Descargar JSON</button>
+              <button type="button" onClick={downloadStablePlanCsv} className="inline-flex items-center gap-2 rounded bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"><Download className="h-4 w-4" />Descargar CSV</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Completion overlay ── */}
       {showCompletion && fase === 'completado' && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
@@ -760,6 +938,13 @@ export function UnifiedDashboard() {
                   <summary className="cursor-pointer text-sm font-medium text-panel-text">Ver detalle técnico</summary>
                   <p className="mt-2 whitespace-pre-wrap">{collapseFailure.technicalMessage}</p>
                 </details>
+              )}
+              {lastStablePlan && (
+                <div className="grid w-full gap-2 sm:grid-cols-3">
+                  <button type="button" onClick={() => { setShowCompletion(false); setShowStableReport(true); }} className="inline-flex items-center justify-center gap-2 rounded-xl border border-panel-border px-3 py-2.5 text-sm font-semibold text-panel-text hover:bg-panel-hover"><FileText className="h-4 w-4" />Ver reporte</button>
+                  <button type="button" onClick={downloadStablePlanJson} className="inline-flex items-center justify-center gap-2 rounded-xl border border-panel-border px-3 py-2.5 text-sm font-semibold text-panel-text hover:bg-panel-hover"><Download className="h-4 w-4" />JSON</button>
+                  <button type="button" onClick={downloadStablePlanCsv} className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-3 py-2.5 text-sm font-semibold text-white hover:bg-blue-700"><Download className="h-4 w-4" />CSV</button>
+                </div>
               )}
               <button
                 onClick={() => setShowCompletion(false)}
@@ -923,7 +1108,7 @@ export function UnifiedDashboard() {
                       <span className="font-semibold text-panel-text">{row.capacity > 0 ? `${row.percentage.toFixed(0)}%` : `${row.maletas} maletas`}</span>
                     </div>
                     <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-panel-section-bg">
-                      <div className={`h-full ${row.percentage > 90 ? 'bg-red-500' : row.percentage > 70 ? 'bg-yellow-500' : 'bg-green-500'}`} style={{ width: `${Math.min(row.percentage, 100)}%` }} />
+                      <div className={`h-full ${row.maletas <= 0 ? 'bg-slate-400' : row.percentage > config.thresholds.flight.yellow ? 'bg-red-500' : row.percentage > config.thresholds.flight.green ? 'bg-yellow-500' : 'bg-green-500'}`} style={{ width: `${Math.min(row.percentage, 100)}%` }} />
                     </div>
                     <p className="mt-1 text-[9px] text-panel-text-faint">{row.maletas}/{row.capacity || '—'} maletas · salida {formatUtcMinute(row.leg.salidaUTC)} UTC</p>
                   </button>
@@ -1138,6 +1323,50 @@ export function UnifiedDashboard() {
             </div>
           </Section>
 
+          <Section
+            title="Ocupación global de almacenes"
+            icon={<Package className="h-3.5 w-3.5" />}
+            badge={`${globalWarehouseSummary.percentage.toFixed(1)}%`}
+            defaultOpen
+            accentColor={globalWarehouseSummary.status === 'rojo' ? 'text-red-500' : globalWarehouseSummary.status === 'ambar' ? 'text-yellow-500' : globalWarehouseSummary.status === 'vacio' ? 'text-slate-400' : 'text-green-500'}
+          >
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <span className={`h-3 w-3 rounded-full ${globalWarehouseSummary.status === 'rojo' ? 'bg-red-500' : globalWarehouseSummary.status === 'ambar' ? 'bg-yellow-500' : globalWarehouseSummary.status === 'vacio' ? 'bg-slate-400' : 'bg-green-500'}`} />
+                  <span className="text-xs font-semibold capitalize text-panel-text">{globalWarehouseSummary.status}</span>
+                </div>
+                <span className="text-xs font-semibold text-panel-text">{globalWarehouseSummary.occupied.toLocaleString('es-PE')} / {globalWarehouseSummary.capacity.toLocaleString('es-PE')} maletas</span>
+              </div>
+              <div className="h-2 overflow-hidden rounded-full bg-panel-section-bg"><div className={`h-full ${globalWarehouseSummary.status === 'rojo' ? 'bg-red-500' : globalWarehouseSummary.status === 'ambar' ? 'bg-yellow-500' : globalWarehouseSummary.status === 'vacio' ? 'bg-slate-400' : 'bg-green-500'}`} style={{ width: `${Math.min(globalWarehouseSummary.percentage, 100)}%` }} /></div>
+              <div className="grid grid-cols-4 gap-1 text-center text-[9px]">
+                <span className="rounded bg-slate-500/10 px-1 py-1 text-panel-text-muted">Vacíos {globalWarehouseSummary.counts.vacio}</span>
+                <span className="rounded bg-green-500/10 px-1 py-1 text-green-500">Verdes {globalWarehouseSummary.counts.verde}</span>
+                <span className="rounded bg-yellow-500/10 px-1 py-1 text-yellow-500">Ámbar {globalWarehouseSummary.counts.ambar}</span>
+                <span className="rounded bg-red-500/10 px-1 py-1 text-red-500">Rojos {globalWarehouseSummary.counts.rojo}</span>
+              </div>
+            </div>
+          </Section>
+
+          <Section
+            title="Última planificación estable"
+            icon={<FileText className="h-3.5 w-3.5" />}
+            badge={lastStablePlan ? lastStablePlan.tramos.length : 0}
+            defaultOpen={fase === 'completado'}
+          >
+            {lastStablePlan ? (
+              <div className="space-y-2">
+                <p className="text-[10px] text-panel-text-faint">Capturada {new Date(lastStablePlan.generatedAtRealISO).toLocaleString('es-PE')} con {lastStablePlan.tramos.length.toLocaleString('es-PE')} tramos.</p>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <button type="button" onClick={() => setShowStableReport(true)} className="inline-flex items-center justify-center gap-1.5 rounded border border-panel-border px-2 py-2 text-[10px] font-semibold text-panel-text hover:bg-panel-hover"><FileText className="h-3.5 w-3.5" />Ver reporte</button>
+                  <button type="button" onClick={downloadStablePlanCsv} className="inline-flex items-center justify-center gap-1.5 rounded bg-blue-600 px-2 py-2 text-[10px] font-semibold text-white hover:bg-blue-700"><Download className="h-3.5 w-3.5" />Descargar CSV</button>
+                </div>
+              </div>
+            ) : (
+              <p className="py-2 text-center text-[10px] text-panel-text-faint">Se habilitará cuando el planificador emita el primer plan estable.</p>
+            )}
+          </Section>
+
           {/* Flight Info */}
           <Section
             title={selectedVuelo ? `${getAeropuertoById(selectedVuelo.idOrigen)?.iata} → ${getAeropuertoById(selectedVuelo.idDestino)?.iata}` : 'Vuelo'}
@@ -1198,7 +1427,7 @@ export function UnifiedDashboard() {
                     {cap > 0 ? (
                       <div className="h-1.5 w-full rounded-full bg-panel-section-bg overflow-hidden">
                         <div
-                          className={`h-full rounded-full transition-all ${pct > 90 ? 'bg-red-500' : pct > 70 ? 'bg-yellow-500' : 'bg-green-500'}`}
+                          className={`h-full rounded-full transition-all ${occ <= 0 ? 'bg-slate-400' : pct > config.thresholds.flight.yellow ? 'bg-red-500' : pct > config.thresholds.flight.green ? 'bg-yellow-500' : 'bg-green-500'}`}
                           style={{ width: `${Math.min(pct, 100)}%` }}
                         />
                       </div>
@@ -1322,6 +1551,7 @@ export function UnifiedDashboard() {
           onAirportSelect={(id) => { setSelectedShipmentIndex(null); setSelectedAirportId(id); setSelectedVuelo(null); }}
           onFlightSelect={handleFlightSelect}
           selectedFlightKey={selectedFlightKey}
+          selectedFlight={selectedVuelo}
           warehouseCodeFilter={warehouseQuery}
           warehouseStatusFilter={warehouseStatusFilter}
           highlightedShipmentRoute={selectedShipmentRoute}

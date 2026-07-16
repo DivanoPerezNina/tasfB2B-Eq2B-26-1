@@ -135,6 +135,28 @@ interface ActiveFlightResult {
   totalActive: number;
 }
 
+type FlightOccupancyFilter = 'all' | 'vacio' | 'verde' | 'ambar' | 'rojo';
+
+function getFlightOccupancyStatus(
+  load: number,
+  capacity: number,
+  thresholds: { green: number; yellow: number; red: number },
+): Exclude<FlightOccupancyFilter, 'all'> {
+  if (load <= 0) return 'vacio';
+  if (capacity <= 0) return 'verde';
+  const percentage = (load / capacity) * 100;
+  if (percentage <= thresholds.green) return 'verde';
+  if (percentage <= thresholds.yellow) return 'ambar';
+  return 'rojo';
+}
+
+function getFlightOccupancyColor(status: Exclude<FlightOccupancyFilter, 'all'>): string {
+  if (status === 'vacio') return '#94a3b8';
+  if (status === 'verde') return '#22c55e';
+  if (status === 'ambar') return '#f59e0b';
+  return '#ef4444';
+}
+
 function airportContinentFromBackend(a?: Aeropuerto): Continent | undefined {
   if (!a) return undefined;
   if (a.continente === 1) return 'America';
@@ -149,6 +171,10 @@ function duracionMinutosDia(salidaMin: number, llegadaMin: number): number {
   return diff >= 0 ? diff : diff + 1440;
 }
 
+function normalizarMinutoDia(minuto: number): number {
+  return ((minuto % 1440) + 1440) % 1440;
+}
+
 function getActiveFlightsFromPlan(
   simMinuteUTC: number,
   planTramos: PlanTramoVisual[],
@@ -157,89 +183,154 @@ function getActiveFlightsFromPlan(
   vuelosBackend: Vuelo[],
   filter: Continent | 'all',
 ): ActiveFlightResult {
-  const flights: ActiveFlight[] = [];
-  let totalActive = 0;
+  type Occurrence = {
+    key: string;
+    vueloReal: Vuelo;
+    salidaUTC: number;
+    llegadaUTC: number;
+    maletas: number;
+    envioIndice: number;
+    tramoIndex: number;
+    origFront: Airport;
+    destFront: Airport;
+    origCont: Continent;
+    destCont: Continent;
+  };
+
   const currentMinute = simMinuteUTC;
+  const occurrences = new globalThis.Map<string, Occurrence>();
+  const dayStartUTC = Math.floor(currentMinute / 1440) * 1440;
 
-  for (const tramo of planTramos) {
-    if (currentMinute < tramo.salidaUTC || currentMinute >= tramo.llegadaUTC) continue;
-
-    const origFront = airports.find(a => a.code === tramo.desde);
-    const destFront = airports.find(a => a.code === tramo.hasta);
-    if (!origFront || !destFront) continue;
-
-    const origBack = aeropuertosBackend.find(a => a.iata === tramo.desde);
-    const destBack = aeropuertosBackend.find(a => a.iata === tramo.hasta);
+  const addScheduledOccurrence = (vueloReal: Vuelo, salidaUTC: number, llegadaUTC: number, suffix: string) => {
+    if (currentMinute < salidaUTC || currentMinute >= llegadaUTC) return;
+    const origBack = aeropuertosBackend.find((airport) => airport.id === vueloReal.idOrigen);
+    const destBack = aeropuertosBackend.find((airport) => airport.id === vueloReal.idDestino);
+    const origFront = airports.find((airport) => airport.code === origBack?.iata);
+    const destFront = airports.find((airport) => airport.code === destBack?.iata);
+    if (!origBack || !destBack || !origFront || !destFront) return;
     const origCont = airportContinentFromBackend(origBack) ?? origFront.continent;
     const destCont = airportContinentFromBackend(destBack) ?? destFront.continent;
+    if (filter !== 'all' && origCont !== filter && destCont !== filter) return;
 
-    if (filter !== 'all' && origCont !== filter && destCont !== filter) continue;
+    const key = `${origBack.iata}-${destBack.iata}-${salidaUTC}-${llegadaUTC}-${suffix}`;
+    occurrences.set(key, {
+      key,
+      vueloReal,
+      salidaUTC,
+      llegadaUTC,
+      maletas: 0,
+      envioIndice: -1,
+      tramoIndex: -1,
+      origFront,
+      destFront,
+      origCont,
+      destCont,
+    });
+  };
 
-    totalActive++;
-    if (flights.length >= MAX_VISIBLE_ACTIVE_FLIGHTS) continue;
+  vuelosBackend.forEach((vueloReal, index) => {
+    const salidaDia = normalizarMinutoDia(vueloReal.salidaUTC);
+    const llegadaDia = normalizarMinutoDia(vueloReal.llegadaUTC);
+    let salidaUTC = dayStartUTC + salidaDia;
+    let llegadaUTC = dayStartUTC + llegadaDia;
+    if (llegadaUTC <= salidaUTC) llegadaUTC += 1440;
+    addScheduledOccurrence(vueloReal, salidaUTC, llegadaUTC, String(index));
+    addScheduledOccurrence(vueloReal, salidaUTC - 1440, llegadaUTC - 1440, `${index}-prev`);
+  });
 
-    const duration = tramo.llegadaUTC - tramo.salidaUTC;
-    const progress = clamp((currentMinute - tramo.salidaUTC) / duration);
+  const activePlanLegs = planTramos.filter((tramo) => currentMinute >= tramo.salidaUTC && currentMinute < tramo.llegadaUTC);
+  for (const tramo of activePlanLegs) {
+    const matchingOccurrence = Array.from(occurrences.values()).find((occurrence) => {
+      const origBack = aeropuertosBackend.find((airport) => airport.id === occurrence.vueloReal.idOrigen);
+      const destBack = aeropuertosBackend.find((airport) => airport.id === occurrence.vueloReal.idDestino);
+      return origBack?.iata === tramo.desde
+        && destBack?.iata === tramo.hasta
+        && Math.abs(occurrence.salidaUTC - tramo.salidaUTC) <= 2;
+    });
 
-    const lat = lerp(origFront.lat, destFront.lat, progress);
-    const lng = lerpLng(origFront.lng, destFront.lng, progress);
-
-    // Línea del vuelo activo: debe quedar anclada en el aeropuerto de origen
-    // y crecer hasta la posición actual del avión. Se elimina sola al llegar.
-    const trailLat = origFront.lat;
-    const trailLng = origFront.lng;
-
-    // La nariz del avión siempre apunta hacia el destino del tramo, no hacia
-    // el rastro ni hacia una posición anterior.
-    const angle = getPlaneRotationToDestination(lat, lng, destFront.lat, destFront.lng);
-
-    // Buscar el vuelo real correspondiente en vuelosBackend para obtener la capacidad
-    const tramoSalidaDia = ((tramo.salidaUTC % 1440) + 1440) % 1440;
-    const tramoLlegadaDia = ((tramo.llegadaUTC % 1440) + 1440) % 1440;
-    const tramoDuracionNormalizada = duracionMinutosDia(tramoSalidaDia, tramoLlegadaDia);
-    
-    let vueloReal = vuelosBackend.find(v =>
-      v.idOrigen === origBack?.id &&
-      v.idDestino === destBack?.id &&
-      Math.abs(v.salidaUTC - tramoSalidaDia) < 2 && // tolerancia de ±1 minuto
-      Math.abs(duracionMinutosDia(v.salidaUTC, v.llegadaUTC) - tramoDuracionNormalizada) < 5 // tolerancia de ±4 min
-    );
-    
-    // Fallback: si no hay match exacto, buscar por ruta con capacidadMaxima válida
-    if (!vueloReal) {
-      vueloReal = vuelosBackend.find(v =>
-        v.idOrigen === origBack?.id &&
-        v.idDestino === destBack?.id &&
-        v.capacidadMaxima > 0
-      );
+    if (matchingOccurrence) {
+      matchingOccurrence.maletas += tramo.maletas;
+      if (matchingOccurrence.envioIndice < 0) {
+        matchingOccurrence.envioIndice = tramo.envioIndice;
+        matchingOccurrence.tramoIndex = tramo.tramoIndex;
+      }
+      continue;
     }
 
-    flights.push({
-      vuelo: {
-        idOrigen: origBack?.id ?? 0,
-        idDestino: destBack?.id ?? 0,
+    const origBack = aeropuertosBackend.find((airport) => airport.iata === tramo.desde);
+    const destBack = aeropuertosBackend.find((airport) => airport.iata === tramo.hasta);
+    const origFront = airports.find((airport) => airport.code === tramo.desde);
+    const destFront = airports.find((airport) => airport.code === tramo.hasta);
+    if (!origBack || !destBack || !origFront || !destFront) continue;
+    const origCont = airportContinentFromBackend(origBack) ?? origFront.continent;
+    const destCont = airportContinentFromBackend(destBack) ?? destFront.continent;
+    if (filter !== 'all' && origCont !== filter && destCont !== filter) continue;
+    const realFlight = vuelosBackend.find((flight) =>
+      flight.idOrigen === origBack.id
+      && flight.idDestino === destBack.id
+      && Math.abs(normalizarMinutoDia(flight.salidaUTC) - normalizarMinutoDia(tramo.salidaUTC)) <= 2,
+    ) ?? vuelosBackend.find((flight) => flight.idOrigen === origBack.id && flight.idDestino === destBack.id);
+    const key = `${tramo.desde}-${tramo.hasta}-${tramo.salidaUTC}-${tramo.llegadaUTC}-plan`;
+    const existing = occurrences.get(key);
+    if (existing) {
+      existing.maletas += tramo.maletas;
+    } else {
+      occurrences.set(key, {
+        key,
+        vueloReal: realFlight ?? {
+          idOrigen: origBack.id,
+          idDestino: destBack.id,
+          salidaUTC: normalizarMinutoDia(tramo.salidaUTC),
+          llegadaUTC: normalizarMinutoDia(tramo.llegadaUTC),
+          capacidadMaxima: 0,
+        },
         salidaUTC: tramo.salidaUTC,
         llegadaUTC: tramo.llegadaUTC,
-        capacidadMaxima: vueloReal?.capacidadMaxima ?? 0,
-        ocupacionActual: tramo.maletas,
+        maletas: tramo.maletas,
+        envioIndice: tramo.envioIndice,
+        tramoIndex: tramo.tramoIndex,
+        origFront,
+        destFront,
+        origCont,
+        destCont,
+      });
+    }
+  }
+
+  const allOccurrences = Array.from(occurrences.values());
+  const flights: ActiveFlight[] = [];
+  for (const occurrence of allOccurrences.slice(0, MAX_VISIBLE_ACTIVE_FLIGHTS)) {
+    const duration = occurrence.llegadaUTC - occurrence.salidaUTC;
+    const progress = clamp((currentMinute - occurrence.salidaUTC) / duration);
+    const lat = lerp(occurrence.origFront.lat, occurrence.destFront.lat, progress);
+    const lng = lerpLng(occurrence.origFront.lng, occurrence.destFront.lng, progress);
+    const angle = getPlaneRotationToDestination(lat, lng, occurrence.destFront.lat, occurrence.destFront.lng);
+    flights.push({
+      vuelo: {
+        idOrigen: occurrence.vueloReal.idOrigen,
+        idDestino: occurrence.vueloReal.idDestino,
+        salidaUTC: occurrence.salidaUTC,
+        llegadaUTC: occurrence.llegadaUTC,
+        capacidadMaxima: occurrence.vueloReal.capacidadMaxima,
+        ocupacionActual: occurrence.maletas,
       },
-      envioIndice: tramo.envioIndice,
-      tramoIndex: tramo.tramoIndex,
+      envioIndice: occurrence.envioIndice,
+      tramoIndex: occurrence.tramoIndex,
       progress,
-      fromLat: origFront.lat,
-      fromLng: origFront.lng,
-      toLat: destFront.lat,
-      toLng: destFront.lng,
-      trailLat,
-      trailLng,
+      fromLat: occurrence.origFront.lat,
+      fromLng: occurrence.origFront.lng,
+      toLat: occurrence.destFront.lat,
+      toLng: occurrence.destFront.lng,
+      trailLat: occurrence.origFront.lat,
+      trailLng: occurrence.origFront.lng,
       lat,
       lng,
       angle,
-      isSameCont: origCont === destCont,
+      isSameCont: occurrence.origCont === occurrence.destCont,
     });
   }
 
-  return { flights, totalActive };
+  return { flights, totalActive: allOccurrences.length };
 }
 
 interface MapProps {
@@ -247,6 +338,7 @@ interface MapProps {
   onAirportSelect?: (airportId: string) => void;
   onFlightSelect?: (vuelo: Vuelo) => void;
   selectedFlightKey?: string; // `${idOrigen}-${idDestino}-${salidaUTC}`
+  selectedFlight?: Vuelo | null;
   canceledFlights?: VisualCancellation[];
   warehouseCodeFilter?: string;
   warehouseStatusFilter?: 'all' | 'verde' | 'ambar' | 'rojo' | 'vacio';
@@ -258,6 +350,7 @@ export const Map = memo(function Map({
   onAirportSelect,
   onFlightSelect,
   selectedFlightKey,
+  selectedFlight,
   canceledFlights = [],
   warehouseCodeFilter = '',
   warehouseStatusFilter = 'all',
@@ -280,6 +373,7 @@ export const Map = memo(function Map({
   const [zoom, setZoom] = useState(1);
   const [center, setCenter] = useState<[number, number]>([20, 10]);
   const [filter, setFilter] = useState<Continent | 'all'>('all');
+  const [flightOccupancyFilter, setFlightOccupancyFilter] = useState<FlightOccupancyFilter>('all');
   const [hoveredAirport, setHoveredAirport] = useState<string | null>(null);
   const [legendOpen, setLegendOpen] = useState(true);   // leyenda del mapa minimizable
   const [zoomInfoOpen, setZoomInfoOpen] = useState(true); // tarjeta superior derecha minimizable
@@ -417,8 +511,38 @@ export const Map = memo(function Map({
     return getActiveFlightsFromPlan(smoothMinute, planTramos, airports, aeropuertosBackend, vuelosBackend, filter);
   }, [smoothMinute, showPlanes, simHasStarted, planVisualCargado, planTramos, airports, aeropuertosBackend, vuelosBackend, filter]);
 
-  const activeFlights = activeFlightResult.flights;
+  const allActiveFlights = activeFlightResult.flights;
+  const activeFlights = useMemo(() => allActiveFlights.filter((flight) => {
+    if (flightOccupancyFilter === 'all') return true;
+    return getFlightOccupancyStatus(
+      flight.vuelo.ocupacionActual ?? 0,
+      flight.vuelo.capacidadMaxima,
+      config.thresholds.flight,
+    ) === flightOccupancyFilter;
+  }), [allActiveFlights, config.thresholds.flight, flightOccupancyFilter]);
   const activeFlightTotal = activeFlightResult.totalActive;
+
+  React.useEffect(() => {
+    if (!selectedFlight) return;
+    const active = allActiveFlights.find((flight) =>
+      flight.vuelo.idOrigen === selectedFlight.idOrigen
+      && flight.vuelo.idDestino === selectedFlight.idDestino
+      && Math.abs(flight.vuelo.salidaUTC - selectedFlight.salidaUTC) <= 2,
+    );
+    if (active) {
+      setCenter([active.lng, active.lat]);
+      setZoom((current) => Math.max(current, 4.8));
+      return;
+    }
+    const originBack = aeropuertosBackend.find((airport) => airport.id === selectedFlight.idOrigen);
+    const destinationBack = aeropuertosBackend.find((airport) => airport.id === selectedFlight.idDestino);
+    const origin = airports.find((airport) => airport.code === originBack?.iata);
+    const destination = airports.find((airport) => airport.code === destinationBack?.iata);
+    if (!origin || !destination) return;
+    setCenter([(origin.lng + destination.lng) / 2, (origin.lat + destination.lat) / 2]);
+    const span = Math.max(Math.abs(origin.lng - destination.lng), Math.abs(origin.lat - destination.lat));
+    setZoom(span > 100 ? 1.4 : span > 50 ? 1.9 : span > 20 ? 2.8 : 4.5);
+  }, [selectedFlight, selectedFlightKey, allActiveFlights, aeropuertosBackend, airports]);
 
   const allVisualCancellations = useMemo(() => {
     const unique = new globalThis.Map<string, VisualCancellation>();
@@ -506,6 +630,19 @@ export const Map = memo(function Map({
               <SelectItem value="Asia">Asia</SelectItem>
             </SelectContent>
           </Select>
+          <div className="h-8 w-px" style={{ backgroundColor: 'var(--panel-border)' }} />
+          <Select value={flightOccupancyFilter} onValueChange={(value) => setFlightOccupancyFilter(value as FlightOccupancyFilter)}>
+            <SelectTrigger className="w-36 border-none shadow-none" title="Filtrar aviones por ocupación">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Carga: todos</SelectItem>
+              <SelectItem value="vacio">Carga: vacío</SelectItem>
+              <SelectItem value="verde">Carga: verde</SelectItem>
+              <SelectItem value="ambar">Carga: ámbar</SelectItem>
+              <SelectItem value="rojo">Carga: rojo</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
         {/* Planes toggle — solo visible cuando hay simulación activa */}
         {simHasStarted && (
@@ -518,7 +655,7 @@ export const Map = memo(function Map({
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
               <path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/>
             </svg>
-            <span className="text-xs hidden sm:inline">{activeFlightTotal || contadores.en_vuelo}</span>
+            <span className="text-xs hidden sm:inline">{flightOccupancyFilter === 'all' ? (activeFlightTotal || contadores.en_vuelo) : `${activeFlights.length}/${activeFlightTotal}`}</span>
           </button>
         )}
       </div>
@@ -723,8 +860,9 @@ export const Map = memo(function Map({
             const flightKey = `${af.vuelo.idOrigen}-${af.vuelo.idDestino}-${af.vuelo.salidaUTC}-${af.vuelo.llegadaUTC}-${index}`;
             const selectedRouteKey = `${af.vuelo.idOrigen}-${af.vuelo.idDestino}-${af.vuelo.salidaUTC}`;
             const isSelected = selectedFlightKey === selectedRouteKey;
-            const activeColor = isSelected ? '#a855f7' : af.isSameCont ? '#38bdf8' : '#fbbf24';
-            const baseWidth = (isSelected ? 1.8 : af.isSameCont ? 0.75 : 1.05) * markerScale;
+            const occupancyStatus = getFlightOccupancyStatus(af.vuelo.ocupacionActual ?? 0, af.vuelo.capacidadMaxima, config.thresholds.flight);
+            const activeColor = isSelected ? '#a855f7' : getFlightOccupancyColor(occupancyStatus);
+            const baseWidth = (isSelected ? 1.8 : 1.0) * markerScale;
 
             return (
               <React.Fragment key={`active-route-${flightKey}`}>
@@ -756,8 +894,9 @@ export const Map = memo(function Map({
           {showPlanes && activeFlights.map((af, index) => {
             const flightKey = `${af.vuelo.idOrigen}-${af.vuelo.idDestino}-${af.vuelo.salidaUTC}`;
             const isSelected = selectedFlightKey === flightKey;
-            const planeSize = (af.isSameCont ? 3.5 : 5) * markerScale;
-            const color = af.isSameCont ? '#60a5fa' : '#fbbf24';
+            const planeSize = 4.4 * markerScale;
+            const occupancyStatus = getFlightOccupancyStatus(af.vuelo.ocupacionActual ?? 0, af.vuelo.capacidadMaxima, config.thresholds.flight);
+            const color = getFlightOccupancyColor(occupancyStatus);
             return (
               <Marker
                 key={`plane-${flightKey}-${af.vuelo.llegadaUTC}-${index}`}
@@ -940,17 +1079,18 @@ export const Map = memo(function Map({
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '.375rem', borderTop: '1px solid var(--panel-border)', paddingTop: '.5rem' }}>
-            <p style={{ fontWeight: 600, margin: 0, color: 'var(--panel-text-faint)' }}>
-              {config.scenario === 'collapse' ? 'Actividad en tránsito' : 'Vuelos activos'}
-            </p>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '.5rem' }}>
-              <div className="h-2 w-2 rounded-full bg-blue-400" style={{ flexShrink: 0 }} />
-              <span style={{ fontSize: 11, color: 'var(--map-overlay-text-muted)' }}>Ruta continental</span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '.5rem' }}>
-              <div className="h-2 w-2 rounded-full bg-amber-400" style={{ flexShrink: 0 }} />
-              <span style={{ fontSize: 11, color: 'var(--map-overlay-text-muted)' }}>Ruta intercontinental</span>
-            </div>
+            <p style={{ fontWeight: 600, margin: 0, color: 'var(--panel-text-faint)' }}>Ocupación de aviones</p>
+            {[
+              { color: '#94a3b8', label: 'Vacío (0 maletas)' },
+              { color: '#22c55e', label: `Verde (≤${config.thresholds.flight.green}%)` },
+              { color: '#f59e0b', label: `Ámbar (${config.thresholds.flight.green}-${config.thresholds.flight.yellow}%)` },
+              { color: '#ef4444', label: `Rojo (>${config.thresholds.flight.yellow}%)` },
+            ].map((item) => (
+              <div key={item.label} style={{ display: 'flex', alignItems: 'center', gap: '.5rem' }}>
+                <div className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color, flexShrink: 0 }} />
+                <span style={{ fontSize: 11, color: 'var(--map-overlay-text-muted)' }}>{item.label}</span>
+              </div>
+            ))}
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '.375rem', borderTop: '1px solid var(--panel-border)', paddingTop: '.5rem' }}>

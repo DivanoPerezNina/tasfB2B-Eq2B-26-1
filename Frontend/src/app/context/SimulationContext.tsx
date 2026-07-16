@@ -21,6 +21,7 @@ import {
   VisualCancellation,
   CancellationAudit,
   ReassignmentLeg,
+  StablePlanSnapshot,
 } from '../types';
 import { airports } from '../data/airports';
 
@@ -77,6 +78,8 @@ interface SimulationContextType {
   visualCancellations: VisualCancellation[];
   /** Evidencia antes/después de cada cancelación interactiva. */
   cancellationAudits: CancellationAudit[];
+  /** Último plan válido recibido por SSE. Se conserva aunque la simulación termine o se detenga. */
+  lastStablePlan: StablePlanSnapshot | null;
 
   // ── Configuración ──
   config: SimulationConfig;
@@ -152,6 +155,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [planVisualCargado, setPlanVisualCargado] = useState(false);
   const [visualCancellations, setVisualCancellations] = useState<VisualCancellation[]>([]);
   const [cancellationAudits, setCancellationAudits] = useState<CancellationAudit[]>([]);
+  const [lastStablePlan, setLastStablePlan] = useState<StablePlanSnapshot | null>(null);
   const planTramosRef = useRef<PlanTramoVisual[]>([]);
   const cancellationAuditsRef = useRef<CancellationAudit[]>([]);
   const esRef = useRef<EventSource | null>(null);
@@ -499,6 +503,17 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       })).filter(t => Number.isFinite(t.salidaUTC) && Number.isFinite(t.llegadaUTC) && t.llegadaUTC > t.salidaUTC);
       planTramosRef.current = tramos;
       setPlanTramos(tramos);
+      if (tramos.length > 0) {
+        setLastStablePlan({
+          generatedAtRealISO: new Date().toISOString(),
+          simulationTimeUTC: lastValidTickRef.current?.tiempo_sim_utc ?? tiempoSimUTC,
+          scenario,
+          fase: 'ejecutando',
+          contadores: lastValidTickRef.current?.contadores ?? contadores,
+          resumen: planResumen,
+          tramos,
+        });
+      }
 
       // El nuevo plan puede llegar por SSE casi inmediatamente después del POST.
       // El ref conserva de forma síncrona la foto "antes" y evita perder la auditoría.
@@ -1000,6 +1015,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       planVisualCargado,
       visualCancellations,
       cancellationAudits,
+      lastStablePlan,
       config,
       datasetInfo,
       stats,
