@@ -133,6 +133,20 @@ export interface PlanTramoVisual {
   salidaUTC: number;
   llegadaUTC: number;
   maletas: number;
+  origenEnvio?: string;
+  destinoEnvio?: string;
+  registroUTC?: number;
+  deadlineUTC?: number;
+}
+
+export interface ShipmentMetadata {
+  id_envio: string;
+  origen_iata: string;
+  destino_iata: string;
+  cantidad_maletas: number;
+  registro_utc: number;
+  deadline_utc: number;
+  indice_plan: number;
 }
 
 export interface ReassignmentLeg {

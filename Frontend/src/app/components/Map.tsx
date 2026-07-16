@@ -250,6 +250,7 @@ interface MapProps {
   canceledFlights?: VisualCancellation[];
   warehouseCodeFilter?: string;
   warehouseStatusFilter?: 'all' | 'verde' | 'ambar' | 'rojo' | 'vacio';
+  highlightedShipmentRoute?: PlanTramoVisual[];
 }
 
 export const Map = memo(function Map({
@@ -260,6 +261,7 @@ export const Map = memo(function Map({
   canceledFlights = [],
   warehouseCodeFilter = '',
   warehouseStatusFilter = 'all',
+  highlightedShipmentRoute = [],
 }: MapProps) {
   const {
     isRunning,
@@ -298,6 +300,25 @@ export const Map = memo(function Map({
     setCenter([airport.lng, airport.lat]);
     setZoom(z => Math.max(z, 3.4));
   }, [selectedAirportId, airports]);
+
+
+  React.useEffect(() => {
+    if (highlightedShipmentRoute.length === 0) return;
+    const routeAirports = highlightedShipmentRoute.flatMap((leg) => [
+      airports.find((airport) => airport.code === leg.desde),
+      airports.find((airport) => airport.code === leg.hasta),
+    ]).filter(Boolean) as Airport[];
+    if (routeAirports.length === 0) return;
+    const lngs = routeAirports.map((airport) => airport.lng);
+    const lats = routeAirports.map((airport) => airport.lat);
+    const minLng = Math.min(...lngs);
+    const maxLng = Math.max(...lngs);
+    const minLat = Math.min(...lats);
+    const maxLat = Math.max(...lats);
+    setCenter([(minLng + maxLng) / 2, (minLat + maxLat) / 2]);
+    const span = Math.max(maxLng - minLng, maxLat - minLat);
+    setZoom(span > 100 ? 1.25 : span > 55 ? 1.7 : span > 25 ? 2.3 : 3.4);
+  }, [highlightedShipmentRoute, airports]);
 
   // ── Animación suave: extrapolación 30fps entre ticks SSE ──────────────────
   // Guardamos el último tick conocido y la tasa de avance inferida,
@@ -659,6 +680,29 @@ export const Map = memo(function Map({
               </text>
             </Marker>
           ))}
+
+          {/* Ruta completa del envío seleccionado (F01/F03/F09). */}
+          {highlightedShipmentRoute.map((leg, index) => {
+            const from = airports.find((airport) => airport.code === leg.desde);
+            const to = airports.find((airport) => airport.code === leg.hasta);
+            if (!from || !to) return null;
+            return (
+              <React.Fragment key={`shipment-route-${leg.envioIndice}-${leg.tramoIndex}-${leg.salidaUTC}`}>
+                <Line
+                  from={[from.lng, from.lat]}
+                  to={[to.lng, to.lat]}
+                  stroke="#e879f9"
+                  strokeWidth={2.2 * markerScale}
+                  strokeOpacity={0.9}
+                  strokeLinecap="round"
+                />
+                <Marker coordinates={[from.lng, from.lat]}>
+                  <circle r={5 * markerScale} fill="#e879f9" stroke={mc.bg} strokeWidth={1.4 * markerScale} />
+                  <text textAnchor="middle" dy={1.5 * markerScale} style={{ fontSize: 5 * markerScale, fontWeight: 700, fill: '#ffffff', pointerEvents: 'none' }}>{index + 1}</text>
+                </Marker>
+              </React.Fragment>
+            );
+          })}
 
           {/* Cancelaciones visibles: ruta roja durante la ventana del vuelo cancelado, sin avión. */}
           {activeCancellations.map(c => (

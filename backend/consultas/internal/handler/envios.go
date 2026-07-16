@@ -37,7 +37,7 @@ func (h *EnviosHandler) Envios(w http.ResponseWriter, r *http.Request) {
 		SELECT origen_iata, destino_iata, cantidad_maletas, registro_utc, deadline_utc
 		FROM envios
 		WHERE registro_utc >= ? AND registro_utc < ?
-		ORDER BY registro_utc`, ini, fin)
+		ORDER BY registro_utc, origen_iata, id_envio`, ini, fin)
 	if err != nil {
 		errResp(w, 500, "DB_ERROR", err.Error())
 		return

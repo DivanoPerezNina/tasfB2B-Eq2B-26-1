@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useSimulation } from '../context/SimulationContext';
 import { useDomain } from '../context/DomainContext';
 import {
@@ -6,8 +6,9 @@ import {
   getContinentLabel,
 } from '../data/envios';
 import { Map } from '../components/Map';
-import { Vuelo } from '../types';
+import { PlanTramoVisual, ShipmentMetadata, Vuelo } from '../types';
 import { format } from 'date-fns';
+import { formatUtcMinute, loadShipmentMetadataByIndices, planWindow, searchShipmentMetadata, shipmentLabel, shipmentRoutes } from '../lib/operations';
 import { Button, Search as CarbonSearch } from '@carbon/react';
 import { Pause, Play, StopFilledAlt, Renew } from '@carbon/icons-react';
 import {
@@ -69,7 +70,7 @@ function Section({
 }
 
 // ─── Search result types ───
-type SearchResultType = 'aeropuerto' | 'vuelo';
+type SearchResultType = 'aeropuerto' | 'vuelo' | 'envio';
 interface SearchResult {
   type: SearchResultType;
   label: string;
@@ -78,6 +79,7 @@ interface SearchResult {
 }
 
 type WarehouseStatusFilter = 'all' | 'verde' | 'ambar' | 'rojo' | 'vacio';
+type AirportOperationTab = 'almacenados' | 'llegadas' | 'salidas';
 
 
 const SCENARIO_DISPLAY: Record<string, string> = {
@@ -125,7 +127,7 @@ export function UnifiedDashboard() {
   const {
     stats, getAirportStats,aeropuertosState,
     fase, contadores, progresoPct, warmupPct, simulationTime, tiempoSimUTC,
-    collapseFailure, lastValidTick, config,
+    collapseFailure, lastValidTick, config, planTramos, planResumen,
     pausarSimulacion, reanudarSimulacion, detenerSimulacion, resetear,
   } = useSimulation();
   const {
@@ -146,6 +148,11 @@ export function UnifiedDashboard() {
   const [showCompletion, setShowCompletion] = useState(false);
   const [warehouseQuery, setWarehouseQuery] = useState('');
   const [warehouseStatusFilter, setWarehouseStatusFilter] = useState<WarehouseStatusFilter>('all');
+  const [airportOperationTab, setAirportOperationTab] = useState<AirportOperationTab>('almacenados');
+  const [shipmentSearchResults, setShipmentSearchResults] = useState<ShipmentMetadata[]>([]);
+  const [shipmentSearchLoading, setShipmentSearchLoading] = useState(false);
+  const [shipmentMetadataByIndex, setShipmentMetadataByIndex] = useState<Map<number, ShipmentMetadata>>(new Map());
+  const [selectedShipmentIndex, setSelectedShipmentIndex] = useState<number | null>(null);
 
   // Show completion overlay when simulation finishes
   useEffect(() => {
@@ -167,6 +174,87 @@ export function UnifiedDashboard() {
     setPanelOpen(true);
   };
 
+  const routesByShipment = useMemo(() => shipmentRoutes(planTramos), [planTramos]);
+  const currentPlanWindow = useMemo(() => planWindow(planResumen, planTramos), [planResumen, planTramos]);
+  const selectedShipmentRoute = useMemo(
+    () => selectedShipmentIndex != null ? (routesByShipment.get(selectedShipmentIndex) ?? []) : [],
+    [routesByShipment, selectedShipmentIndex],
+  );
+
+  const ensureShipmentMetadata = useCallback(async (indices: number[]) => {
+    if (!currentPlanWindow) return;
+    const missing = Array.from(new Set(indices)).filter((index) => !shipmentMetadataByIndex.has(index)).slice(0, 250);
+    if (missing.length === 0) return;
+    try {
+      const items = await loadShipmentMetadataByIndices(missing, currentPlanWindow);
+      setShipmentMetadataByIndex((previous) => {
+        const next = new Map(previous);
+        items.forEach((item) => next.set(item.indice_plan, item));
+        return next;
+      });
+    } catch (error) {
+      console.warn('[Operaciones] No se pudieron resolver IDs de envíos:', error);
+    }
+  }, [currentPlanWindow, shipmentMetadataByIndex]);
+
+  const flightFromLeg = useCallback((leg: PlanTramoVisual): Vuelo | null => {
+    const origin = aeropuertosBackend.find((airport) => airport.iata === leg.desde);
+    const destination = aeropuertosBackend.find((airport) => airport.iata === leg.hasta);
+    if (!origin || !destination) return null;
+    const departureMinute = normalizarMinutoDia(leg.salidaUTC);
+    const arrivalMinute = normalizarMinutoDia(leg.llegadaUTC);
+    const realFlight = vuelosBD.find((flight) =>
+      flight.idOrigen === origin.id
+      && flight.idDestino === destination.id
+      && Math.abs(normalizarMinutoDia(flight.salidaUTC) - departureMinute) <= 2,
+    ) ?? vuelosBD.find((flight) => flight.idOrigen === origin.id && flight.idDestino === destination.id);
+    return {
+      idOrigen: origin.id,
+      idDestino: destination.id,
+      salidaUTC: leg.salidaUTC,
+      llegadaUTC: leg.llegadaUTC,
+      capacidadMaxima: realFlight?.capacidadMaxima ?? 0,
+      ocupacionActual: leg.maletas,
+    };
+  }, [aeropuertosBackend, vuelosBD]);
+
+  const selectShipment = useCallback((index: number, metadata?: ShipmentMetadata) => {
+    const route = routesByShipment.get(index) ?? [];
+    setSelectedShipmentIndex(index);
+    if (metadata) {
+      setShipmentMetadataByIndex((previous) => new Map(previous).set(index, metadata));
+    }
+    setPanelOpen(true);
+    if (route.length === 0) return;
+
+    const now = tiempoSimUTC;
+    const activeLeg = route.find((leg) => now >= leg.salidaUTC && now < leg.llegadaUTC);
+    if (activeLeg) {
+      const flight = flightFromLeg(activeLeg);
+      if (flight) setSelectedVuelo(flight);
+      const origin = airports.find((airport) => airport.code === activeLeg.desde);
+      if (origin) setSelectedAirportId(origin.id);
+      return;
+    }
+
+    let currentCode = route[0].desde;
+    if (now >= route[route.length - 1].llegadaUTC) {
+      currentCode = route[route.length - 1].hasta;
+    } else {
+      for (let i = 0; i < route.length; i += 1) {
+        const leg = route[i];
+        const next = route[i + 1];
+        if (now >= leg.llegadaUTC && (!next || now < next.salidaUTC)) {
+          currentCode = leg.hasta;
+          break;
+        }
+      }
+    }
+    const airport = airports.find((item) => item.code === currentCode);
+    if (airport) setSelectedAirportId(airport.id);
+    setSelectedVuelo(null);
+  }, [airports, flightFromLeg, routesByShipment, tiempoSimUTC]);
+
   const [query, setQuery] = useState('');
   const [showResults, setShowResults] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
@@ -178,6 +266,32 @@ export function UnifiedDashboard() {
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, []);
+
+  useEffect(() => {
+    const term = query.trim();
+    if (term.length < 2 || !currentPlanWindow) {
+      setShipmentSearchResults([]);
+      setShipmentSearchLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setShipmentSearchLoading(true);
+      try {
+        const items = await searchShipmentMetadata(term, currentPlanWindow, controller.signal);
+        setShipmentSearchResults(items);
+      } catch (error: any) {
+        if (error?.name !== 'AbortError') console.warn('[Operaciones] búsqueda de envíos:', error);
+        setShipmentSearchResults([]);
+      } finally {
+        setShipmentSearchLoading(false);
+      }
+    }, 250);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [currentPlanWindow, query]);
 
   const searchResults = useMemo<SearchResult[]>(() => {
     const q = query.trim().toUpperCase();
@@ -223,10 +337,17 @@ export function UnifiedDashboard() {
       }
     }
 
-    // Nota: búsqueda de envíos individuales pendiente de endpoint backend
-    // TODO: fetch /api/envios?q=... cuando el BFF lo implemente
-    return results.slice(0, 15);
-  }, [query, aeropuertosBFF, vuelosBD, aeropuertosBackend]);
+    for (const shipment of shipmentSearchResults) {
+      const route = routesByShipment.get(shipment.indice_plan) ?? [];
+      results.unshift({
+        type: 'envio',
+        label: shipment.id_envio,
+        sublabel: `${shipment.cantidad_maletas} maletas · ${shipment.origen_iata} → ${shipment.destino_iata}${route.length > 0 ? ` · ${route.length} tramo(s)` : ' · sin ruta visible'}`,
+        data: shipment,
+      });
+    }
+    return results.slice(0, 20);
+  }, [query, aeropuertosBFF, vuelosBD, aeropuertosBackend, shipmentSearchResults, routesByShipment]);
 
   const handleSelectResult = (result: SearchResult) => {
     setShowResults(false);
@@ -234,12 +355,16 @@ export function UnifiedDashboard() {
     if (result.type === 'aeropuerto') {
       const ap = result.data as typeof aeropuertosBackend[0];
       const frontAirport = airports.find(a => a.code === ap.iata);
-      if (frontAirport) { setSelectedAirportId(frontAirport.id); setSelectedVuelo(null); }
+      if (frontAirport) { setSelectedShipmentIndex(null); setSelectedAirportId(frontAirport.id); setSelectedVuelo(null); }
     } else if (result.type === 'vuelo') {
       const v = result.data as Vuelo;
+      setSelectedShipmentIndex(null);
       setSelectedVuelo(v);
       const orig = getAeropuertoById(v.idOrigen);
       if (orig) { const fa = airports.find(a => a.code === orig.iata); if (fa) setSelectedAirportId(fa.id); }
+    } else {
+      const shipment = result.data as ShipmentMetadata;
+      selectShipment(shipment.indice_plan, shipment);
     }
   };
 
@@ -248,6 +373,105 @@ export function UnifiedDashboard() {
   const selectedBackendAirport = selectedAirport ? aeropuertosBackend.find(a => a.iata === selectedAirport.code) : null;
   const airportVuelos = selectedBackendAirport ? getVuelosByAeropuerto(selectedBackendAirport.id) : [];
   const selectedBFF = selectedAirport ? aeropuertosBFF.find(a => a.iata === selectedAirport.code) : null;
+
+  const selectedShipmentMetadata = selectedShipmentIndex != null
+    ? shipmentMetadataByIndex.get(selectedShipmentIndex)
+    : undefined;
+
+  const plannedShipmentRows = useMemo(() => {
+    const now = tiempoSimUTC;
+    return Array.from(routesByShipment.entries())
+      .map(([index, route]) => {
+        const nextLeg = route.find((leg) => leg.llegadaUTC > now) ?? route[route.length - 1];
+        return { index, route, nextLeg, metadata: shipmentMetadataByIndex.get(index) };
+      })
+      .filter((row) => row.nextLeg && row.nextLeg.llegadaUTC > now)
+      .sort((a, b) => a.nextLeg.salidaUTC - b.nextLeg.salidaUTC)
+      .slice(0, 50);
+  }, [routesByShipment, shipmentMetadataByIndex, tiempoSimUTC]);
+
+  useEffect(() => {
+    ensureShipmentMetadata(plannedShipmentRows.map((row) => row.index));
+  }, [ensureShipmentMetadata, plannedShipmentRows]);
+
+  const airportOperations = useMemo(() => {
+    const code = selectedAirport?.code;
+    const now = tiempoSimUTC;
+    const stored: Array<{ index: number; route: PlanTramoVisual[]; leg: PlanTramoVisual; metadata?: ShipmentMetadata }> = [];
+    const arrivals: Array<{ index: number; route: PlanTramoVisual[]; leg: PlanTramoVisual; metadata?: ShipmentMetadata }> = [];
+    const departures: Array<{ index: number; route: PlanTramoVisual[]; leg: PlanTramoVisual; metadata?: ShipmentMetadata }> = [];
+    if (!code) return { stored, arrivals, departures };
+
+    for (const [index, route] of routesByShipment.entries()) {
+      if (route.length === 0) continue;
+      const metadata = shipmentMetadataByIndex.get(index);
+      const first = route[0];
+      const registration = first.registroUTC ?? metadata?.registro_utc ?? Number.NEGATIVE_INFINITY;
+
+      if (now >= registration && now < first.salidaUTC && first.desde === code) {
+        stored.push({ index, route, leg: first, metadata });
+      }
+      for (let i = 0; i < route.length; i += 1) {
+        const leg = route[i];
+        const next = route[i + 1];
+        if (leg.hasta === code && leg.llegadaUTC > now) {
+          arrivals.push({ index, route, leg, metadata });
+        }
+        if (leg.desde === code && leg.salidaUTC > now) {
+          departures.push({ index, route, leg, metadata });
+        }
+        if (leg.hasta === code && now >= leg.llegadaUTC && next && now < next.salidaUTC) {
+          stored.push({ index, route, leg: next, metadata });
+        }
+      }
+    }
+
+    stored.sort((a, b) => a.leg.salidaUTC - b.leg.salidaUTC);
+    arrivals.sort((a, b) => a.leg.llegadaUTC - b.leg.llegadaUTC);
+    departures.sort((a, b) => a.leg.salidaUTC - b.leg.salidaUTC);
+    return { stored, arrivals, departures };
+  }, [routesByShipment, selectedAirport?.code, shipmentMetadataByIndex, tiempoSimUTC]);
+
+  useEffect(() => {
+    const indices = [
+      ...airportOperations.stored,
+      ...airportOperations.arrivals,
+      ...airportOperations.departures,
+    ].slice(0, 200).map((row) => row.index);
+    ensureShipmentMetadata(indices);
+  }, [airportOperations, ensureShipmentMetadata]);
+
+  const activeFlightsByOccupancy = useMemo(() => {
+    const grouped = new Map<string, { leg: PlanTramoVisual; maletas: number }>();
+    for (const leg of planTramos) {
+      if (tiempoSimUTC < leg.salidaUTC || tiempoSimUTC >= leg.llegadaUTC) continue;
+      const key = `${leg.desde}-${leg.hasta}-${leg.salidaUTC}-${leg.llegadaUTC}`;
+      const current = grouped.get(key) ?? { leg, maletas: 0 };
+      current.maletas += leg.maletas;
+      grouped.set(key, current);
+    }
+    return Array.from(grouped.values()).map(({ leg, maletas }) => {
+      const origin = aeropuertosBackend.find((airport) => airport.iata === leg.desde);
+      const destination = aeropuertosBackend.find((airport) => airport.iata === leg.hasta);
+      const departureMinute = normalizarMinutoDia(leg.salidaUTC);
+      const realFlight = vuelosBD.find((flight) =>
+        flight.idOrigen === origin?.id
+        && flight.idDestino === destination?.id
+        && Math.abs(normalizarMinutoDia(flight.salidaUTC) - departureMinute) <= 2,
+      ) ?? vuelosBD.find((flight) => flight.idOrigen === origin?.id && flight.idDestino === destination?.id);
+      const capacity = realFlight?.capacidadMaxima ?? 0;
+      const percentage = capacity > 0 ? (maletas / capacity) * 100 : 0;
+      const flight: Vuelo | null = origin && destination ? {
+        idOrigen: origin.id,
+        idDestino: destination.id,
+        salidaUTC: leg.salidaUTC,
+        llegadaUTC: leg.llegadaUTC,
+        capacidadMaxima: capacity,
+        ocupacionActual: maletas,
+      } : null;
+      return { leg, maletas, capacity, percentage, flight };
+    }).filter((row) => row.flight).sort((a, b) => b.percentage - a.percentage || b.maletas - a.maletas);
+  }, [aeropuertosBackend, planTramos, tiempoSimUTC, vuelosBD]);
 
   const getWarehouseOccupancy = (iata: string) => {
     const front = airports.find(a => a.code === iata);
@@ -305,6 +529,7 @@ export function UnifiedDashboard() {
   const typeIcons: Record<SearchResultType, React.ReactNode> = {
     aeropuerto: <MapPin className="h-3.5 w-3.5 text-blue-500" />,
     vuelo: <Plane className="h-3.5 w-3.5 text-indigo-500" />,
+    envio: <Package className="h-3.5 w-3.5 text-fuchsia-500" />,
   };
 
   // ─── Fase label ───
@@ -574,7 +799,7 @@ export function UnifiedDashboard() {
               />
               </div>
               <span
-                title="Ejemplos — Aeropuerto por IATA: SKBO · Ruta: SKBO-EDDI"
+                title="Ejemplos — Aeropuerto: SKBO · Ruta: SKBO-EDDI · Envío: 00000001 · Maleta: 00000001-M001"
                 style={{
                   display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                   width: 24, height: 24, borderRadius: '50%', flexShrink: 0, cursor: 'help',
@@ -600,11 +825,113 @@ export function UnifiedDashboard() {
               )}
               {showResults && query.length >= 2 && searchResults.length === 0 && (
                 <div className="absolute left-0 right-0 top-full z-50 mt-1 rounded-lg border border-panel-border bg-panel-bg px-3 py-4 shadow-lg text-center">
-                  <p className="text-xs text-panel-text-faint">Sin resultados para "{query}"</p>
+                  <p className="text-xs text-panel-text-faint">{shipmentSearchLoading ? 'Buscando envíos…' : `Sin resultados para "${query}"`}</p>
                 </div>
               )}
             </div>
           </div>
+
+          {/* Envío seleccionado — F01/F03/F09 */}
+          <Section
+            title={selectedShipmentIndex != null ? `Envío ${shipmentLabel(selectedShipmentMetadata, selectedShipmentIndex)}` : 'Envío / maleta'}
+            icon={<Package className="h-3.5 w-3.5" />}
+            accentColor={selectedShipmentIndex != null ? 'text-fuchsia-500' : undefined}
+            badge={selectedShipmentRoute.length > 0 ? `${selectedShipmentRoute.length} tramo(s)` : undefined}
+          >
+            {selectedShipmentIndex != null ? (
+              <div className="space-y-2">
+                <div className="grid grid-cols-2 gap-1.5">
+                  <div className="rounded bg-panel-section-bg px-2 py-1.5">
+                    <p className="text-[9px] text-panel-text-faint">ID real</p>
+                    <p className="truncate font-mono text-[11px] font-semibold text-panel-text">{shipmentLabel(selectedShipmentMetadata, selectedShipmentIndex)}</p>
+                  </div>
+                  <div className="rounded bg-panel-section-bg px-2 py-1.5">
+                    <p className="text-[9px] text-panel-text-faint">Maletas</p>
+                    <p className="text-[11px] font-semibold text-panel-text">{selectedShipmentMetadata?.cantidad_maletas ?? selectedShipmentRoute[0]?.maletas ?? 0}</p>
+                  </div>
+                </div>
+                {selectedShipmentRoute.length > 0 ? (
+                  <div className="space-y-1">
+                    {selectedShipmentRoute.map((leg, index) => (
+                      <button
+                        key={`${leg.envioIndice}-${leg.tramoIndex}-${leg.salidaUTC}`}
+                        type="button"
+                        onClick={() => {
+                          const flight = flightFromLeg(leg);
+                          if (flight) handleFlightSelect(flight);
+                        }}
+                        className="flex w-full items-center gap-2 rounded border border-panel-border px-2 py-1.5 text-left hover:bg-panel-hover"
+                      >
+                        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-fuchsia-500/15 text-[9px] font-bold text-fuchsia-500">{index + 1}</span>
+                        <span className="text-[10px] font-semibold text-panel-text">{leg.desde} → {leg.hasta}</span>
+                        <span className="ml-auto text-[9px] text-panel-text-faint">{formatUtcMinute(leg.salidaUTC)} UTC</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="rounded bg-panel-section-bg px-3 py-2 text-[10px] text-panel-text-faint">El envío existe en la ventana, pero no tiene una ruta asignada visible.</p>
+                )}
+                <p className="text-[10px] text-panel-text-faint">La ruta completa está resaltada en color fucsia y el mapa se enfoca automáticamente en su ubicación actual.</p>
+              </div>
+            ) : (
+              <p className="py-2 text-center text-[11px] text-panel-text-faint">Busca el ID de un envío o una maleta para visualizar toda su ruta.</p>
+            )}
+          </Section>
+
+          {/* E30 — lista global de envíos planificados */}
+          <Section title="Envíos planificados" icon={<Package className="h-3.5 w-3.5" />} badge={routesByShipment.size}>
+            <div className="space-y-1.5">
+              <p className="text-[10px] text-panel-text-faint">Próximos envíos por hora de salida. Selecciona uno para mostrar su ruta en el mapa.</p>
+              <div className="max-h-56 space-y-1 overflow-y-auto">
+                {plannedShipmentRows.slice(0, 20).map((row) => (
+                  <button
+                    key={row.index}
+                    type="button"
+                    onClick={() => selectShipment(row.index, row.metadata)}
+                    className={`w-full rounded border px-2 py-2 text-left transition ${selectedShipmentIndex === row.index ? 'border-fuchsia-500 bg-fuchsia-500/10' : 'border-panel-border hover:bg-panel-hover'}`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate font-mono text-[10px] font-semibold text-panel-text">{shipmentLabel(row.metadata, row.index)}</span>
+                      <span className="text-[9px] text-panel-text-faint">{row.nextLeg.maletas} maletas</span>
+                    </div>
+                    <div className="mt-1 flex items-center gap-1 text-[9px] text-panel-text-faint">
+                      <span>Vuelo {row.nextLeg.desde} → {row.nextLeg.hasta}</span>
+                      <span>· Destino {row.metadata?.destino_iata ?? row.route[row.route.length - 1]?.hasta}</span>
+                      <span className="ml-auto">{formatUtcMinute(row.nextLeg.salidaUTC)} UTC</span>
+                    </div>
+                  </button>
+                ))}
+                {plannedShipmentRows.length === 0 && <p className="rounded bg-panel-section-bg px-3 py-3 text-center text-[10px] text-panel-text-faint">No hay envíos planificados pendientes en el plan actual.</p>}
+              </div>
+            </div>
+          </Section>
+
+          {/* E12 — vuelos activos ordenados por ocupación */}
+          <Section title="Vuelos por ocupación" icon={<Plane className="h-3.5 w-3.5" />} badge={activeFlightsByOccupancy.length}>
+            <div className="space-y-1.5">
+              <p className="text-[10px] text-panel-text-faint">Orden descendente por porcentaje de carga.</p>
+              <div className="max-h-52 space-y-1 overflow-y-auto">
+                {activeFlightsByOccupancy.slice(0, 25).map((row) => (
+                  <button
+                    key={`${row.leg.desde}-${row.leg.hasta}-${row.leg.salidaUTC}`}
+                    type="button"
+                    onClick={() => row.flight && handleFlightSelect(row.flight)}
+                    className="w-full rounded border border-panel-border px-2 py-2 text-left hover:bg-panel-hover"
+                  >
+                    <div className="flex items-center justify-between gap-2 text-[10px]">
+                      <span className="font-semibold text-panel-text">{row.leg.desde} → {row.leg.hasta}</span>
+                      <span className="font-semibold text-panel-text">{row.capacity > 0 ? `${row.percentage.toFixed(0)}%` : `${row.maletas} maletas`}</span>
+                    </div>
+                    <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-panel-section-bg">
+                      <div className={`h-full ${row.percentage > 90 ? 'bg-red-500' : row.percentage > 70 ? 'bg-yellow-500' : 'bg-green-500'}`} style={{ width: `${Math.min(row.percentage, 100)}%` }} />
+                    </div>
+                    <p className="mt-1 text-[9px] text-panel-text-faint">{row.maletas}/{row.capacity || '—'} maletas · salida {formatUtcMinute(row.leg.salidaUTC)} UTC</p>
+                  </button>
+                ))}
+                {activeFlightsByOccupancy.length === 0 && <p className="rounded bg-panel-section-bg px-3 py-3 text-center text-[10px] text-panel-text-faint">No hay vuelos activos en este instante.</p>}
+              </div>
+            </div>
+          </Section>
 
           {/* Airport Info */}
           <Section
@@ -644,6 +971,54 @@ export function UnifiedDashboard() {
                       className={`h-full rounded-full transition-all ${airportStats.percentage > 80 ? 'bg-red-500' : airportStats.percentage > 60 ? 'bg-yellow-500' : 'bg-green-500'}`}
                       style={{ width: `${Math.min(airportStats.percentage, 100)}%` }}
                     />
+                  </div>
+                </div>
+                <div className="rounded border border-panel-border bg-panel-section-bg/50 p-2">
+                  <div className="mb-2 grid grid-cols-3 gap-1">
+                    {([
+                      ['almacenados', `En almacén (${airportOperations.stored.length})`],
+                      ['llegadas', `Llegadas (${airportOperations.arrivals.length})`],
+                      ['salidas', `Salidas (${airportOperations.departures.length})`],
+                    ] as Array<[AirportOperationTab, string]>).map(([value, label]) => (
+                      <button
+                        key={value}
+                        type="button"
+                        onClick={() => setAirportOperationTab(value)}
+                        className={`rounded px-1.5 py-1 text-[9px] font-medium ${airportOperationTab === value ? 'bg-blue-500 text-white' : 'bg-panel-bg text-panel-text-muted hover:bg-panel-hover'}`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="max-h-44 space-y-1 overflow-y-auto">
+                    {(airportOperationTab === 'almacenados'
+                      ? airportOperations.stored
+                      : airportOperationTab === 'llegadas'
+                        ? airportOperations.arrivals
+                        : airportOperations.departures
+                    ).slice(0, 20).map((row) => (
+                      <button
+                        key={`${airportOperationTab}-${row.index}-${row.leg.tramoIndex}`}
+                        type="button"
+                        onClick={() => selectShipment(row.index, row.metadata)}
+                        className="w-full rounded border border-panel-border bg-panel-bg px-2 py-1.5 text-left hover:bg-panel-hover"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="truncate font-mono text-[9px] font-semibold text-panel-text">{shipmentLabel(row.metadata, row.index)}</span>
+                          <span className="text-[9px] font-medium text-panel-text">{row.leg.maletas} maletas</span>
+                        </div>
+                        <p className="mt-0.5 text-[9px] text-panel-text-faint">
+                          {airportOperationTab === 'almacenados'
+                            ? `Próximo vuelo ${row.leg.desde} → ${row.leg.hasta} · ${formatUtcMinute(row.leg.salidaUTC)} UTC`
+                            : airportOperationTab === 'llegadas'
+                              ? `Llega desde ${row.leg.desde} en ${formatUtcMinute(row.leg.llegadaUTC)} UTC · destino final ${row.metadata?.destino_iata ?? row.route[row.route.length - 1]?.hasta}`
+                              : `Sale a ${row.leg.hasta} en ${formatUtcMinute(row.leg.salidaUTC)} UTC · destino final ${row.metadata?.destino_iata ?? row.route[row.route.length - 1]?.hasta}`}
+                        </p>
+                      </button>
+                    ))}
+                    {(airportOperationTab === 'almacenados' ? airportOperations.stored : airportOperationTab === 'llegadas' ? airportOperations.arrivals : airportOperations.departures).length === 0 && (
+                      <p className="rounded bg-panel-bg px-2 py-3 text-center text-[9px] text-panel-text-faint">Sin envíos para esta vista en el instante actual.</p>
+                    )}
                   </div>
                 </div>
                 {airportVuelos.length > 0 && (
@@ -944,11 +1319,12 @@ export function UnifiedDashboard() {
       <div className="flex-1 min-w-0">
         <Map
           selectedAirportId={selectedAirportId}
-          onAirportSelect={(id) => { setSelectedAirportId(id); setSelectedVuelo(null); }}
+          onAirportSelect={(id) => { setSelectedShipmentIndex(null); setSelectedAirportId(id); setSelectedVuelo(null); }}
           onFlightSelect={handleFlightSelect}
           selectedFlightKey={selectedFlightKey}
           warehouseCodeFilter={warehouseQuery}
           warehouseStatusFilter={warehouseStatusFilter}
+          highlightedShipmentRoute={selectedShipmentRoute}
         />
       </div>
       </div>{/* end flex-1 overflow-hidden */}

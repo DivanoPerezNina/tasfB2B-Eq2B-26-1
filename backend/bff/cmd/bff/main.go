@@ -22,6 +22,7 @@ func main() {
 
 	dom := &handler.DominioHandler{DB: db}
 	mant := &handler.MantenimientoHandler{DB: db}
+	ops := &handler.OperacionesHandler{DB: db}
 	hlth := &handler.HealthHandler{
 		DB:              db,
 		CargaMasivaURL:  cfg.CargaMasivaURL,
@@ -42,6 +43,8 @@ func main() {
 	mux.HandleFunc("GET /api/vuelos", dom.Vuelos)
 	mux.HandleFunc("GET /api/dataset", dom.Dataset)
 	mux.HandleFunc("GET /api/health", hlth.Health)
+	mux.HandleFunc("GET /api/operaciones/envios/buscar", ops.BuscarEnvios)
+	mux.HandleFunc("GET /api/operaciones/envios/por-indices", ops.EnviosPorIndices)
 
 	// ── Mantenimiento individual (CRUD) ─────────────────────────────────────
 	mux.HandleFunc("POST /api/mantenimiento/aeropuertos", mant.CrearAeropuerto)

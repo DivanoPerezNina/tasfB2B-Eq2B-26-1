@@ -29,7 +29,7 @@ type FlightForm = {
 
 const EMPTY_AIRPORT: AirportForm = {
   iata: '', ciudad: '', pais: '', continente: '1', gmt_offset: '0',
-  capacidad_almacen: '500', lat: '0', lng: '0',
+  capacidad_almacen: '500', lat: '', lng: '',
 };
 
 const EMPTY_FLIGHT: FlightForm = {
@@ -56,6 +56,17 @@ function normalizeSearch(value: string) {
     .replace(/[\u0300-\u036f]/g, '')
     .trim()
     .toUpperCase();
+}
+
+function formatCoordinateInput(value: number) {
+  if (!Number.isFinite(value)) return '';
+  return value.toFixed(7).replace(/\.?0+$/, '');
+}
+
+function parseDecimal(value: string) {
+  const normalized = value.trim().replace(',', '.');
+  if (!/^-?\d+(?:\.\d+)?$/.test(normalized)) return Number.NaN;
+  return Number(normalized);
 }
 
 async function apiRequest(path: string, options: RequestInit) {
@@ -88,6 +99,7 @@ export function Maintenance() {
     ? params.section
     : undefined) as MaintenanceSection | undefined;
   const { aeropuertosBFF, vuelosBFF, reloadDomain, isLoading } = useDomain();
+  const airportByIata = useMemo(() => new Map(aeropuertosBFF.map((airport) => [airport.iata, airport])), [aeropuertosBFF]);
 
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
@@ -164,8 +176,8 @@ export function Maintenance() {
       continente: String(airport.continente),
       gmt_offset: String(airport.gmt_offset),
       capacidad_almacen: String(airport.capacidad_almacen),
-      lat: String(airport.lat),
-      lng: String(airport.lng),
+      lat: formatCoordinateInput(airport.lat),
+      lng: formatCoordinateInput(airport.lng),
     });
     setModalOpen(true);
   };
@@ -187,13 +199,25 @@ export function Maintenance() {
     setBusy(true);
     setFeedback(null);
     try {
+      const lat = parseDecimal(airportForm.lat);
+      const lng = parseDecimal(airportForm.lng);
+      const capacity = Number(airportForm.capacidad_almacen);
+      if (!Number.isFinite(lat) || lat < -90 || lat > 90) {
+        throw new Error('La latitud debe ser un decimal entre -90 y 90.');
+      }
+      if (!Number.isFinite(lng) || lng < -180 || lng > 180) {
+        throw new Error('La longitud debe ser un decimal entre -180 y 180.');
+      }
+      if (!Number.isInteger(capacity) || capacity <= 0) {
+        throw new Error('La capacidad del almacén debe ser un entero mayor que cero.');
+      }
       const payload = {
         ...airportForm,
         continente: Number(airportForm.continente),
         gmt_offset: Number(airportForm.gmt_offset),
-        capacidad_almacen: Number(airportForm.capacidad_almacen),
-        lat: Number(airportForm.lat),
-        lng: Number(airportForm.lng),
+        capacidad_almacen: capacity,
+        lat,
+        lng,
       };
       if (editingAirport) {
         await apiRequest(`/api/mantenimiento/aeropuertos/${editingAirport.id}`, { method: 'PUT', body: JSON.stringify(payload) });
@@ -342,16 +366,16 @@ export function Maintenance() {
 
               <div className="overflow-auto">
                 {section === 'aeropuertos' ? (
-                  <table className="w-full min-w-[1420px] table-fixed border-collapse text-sm">
+                  <table className="w-full table-fixed border-collapse text-sm" style={{ minWidth: 1560 }}>
                     <colgroup>
-                      <col className="w-[90px]" />
-                      <col className="w-[210px]" />
-                      <col className="w-[180px]" />
-                      <col className="w-[190px]" />
-                      <col className="w-[110px]" />
-                      <col className="w-[190px]" />
-                      <col className="w-[220px]" />
-                      <col className="w-[230px]" />
+                      <col style={{ width: 90 }} />
+                      <col style={{ width: 220 }} />
+                      <col style={{ width: 190 }} />
+                      <col style={{ width: 210 }} />
+                      <col style={{ width: 100 }} />
+                      <col style={{ width: 210 }} />
+                      <col style={{ width: 250 }} />
+                      <col style={{ width: 240 }} />
                     </colgroup>
                     <thead className="bg-panel-bg text-left text-xs uppercase tracking-wide text-panel-text-faint">
                       <tr>
@@ -360,8 +384,8 @@ export function Maintenance() {
                         <th className="whitespace-nowrap border-b border-panel-border px-5 py-3">País</th>
                         <th className="whitespace-nowrap border-b border-panel-border px-5 py-3">Continente</th>
                         <th className="whitespace-nowrap border-b border-panel-border px-5 py-3">GMT</th>
-                        <th className="whitespace-nowrap border-b border-panel-border px-5 py-3 text-right">Capacidad de almacén</th>
-                        <th className="whitespace-nowrap border-b border-panel-border px-5 py-3">Coordenadas</th>
+                        <th className="whitespace-nowrap border-b border-l border-panel-border px-6 py-3 text-right">Capacidad de almacén</th>
+                        <th className="whitespace-nowrap border-b border-l border-panel-border px-6 py-3">Coordenadas (lat / lng)</th>
                         <th className="whitespace-nowrap border-b border-panel-border px-5 py-3 text-right">Acciones</th>
                       </tr>
                     </thead>
@@ -373,8 +397,8 @@ export function Maintenance() {
                           <td className="border-b border-panel-border px-5 py-3">{airport.pais}</td>
                           <td className="border-b border-panel-border px-5 py-3">{continentName(airport.continente)}</td>
                           <td className="whitespace-nowrap border-b border-panel-border px-5 py-3">UTC{airport.gmt_offset >= 0 ? '+' : ''}{airport.gmt_offset}</td>
-                          <td className="whitespace-nowrap border-b border-panel-border px-5 py-3 text-right">{airport.capacidad_almacen}</td>
-                          <td className="whitespace-nowrap border-b border-panel-border px-5 py-3 font-mono text-xs">{airport.lat.toFixed(4)}, {airport.lng.toFixed(4)}</td>
+                          <td className="whitespace-nowrap border-b border-l border-panel-border px-6 py-3 text-right font-semibold tabular-nums">{airport.capacidad_almacen.toLocaleString('es-PE')}</td>
+                          <td className="whitespace-nowrap border-b border-l border-panel-border px-6 py-3 font-mono text-xs tabular-nums">{airport.lat.toFixed(4)} / {airport.lng.toFixed(4)}</td>
                           <td className="border-b border-panel-border px-4 py-3">
                             <div className="flex justify-end gap-2">
                               <Button size="sm" kind="secondary" renderIcon={Edit} onClick={() => openEditAirport(airport)}>Editar</Button>
@@ -390,8 +414,8 @@ export function Maintenance() {
                     <thead className="bg-panel-bg text-left text-xs uppercase tracking-wide text-panel-text-faint">
                       <tr>
                         <th className="border-b border-panel-border px-4 py-3">ID</th>
-                        <th className="border-b border-panel-border px-4 py-3">Origen</th>
-                        <th className="border-b border-panel-border px-4 py-3">Destino</th>
+                        <th className="border-b border-panel-border px-4 py-3">Origen y país</th>
+                        <th className="border-b border-panel-border px-4 py-3">Destino y país</th>
                         <th className="border-b border-panel-border px-4 py-3">Salida</th>
                         <th className="border-b border-panel-border px-4 py-3">Llegada</th>
                         <th className="border-b border-panel-border px-4 py-3 text-right">Capacidad</th>
@@ -403,8 +427,8 @@ export function Maintenance() {
                       {visibleFlights.map((flight) => (
                         <tr key={flight.id} className="hover:bg-panel-hover">
                           <td className="border-b border-panel-border px-4 py-3 font-mono">{flight.id}</td>
-                          <td className="border-b border-panel-border px-4 py-3 font-mono font-semibold">{flight.origen_iata}</td>
-                          <td className="border-b border-panel-border px-4 py-3 font-mono font-semibold">{flight.destino_iata}</td>
+                          <td className="border-b border-panel-border px-4 py-3"><span className="font-mono font-semibold">{flight.origen_iata}</span><span className="ml-2 text-panel-text-faint">— {airportByIata.get(flight.origen_iata)?.pais ?? 'Sin país'}</span></td>
+                          <td className="border-b border-panel-border px-4 py-3"><span className="font-mono font-semibold">{flight.destino_iata}</span><span className="ml-2 text-panel-text-faint">— {airportByIata.get(flight.destino_iata)?.pais ?? 'Sin país'}</span></td>
                           <td className="border-b border-panel-border px-4 py-3 font-mono">{minutesToTime(flight.salida_minutos)}</td>
                           <td className="border-b border-panel-border px-4 py-3 font-mono">{minutesToTime(flight.llegada_minutos)}</td>
                           <td className="border-b border-panel-border px-4 py-3 text-right">{flight.capacidad_max}</td>
@@ -459,8 +483,14 @@ export function Maintenance() {
                 </Field>
                 <Field label="Zona horaria GMT"><input className={inputClass} type="number" min={-12} max={14} value={airportForm.gmt_offset} onChange={(event) => setAirportForm((form) => ({ ...form, gmt_offset: event.target.value }))} /></Field>
                 <Field label="Capacidad del almacén"><input className={inputClass} type="number" min={1} value={airportForm.capacidad_almacen} onChange={(event) => setAirportForm((form) => ({ ...form, capacidad_almacen: event.target.value }))} /></Field>
-                <Field label="Latitud"><input className={inputClass} type="number" step="0.0000001" min={-90} max={90} value={airportForm.lat} onChange={(event) => setAirportForm((form) => ({ ...form, lat: event.target.value }))} /></Field>
-                <Field label="Longitud"><input className={inputClass} type="number" step="0.0000001" min={-180} max={180} value={airportForm.lng} onChange={(event) => setAirportForm((form) => ({ ...form, lng: event.target.value }))} /></Field>
+                <Field label="Latitud">
+                  <input className={inputClass} type="text" inputMode="decimal" placeholder="Ej. 19.4326000" value={airportForm.lat} onChange={(event) => setAirportForm((form) => ({ ...form, lat: event.target.value }))} />
+                  <span className="text-xs text-panel-text-faint">Decimal entre -90 y 90; use punto o coma.</span>
+                </Field>
+                <Field label="Longitud">
+                  <input className={inputClass} type="text" inputMode="decimal" placeholder="Ej. -99.1332000" value={airportForm.lng} onChange={(event) => setAirportForm((form) => ({ ...form, lng: event.target.value }))} />
+                  <span className="text-xs text-panel-text-faint">Decimal entre -180 y 180; sin notación científica.</span>
+                </Field>
               </div>
             ) : (
               <div className="mt-5 grid gap-4 md:grid-cols-2">

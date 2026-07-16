@@ -246,6 +246,10 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
             salidaUTC,
             llegadaUTC,
             maletas: Number(envio.maletas ?? 1),
+            origenEnvio: envio.origen != null ? String(envio.origen).toUpperCase() : undefined,
+            destinoEnvio: envio.destino != null ? String(envio.destino).toUpperCase() : undefined,
+            registroUTC: envio.registroUTC != null ? Number(envio.registroUTC) : undefined,
+            deadlineUTC: envio.deadlineUTC != null ? Number(envio.deadlineUTC) : undefined,
           });
         }
       }
@@ -488,6 +492,10 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         hasta: String(v.hasta ?? '').toUpperCase(),
         salidaUTC: Number(v.salidaUTC), llegadaUTC: Number(v.llegadaUTC),
         maletas: Number(v.maletas ?? 1),
+        origenEnvio: v.origenEnvio != null ? String(v.origenEnvio).toUpperCase() : undefined,
+        destinoEnvio: v.destinoEnvio != null ? String(v.destinoEnvio).toUpperCase() : undefined,
+        registroUTC: v.registroUTC != null ? Number(v.registroUTC) : undefined,
+        deadlineUTC: v.deadlineUTC != null ? Number(v.deadlineUTC) : undefined,
       })).filter(t => Number.isFinite(t.salidaUTC) && Number.isFinite(t.llegadaUTC) && t.llegadaUTC > t.salidaUTC);
       planTramosRef.current = tramos;
       setPlanTramos(tramos);
