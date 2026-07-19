@@ -6,7 +6,7 @@ import { ThemeProvider } from "./context/ThemeContext";
 import { DomainProvider } from "./context/DomainContext";
 import { Toaster } from "./components/ui/sonner";
 import { Login } from "./pages/Login";
-import { OperarioWelcome } from "./pages/OperarioWelcome";
+import { OperarioDashboard } from "./pages/OperarioDashboard";
 import { getPerfil, Perfil } from "./lib/auth";
 
 export default function App() {
@@ -17,7 +17,7 @@ export default function App() {
       {!perfil ? (
         <Login onSuccess={setPerfil} />
       ) : perfil.rol === "operario" ? (
-        <OperarioWelcome perfil={perfil} onLogout={() => setPerfil(null)} />
+        <OperarioDashboard perfil={perfil} onLogout={() => setPerfil(null)} />
       ) : (
         <DomainProvider>
           <SimulationProvider>
