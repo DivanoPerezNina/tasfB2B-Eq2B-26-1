@@ -16,25 +16,21 @@ type Config struct {
 	PlanificadorURL string
 	EjecutorURL    string
 	CORSOrigin     string
-	AuthUser       string // usuario del login compartido
-	AuthPass       string // clave del login compartido
 	MuroFile       string // ruta del archivo JSON del muro de comentarios
 }
 
 func Load() *Config {
 	return &Config{
 		Port:            env("PORT", "8081"),
-		DBHost:          env("DB_HOST", "tasfb2b.cpll0i02mkbl.us-east-1.rds.amazonaws.com"),
+		DBHost:          env("DB_HOST", "localhost"),
 		DBPort:          env("DB_PORT", "3306"),
 		DBName:          env("DB_NAME", "tasfb2b"),
-		DBUser:          env("DB_USER", "Hamilton"),
-		DBPass:          env("DB_PASS", "i5aLJibP1fwf05OBkYKu"),
+		DBUser:          env("DB_USER", "root"),
+		DBPass:          mustEnv("DB_PASS"), // sin default: nunca hardcodear la clave de MySQL en el repo
 		CargaMasivaURL:  env("CARGA_MASIVA_URL", "http://localhost:8082"),
 		PlanificadorURL: env("PLANIFICADOR_URL", "http://localhost:8084"),
 		EjecutorURL:     env("EJECUTOR_URL", "http://localhost:8083"),
 		CORSOrigin:      env("CORS_ORIGIN", "*"),
-		AuthUser:        env("AUTH_USER", "admin"),
-		AuthPass:        env("AUTH_PASS", "tasf2026"),
 		MuroFile:        env("MURO_FILE", "muro.json"),
 	}
 }

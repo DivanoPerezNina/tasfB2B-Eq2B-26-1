@@ -1,5 +1,5 @@
 /**
- * Login — pantalla de acceso (credencial compartida) + muro de comentarios.
+ * Login — pantalla de acceso (usuario/clave por cuenta, admin u operario) + muro de comentarios.
  *
  * El muro es anónimo: no pide usuario, pero cada comentario guarda y MUESTRA
  * toda la metadata capturable (IP pública vista por el servidor, navegador/SO,
@@ -13,7 +13,7 @@ import {
   InlineNotification, Tag,
 } from '@carbon/react';
 import { Login as LoginIcon, Send, Chat, Earth, Time, Location, Screen, Chip } from '@carbon/icons-react';
-import { setToken } from '../lib/auth';
+import { setPerfil, Perfil } from '../lib/auth';
 import { recolectarFingerprint } from '../lib/fingerprint';
 
 const BFF = import.meta.env.VITE_BFF_URL ?? '';
@@ -28,7 +28,7 @@ interface Comentario {
   cliente?: Record<string, any>;
 }
 
-export function Login({ onSuccess }: { onSuccess: () => void }) {
+export function Login({ onSuccess }: { onSuccess: (perfil: Perfil) => void }) {
   const [usuario, setUsuario] = useState('');
   const [clave, setClave]     = useState('');
   const [error, setError]     = useState('');
@@ -60,8 +60,14 @@ export function Login({ onSuccess }: { onSuccess: () => void }) {
       if (!res.ok || !j.success) {
         throw new Error(j.message ?? 'Credenciales inválidas');
       }
-      setToken(j.data.token);
-      onSuccess();
+      const perfil: Perfil = {
+        token: j.data.token,
+        usuario: j.data.usuario,
+        rol: j.data.rol,
+        aeropuertoIata: j.data.aeropuerto_iata,
+      };
+      setPerfil(perfil);
+      onSuccess(perfil);
     } catch (err: any) {
       setError(err.message ?? 'Error al iniciar sesión');
     } finally {

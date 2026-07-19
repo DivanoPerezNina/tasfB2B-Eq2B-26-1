@@ -6,7 +6,7 @@ import {
 import { Light, Asleep, Screen, Logout } from '@carbon/icons-react';
 import { ChevronUp, ChevronDown } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
-import { clearToken } from '../lib/auth';
+import { clearPerfil } from '../lib/auth';
 
 interface NavigationProps {
   collapsed?: boolean;
@@ -24,7 +24,7 @@ export function Navigation({ collapsed = false, onToggleCollapsed }: NavigationP
   const { theme, setTheme } = useTheme();
 
   const cerrarSesion = () => {
-    clearToken();
+    clearPerfil();
     window.location.reload();
   };
 

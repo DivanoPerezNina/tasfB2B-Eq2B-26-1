@@ -21,11 +21,11 @@ type Config struct {
 func Load() *Config {
 	return &Config{
 		Port:        env("PORT", "8082"),
-		DBHost:      env("DB_HOST", "tasfb2b.cpll0i02mkbl.us-east-1.rds.amazonaws.com"),
+		DBHost:      env("DB_HOST", "localhost"),
 		DBPort:      env("DB_PORT", "3306"),
 		DBName:      env("DB_NAME", "tasfb2b"),
-		DBUser:      env("DB_USER", "Hamilton"),
-		DBPass:      env("DB_PASS", "i5aLJibP1fwf05OBkYKu"),
+		DBUser:      env("DB_USER", "root"),
+		DBPass:      mustEnv("DB_PASS"), // sin default: nunca hardcodear la clave de MySQL en el repo
 		TempDir:     env("TEMP_DIR", "/tmp/tasf"),
 		BatchSize:   envInt("BATCH_SIZE", 1000),
 		MaxUploadMB: int64(envInt("MAX_UPLOAD_MB", 50)),

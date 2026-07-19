@@ -24,6 +24,7 @@ import {
   StablePlanSnapshot,
 } from '../types';
 import { airports } from '../data/airports';
+import { authHeader } from '../lib/auth';
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
 
@@ -223,7 +224,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setPlanResumen(null);
 
     try {
-      const res = await fetch(`${BFF}/api/planificacion/resultado/${jid}`);
+      const res = await fetch(`${BFF}/api/planificacion/resultado/${jid}`, { headers: authHeader() });
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`);
       }
@@ -306,7 +307,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       // Usa el endpoint unificado del BFF que recibe todos los parámetros a la vez
       const res = await fetch(`${BFF}/api/periodo/iniciar`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeader() },
         body: JSON.stringify({
           fechaInicio:      fechaISO,
           dias:             efectivo.dias,
@@ -335,7 +336,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       // Polling cada 2 segundos
       pollRef.current = setInterval(async () => {
         try {
-          const sr = await fetch(`${BFF}/api/periodo/status/${jid}`);
+          const sr = await fetch(`${BFF}/api/periodo/status/${jid}`, { headers: authHeader() });
           const sd = await sr.json();
           setPlanProgreso(sd.progreso ?? 0);
           setPlanMensaje(sd.mensaje ?? '');
@@ -372,6 +373,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       // BFF almacenó duracion_real_min y umbrales al llamar /periodo/iniciar
       const res = await fetch(`${BFF}/api/periodo/ejecutar/${jobId}`, {
         method: 'POST',
+        headers: authHeader(),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -656,7 +658,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     try {
       const res = await fetch(`${BFF}/api/simulacion/colapso`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeader() },
         body: JSON.stringify({
           t0_utc: t0utc,
           sa_seg: efectivo.saSeg ?? 300,
@@ -721,7 +723,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     try {
       const res = await fetch(`${BFF}/api/simulacion/periodo-programado`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeader() },
         body: JSON.stringify({
           t0_utc:  t0utc,
           fecha_inicio_local: fechaInicioLocal,
@@ -763,7 +765,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const pausarSimulacion = useCallback(async () => {
     if (fase !== 'ejecutando') return;
     try {
-      const res = await fetch(`${BFF}/api/simulacion/pausar`, { method: 'POST' });
+      const res = await fetch(`${BFF}/api/simulacion/pausar`, { method: 'POST', headers: authHeader() });
       if (res.ok) {
         setFase('pausado');
       } else {
@@ -835,7 +837,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     try {
       const res = await fetch(`${BFF}/api/simulacion/cancelar`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeader() },
         body: JSON.stringify({ origen: normalizedOrigin, destino: normalizedDestination, salidaUTC }),
       });
       if (!res.ok) {
@@ -869,7 +871,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const reanudarSimulacion = useCallback(async () => {
     if (fase !== 'pausado') return;
     try {
-      const res = await fetch(`${BFF}/api/simulacion/reanudar`, { method: 'POST' });
+      const res = await fetch(`${BFF}/api/simulacion/reanudar`, { method: 'POST', headers: authHeader() });
       if (res.ok) {
         setFase('ejecutando');
       } else {
@@ -886,7 +888,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const detenerSimulacion = useCallback(async () => {
     if (esRef.current) { esRef.current.close(); esRef.current = null; }
     try {
-      await fetch(`${BFF}/api/simulacion/detener`, { method: 'POST' });
+      await fetch(`${BFF}/api/simulacion/detener`, { method: 'POST', headers: authHeader() });
     } catch (e) {
       console.warn('[Sim] error al detener (se limpia la UI igual):', e);
     }

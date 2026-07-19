@@ -14,6 +14,7 @@ import {
 } from '@carbon/react';
 import { Location, Plane, Box, CloseOutline, Upload, Download, TrashCan } from '@carbon/icons-react';
 import { toast } from 'sonner';
+import { authHeader } from '../lib/auth';
 
 const BFF = import.meta.env.VITE_BFF_URL ?? '';
 
@@ -63,7 +64,7 @@ export function DataIngestion() {
     const fd = new FormData();
     fd.append('archivo', file);
     const url = `${BFF}/api/carga/upload/${kind}${forzar ? '?forzar=true' : ''}`;
-    const res = await fetch(url, { method: 'POST', body: fd });
+    const res = await fetch(url, { method: 'POST', headers: authHeader(), body: fd });
     const json = await res.json().catch(() => ({}));
     if (!res.ok) {
       throw new Error(json.mensaje ?? json.error ?? `HTTP ${res.status}`);
@@ -105,7 +106,7 @@ export function DataIngestion() {
   const handleLimpiarCancelaciones = async () => {
     setLimpiando(true);
     try {
-      const res = await fetch(`${BFF}/api/carga/upload/cancelaciones`, { method: 'DELETE' });
+      const res = await fetch(`${BFF}/api/carga/upload/cancelaciones`, { method: 'DELETE', headers: authHeader() });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setCancelFile(null);
       setEstado(prev => ({ ...prev, cancelaciones: 'idle' }));

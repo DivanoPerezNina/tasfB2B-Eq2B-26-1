@@ -3,6 +3,7 @@ import { Button, InlineNotification, Tag } from '@carbon/react';
 import { Add, Edit, TrashCan, Renew } from '@carbon/icons-react';
 import { useNavigate, useParams } from 'react-router';
 import { AeroBFF, VueloBFF, useDomain } from '../context/DomainContext';
+import { authHeader } from '../lib/auth';
 
 const BFF = import.meta.env.VITE_BFF_URL ?? '';
 
@@ -72,7 +73,7 @@ function parseDecimal(value: string) {
 async function apiRequest(path: string, options: RequestInit) {
   const response = await fetch(`${BFF}${path}`, {
     ...options,
-    headers: { 'Content-Type': 'application/json', ...(options.headers ?? {}) },
+    headers: { 'Content-Type': 'application/json', ...authHeader(), ...(options.headers ?? {}) },
   });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {

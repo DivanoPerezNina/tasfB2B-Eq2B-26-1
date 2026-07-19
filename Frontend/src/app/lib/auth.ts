@@ -1,19 +1,39 @@
-/** auth.ts — manejo simple de la sesión (token guardado en localStorage). */
+/** auth.ts — manejo de la sesión (perfil + token guardados en localStorage). */
 
-const KEY = 'tasf_auth_token';
+const KEY = 'tasf_auth';
 
-export function getToken(): string | null {
-  try { return localStorage.getItem(KEY); } catch { return null; }
+export type Rol = 'admin' | 'operario';
+
+export interface Perfil {
+  token: string;
+  usuario: string;
+  rol: Rol;
+  aeropuertoIata?: string;
 }
 
-export function setToken(token: string): void {
-  try { localStorage.setItem(KEY, token); } catch { /* noop */ }
+export function getPerfil(): Perfil | null {
+  try {
+    const raw = localStorage.getItem(KEY);
+    return raw ? (JSON.parse(raw) as Perfil) : null;
+  } catch {
+    return null;
+  }
 }
 
-export function clearToken(): void {
+export function setPerfil(p: Perfil): void {
+  try { localStorage.setItem(KEY, JSON.stringify(p)); } catch { /* noop */ }
+}
+
+export function clearPerfil(): void {
   try { localStorage.removeItem(KEY); } catch { /* noop */ }
 }
 
 export function isAuthed(): boolean {
-  return !!getToken();
+  return !!getPerfil();
+}
+
+/** Header listo para fetch: {} si no hay sesión. */
+export function authHeader(): Record<string, string> {
+  const p = getPerfil();
+  return p ? { Authorization: `Bearer ${p.token}` } : {};
 }

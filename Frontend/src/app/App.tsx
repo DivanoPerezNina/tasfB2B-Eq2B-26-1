@@ -6,22 +6,25 @@ import { ThemeProvider } from "./context/ThemeContext";
 import { DomainProvider } from "./context/DomainContext";
 import { Toaster } from "./components/ui/sonner";
 import { Login } from "./pages/Login";
-import { isAuthed } from "./lib/auth";
+import { OperarioWelcome } from "./pages/OperarioWelcome";
+import { getPerfil, Perfil } from "./lib/auth";
 
 export default function App() {
-  const [authed, setAuthed] = useState(isAuthed());
+  const [perfil, setPerfil] = useState<Perfil | null>(getPerfil());
 
   return (
     <ThemeProvider>
-      {authed ? (
+      {!perfil ? (
+        <Login onSuccess={setPerfil} />
+      ) : perfil.rol === "operario" ? (
+        <OperarioWelcome perfil={perfil} onLogout={() => setPerfil(null)} />
+      ) : (
         <DomainProvider>
           <SimulationProvider>
             <RouterProvider router={router} />
             <Toaster />
           </SimulationProvider>
         </DomainProvider>
-      ) : (
-        <Login onSuccess={() => setAuthed(true)} />
       )}
     </ThemeProvider>
   );
