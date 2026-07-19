@@ -233,6 +233,22 @@ echo "[7] Recargando nginx..."
 systemctl reload nginx
 echo "    OK"
 
+# ── 7.5 Reinstalar HTTPS si ya había un certificado ───────────────────────────
+# El bloque anterior sobreescribe $NGINX_CONF por completo con solo el puerto
+# 80 — si certbot ya había insertado el bloque 443 aquí, se pierde. Si detecta
+# un certificado existente para el dominio, reinstala su bloque automáticamente
+# (--reinstall funciona aunque certbot crea que ya estaba instalado).
+DOMINIO="1inf54-984-2b.inf.pucp.edu.pe"
+if [ -d "/etc/letsencrypt/live/$DOMINIO" ]; then
+  echo "[7.5] Certificado HTTPS existente detectado — reinsertando bloque 443..."
+  if certbot --nginx --cert-name "$DOMINIO" -d "$DOMINIO" -n --reinstall; then
+    echo "    OK — HTTPS reinstalado"
+  else
+    echo "    AVISO: no se pudo reinstalar automático. Corre a mano:"
+    echo "      sudo certbot --nginx -d $DOMINIO"
+  fi
+fi
+
 echo ""
 echo "================================================"
 echo "  Setup completado."
