@@ -30,3 +30,6 @@ logs/
 backend/bff/bin/
 backend/carga-masiva/bin/
 backend/ejecutor/bin/
+
+# ─── Backups de MySQL (dumps locales en la VM, no van al repo) ────────────────
+backups/

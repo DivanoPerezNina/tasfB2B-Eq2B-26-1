@@ -54,6 +54,15 @@ export interface FlightCancellation {
   affectedBaggageIds: string[];
 }
 
+export interface VisualCancellation {
+  id: string;
+  origen: string;
+  destino: string;
+  salidaUTC: number;
+  llegadaUTC: number;
+  createdAtUTC: number;
+}
+
 export type SimulationScenario = 'realtime' | 'period' | 'collapse';
 
 export type CriterioOrden = 'EDF' | 'FIFO' | 'ALEATORIO';
@@ -124,6 +133,45 @@ export interface PlanTramoVisual {
   salidaUTC: number;
   llegadaUTC: number;
   maletas: number;
+  origenEnvio?: string;
+  destinoEnvio?: string;
+  registroUTC?: number;
+  deadlineUTC?: number;
+}
+
+export interface ShipmentMetadata {
+  id_envio: string;
+  origen_iata: string;
+  destino_iata: string;
+  cantidad_maletas: number;
+  registro_utc: number;
+  deadline_utc: number;
+  indice_plan: number;
+}
+
+export interface ReassignmentLeg {
+  desde: string;
+  hasta: string;
+  salidaUTC: number;
+  llegadaUTC: number;
+}
+
+export interface ShipmentReassignmentEvidence {
+  envioIndice: number;
+  maletas: number;
+  rutaAnterior: ReassignmentLeg[];
+  rutaNueva: ReassignmentLeg[];
+  estado: 'esperando' | 'reasignado' | 'sin_cambio' | 'sin_ruta';
+}
+
+export interface CancellationAudit {
+  id: string;
+  origen: string;
+  destino: string;
+  salidaUTC: number;
+  solicitadoUTC: number;
+  estado: 'esperando_plan' | 'replanificado' | 'sin_envios' | 'sin_cambio';
+  envios: ShipmentReassignmentEvidence[];
 }
 
 export interface PlanResumenVisual {
@@ -132,6 +180,16 @@ export interface PlanResumenVisual {
   rechazados?: number;
   ventanaIniUTC?: number;
   ventanaFinUTC?: number;
+}
+
+export interface StablePlanSnapshot {
+  generatedAtRealISO: string;
+  simulationTimeUTC: number;
+  scenario: SimulationScenario;
+  fase: FaseSimulacion;
+  contadores: Contadores;
+  resumen: PlanResumenVisual | null;
+  tramos: PlanTramoVisual[];
 }
 
 export interface DatasetInfo {

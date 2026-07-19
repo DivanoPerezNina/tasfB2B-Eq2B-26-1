@@ -34,6 +34,8 @@ func main() {
 	mux.HandleFunc("POST /upload/aeropuertos", upload.Aeropuertos)
 	mux.HandleFunc("POST /upload/vuelos", upload.Vuelos)
 	mux.HandleFunc("POST /upload/envios", upload.Envios)
+	mux.HandleFunc("POST /upload/cancelaciones", upload.Cancelaciones)
+	mux.HandleFunc("DELETE /upload/cancelaciones", upload.LimpiarCancelaciones)
 	mux.HandleFunc("GET /upload/sesion/", upload.Sesion)
 
 	// Estado y plantillas

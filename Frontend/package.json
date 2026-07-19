@@ -8,8 +8,12 @@
     "dev": "vite"
   },
   "dependencies": {
+    "@carbon/icons-react": "^11.82.0",
+    "@carbon/react": "^1.110.0",
     "@emotion/react": "11.14.0",
     "@emotion/styled": "11.14.1",
+    "@fontsource/ibm-plex-mono": "^5.2.7",
+    "@fontsource/ibm-plex-sans": "^5.2.8",
     "@mui/icons-material": "7.3.5",
     "@mui/material": "7.3.5",
     "@popperjs/core": "2.11.8",
@@ -60,6 +64,7 @@
     "react-simple-maps": "^3.0.0",
     "react-slick": "0.31.0",
     "recharts": "2.15.2",
+    "sass": "^1.101.0",
     "sonner": "2.0.3",
     "tailwind-merge": "3.2.0",
     "tw-animate-css": "1.3.8",
@@ -87,5 +92,8 @@
     "overrides": {
       "vite": "6.3.5"
     }
+  },
+  "optionalDependencies": {
+    "@esbuild/linux-x64": "^0.28.1"
   }
 }

@@ -143,13 +143,14 @@ func (h *SimulacionHandler) Iniciar(w http.ResponseWriter, r *http.Request) {
 //	}
 func (h *SimulacionHandler) PeriodoProgramado(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		T0UTC    int64   `json:"t0_utc"`
-		Dias     int     `json:"dias"`
-		Sc       int64   `json:"sc"`
-		SaSeg    float64 `json:"sa_seg"`
-		WarmUp   bool    `json:"warmup"`
-		Criterio string  `json:"criterio"`
-		Umbrales struct {
+		T0UTC             int64   `json:"t0_utc"`
+		Dias              int     `json:"dias"`
+		Sc                int64   `json:"sc"`
+		SaSeg             float64 `json:"sa_seg"`
+		WarmUp            bool    `json:"warmup"`
+		Criterio          string  `json:"criterio"`
+		UsarCancelaciones *bool   `json:"usar_cancelaciones"` // nil/true=aplica archivo; false=Tiempo Real
+		Umbrales          struct {
 			VerdeHasta float64 `json:"verde_hasta"`
 			AmbarHasta float64 `json:"ambar_hasta"`
 		} `json:"umbrales"`
@@ -192,6 +193,12 @@ func (h *SimulacionHandler) PeriodoProgramado(w http.ResponseWriter, r *http.Req
 	broker := sse.Nuevo(h.MaxSSEClientes)
 	orq := engine.NuevoOrquestador("periodo", h.ConsultasURL, h.PlanificadorURL,
 		req.T0UTC, finUTC, req.Sc, sa, lookback, req.Criterio, umbrales)
+	// Periodo aplica el archivo de cancelaciones; Tiempo Real (envía false) no.
+	// Tiempo Real (día a día) tampoco lee del dataset histórico: los dos flags
+	// van juntos porque hoy solo este escenario desactiva cancelaciones-archivo;
+	// si otro escenario futuro también lo hace, separar esta señal.
+	orq.UsarCancelacionesArchivo = req.UsarCancelaciones == nil || *req.UsarCancelaciones
+	orq.ModoOperacion = !orq.UsarCancelacionesArchivo
 	orq.Broadcast = broker.Publicar
 	orq.Iniciar()
 
@@ -297,6 +304,7 @@ func (h *SimulacionHandler) Colapso(w http.ResponseWriter, r *http.Request) {
 		BloquesRojosConsecutivos: req.BloquesRojoConsecutivos,
 		MaxDias:                  req.MaxDias,
 	}
+	orq.UsarCancelacionesArchivo = true // Colapso aplica el archivo de cancelaciones
 	orq.Broadcast = broker.Publicar
 	orq.Iniciar()
 
@@ -312,6 +320,45 @@ func (h *SimulacionHandler) Colapso(w http.ResponseWriter, r *http.Request) {
 		"k":        req.K,
 		"max_dias": req.MaxDias,
 		"mensaje":  "Simulación de colapso iniciada",
+	})
+}
+
+// ── POST /api/simulacion/cancelar ────────────────────────────────────────────
+//
+// Cancela una OCURRENCIA de vuelo (vuelo, día) en la simulación de periodo en
+// curso y fuerza un re-plan inmediato del bloque actual. Body:
+//
+//	{ "vueloIdx": 123, "salidaUTC": 29742255 }   // salidaUTC = minuto UTC absoluto
+func (h *SimulacionHandler) Cancelar(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Origen    string `json:"origen"`
+		Destino   string `json:"destino"`
+		SalidaUTC int64  `json:"salidaUTC"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		errResp(w, 400, "BODY_INVALIDO", err.Error())
+		return
+	}
+	if req.Origen == "" || req.Destino == "" {
+		errResp(w, 400, "PARAM_FALTANTE", "Se requieren 'origen' y 'destino' (IATA)")
+		return
+	}
+
+	h.mu.Lock()
+	orq := h.orq
+	h.mu.Unlock()
+	if orq == nil || orq.GetEstado() == "detenido" || orq.GetEstado() == "completado" {
+		errResp(w, 404, "SIN_SIMULACION", "No hay simulación de periodo en curso")
+		return
+	}
+
+	orq.AgregarCancelacion(req.Origen, req.Destino, req.SalidaUTC)
+	respond(w, 202, map[string]interface{}{
+		"estado":    "cancelacion_aplicada",
+		"origen":    req.Origen,
+		"destino":   req.Destino,
+		"salidaUTC": req.SalidaUTC,
+		"mensaje":   "Cancelación registrada; re-planificando bloque actual",
 	})
 }
 
@@ -398,6 +445,28 @@ func hayEnCurso(sim *engine.Simulacion, orq *engine.Orquestador) bool {
 // ── GET /api/simulacion/estado ───────────────────────────────────────────────
 
 func (h *SimulacionHandler) Estado(w http.ResponseWriter, r *http.Request) {
+	// Simulación de PERIODO/COLAPSO/Día-a-día (orquestador). Es la que el admin
+	// debe poder retomar al reabrir la pestaña: reportamos su estado para que el
+	// frontend detecte la sim en curso y se re-suscriba al SSE (que reenvía el
+	// snapshot). Los contadores/plan llegan por SSE, no aquí.
+	h.mu.Lock()
+	orq := h.orq
+	h.mu.Unlock()
+	if orq != nil {
+		est := orq.GetEstado()
+		if est != "detenido" && est != "completado" {
+			respond(w, 200, map[string]interface{}{
+				"tipo":         "orquestador",
+				"estado":       est,
+				"t0_utc":       orq.T0UTC,
+				"fin_utc":      orq.FinUTC,
+				"activa":       true,
+				"clientes_sse": h.brokerClientes(),
+			})
+			return
+		}
+	}
+
 	sim := h.getActiva(w)
 	if sim == nil {
 		return
@@ -469,6 +538,17 @@ func (h *SimulacionHandler) Health(w http.ResponseWriter, r *http.Request) {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+// brokerClientes devuelve el nº de clientes SSE conectados (0 si no hay broker).
+func (h *SimulacionHandler) brokerClientes() int {
+	h.mu.Lock()
+	b := h.broker
+	h.mu.Unlock()
+	if b == nil {
+		return 0
+	}
+	return b.NumClientes()
+}
 
 func (h *SimulacionHandler) getActiva(w http.ResponseWriter) *engine.Simulacion {
 	h.mu.Lock()

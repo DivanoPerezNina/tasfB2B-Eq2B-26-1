@@ -307,6 +307,99 @@ func (h *UploadHandler) Envios(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ── POST /upload/cancelaciones ───────────────────────────────────────────────
+//
+// Carga el archivo CSV de cancelaciones (origen,destino,fecha,hora local). La
+// hora local del origen se convierte a UTC con su GMT (igual que envios) y se
+// guarda como salida_utc. Reemplaza las cancelaciones previas. No se valida
+// contra el catálogo: rutas/fechas inexistentes simplemente no afectan nada.
+func (h *UploadHandler) Cancelaciones(w http.ResponseWriter, r *http.Request) {
+	aero, _, _, err := db.ContarRegistros(h.DB)
+	if err != nil {
+		errResp(w, 500, "DB_ERROR", err.Error())
+		return
+	}
+	if aero == 0 {
+		respond(w, 412, map[string]string{
+			"error":   "DEPENDENCIA_FALTANTE",
+			"mensaje": "Cargue aeropuertos antes de cargar cancelaciones (se necesita el GMT del origen)",
+		})
+		return
+	}
+
+	file, header, err := r.FormFile("archivo")
+	if err != nil {
+		errResp(w, 400, "ARCHIVO_REQUERIDO", "Campo 'archivo' faltante")
+		return
+	}
+	defer file.Close()
+
+	gmtMap, mapErr := h.buildGmtMap()
+	if mapErr != nil {
+		errResp(w, 500, "DB_ERROR", mapErr.Error())
+		return
+	}
+
+	token := uuid.NewString()
+	db.InsertarSesion(h.DB, db.Sesion{Token: token, Tipo: "cancelaciones", Archivo: header.Filename})
+
+	buf := new(bytes.Buffer)
+	io.CopyN(buf, file, h.MaxBytes+1)
+	data := buf.Bytes()
+
+	go func() {
+		rows, parseErr := parser.ParseCancelaciones(bytes.NewReader(data))
+		if parseErr != nil {
+			msg := parseErr.Error()
+			db.ActualizarSesion(h.DB, token, "error", 0, 0, &msg)
+			return
+		}
+
+		// Resolver salida_utc por fila con el GMT del origen; descartar orígenes
+		// desconocidos (filtro in-place, comparte el backing array de rows).
+		resueltas := rows[:0]
+		for _, c := range rows {
+			gmt, ok := gmtMap[c.Origen]
+			if !ok {
+				continue
+			}
+			anio, mes, dia := parsearFechaISO(c.Fecha)
+			c.SalidaUTC = parser.EpochMinutosUTC(anio, mes, dia, c.Hora, c.Minuto, gmt)
+			resueltas = append(resueltas, c)
+		}
+
+		if insErr := db.InsertarCancelacionesBatch(h.DB, resueltas); insErr != nil {
+			msg := insErr.Error()
+			db.ActualizarSesion(h.DB, token, "error", len(rows), len(resueltas), &msg)
+			return
+		}
+		db.ActualizarSesion(h.DB, token, "ok", len(rows), len(resueltas), nil)
+	}()
+
+	respond(w, 202, map[string]string{
+		"token":   token,
+		"tipo":    "cancelaciones",
+		"archivo": header.Filename,
+		"estado":  "procesando",
+	})
+}
+
+// ── DELETE /upload/cancelaciones ─────────────────────────────────────────────
+//
+// Vacía la tabla de cancelaciones manualmente. Útil cuando se detiene una
+// simulación antes de que termine (el ejecutor solo limpia al terminar/detener
+// el escenario) o para descartar un archivo cargado sin correr nada.
+func (h *UploadHandler) LimpiarCancelaciones(w http.ResponseWriter, r *http.Request) {
+	res, err := h.DB.Exec("DELETE FROM cancelaciones")
+	if err != nil {
+		// Sin validación: si la tabla no existe, no hay nada que limpiar.
+		respond(w, 200, map[string]interface{}{"limpiado": 0})
+		return
+	}
+	n, _ := res.RowsAffected()
+	respond(w, 200, map[string]interface{}{"limpiado": n})
+}
+
 // ── GET /upload/sesion/{token} ───────────────────────────────────────────────
 
 func (h *UploadHandler) Sesion(w http.ResponseWriter, r *http.Request) {
@@ -398,6 +491,27 @@ func atoiSafe(s string) int {
 		n = n*10 + int(c-'0')
 	}
 	return n
+}
+
+// ── helper: construir mapa IATA → GMT desde MySQL ───────────────────────────
+
+func (h *UploadHandler) buildGmtMap() (map[string]int, error) {
+	rows, err := h.DB.Query("SELECT iata, gmt_offset FROM aeropuertos")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	m := make(map[string]int, 30)
+	for rows.Next() {
+		var iata string
+		var gmt int
+		if err := rows.Scan(&iata, &gmt); err != nil {
+			return nil, err
+		}
+		m[iata] = gmt
+	}
+	return m, rows.Err()
 }
 
 // ── helper: construir mapa IATA → continente desde MySQL ────────────────────

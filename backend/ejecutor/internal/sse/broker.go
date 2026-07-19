@@ -20,6 +20,13 @@ type Broker struct {
 	clientes    map[chan Mensaje]struct{}
 	maxClientes int
 	cerrado     bool
+
+	// ultimos guarda el ÚLTIMO mensaje de cada tipo de evento. Al conectarse un
+	// cliente nuevo (p. ej. el admin que reabre la pestaña a mitad de simulación)
+	// se le reenvían como SNAPSHOT, para que el mapa y los contadores se
+	// reconstruyan sin esperar al siguiente tick/replanificación.
+	ultimos      map[string]Mensaje
+	ordenUltimos []string // orden de primera aparición, para reenviar coherente
 }
 
 // Nuevo crea un Broker con límite de clientes.
@@ -27,6 +34,7 @@ func Nuevo(maxClientes int) *Broker {
 	return &Broker{
 		clientes:    make(map[chan Mensaje]struct{}),
 		maxClientes: maxClientes,
+		ultimos:     make(map[string]Mensaje),
 	}
 }
 
@@ -58,6 +66,10 @@ func (b *Broker) Publicar(evento string, data interface{}) {
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if _, visto := b.ultimos[evento]; !visto {
+		b.ordenUltimos = append(b.ordenUltimos, evento)
+	}
+	b.ultimos[evento] = msg
 	for ch := range b.clientes {
 		select {
 		case ch <- msg:
@@ -95,8 +107,17 @@ func (b *Broker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Demasiados clientes SSE", http.StatusTooManyRequests)
 		return
 	}
-	ch := make(chan Mensaje, 32)
+	ch := make(chan Mensaje, 64)
 	b.clientes[ch] = struct{}{}
+	// SNAPSHOT: reenviar el último evento de cada tipo al recién conectado, en su
+	// orden de aparición. ch está recién creado y nadie más lo lee aún; el búfer
+	// (64) cubre de sobra los pocos tipos de evento.
+	for _, ev := range b.ordenUltimos {
+		select {
+		case ch <- b.ultimos[ev]:
+		default:
+		}
+	}
 	b.mu.Unlock()
 
 	// Limpiar al desconectar (idempotente: Cerrar() pudo haber cerrado ch ya)

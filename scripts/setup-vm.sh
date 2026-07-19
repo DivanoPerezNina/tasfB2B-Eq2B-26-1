@@ -196,12 +196,34 @@ StandardError=append:$REPO_DIR/logs/ejecutor.log
 WantedBy=multi-user.target
 EOF
 
+# Consultas — fuente de datos incremental del esquema Sa/Sc (Periodo, Colapso
+# y Día a Día). El Orquestador del Ejecutor lo llama vía CONSULTAS_URL.
+cat > "$SYSTEMD_DIR/tasfb2b-consultas.service" <<EOF
+[Unit]
+Description=TASF.B2B Consultas (Go :8085)
+After=network.target
+
+[Service]
+Type=simple
+User=$APP_USER
+WorkingDirectory=$REPO_DIR
+EnvironmentFile=$REPO_DIR/.env
+ExecStart=$REPO_DIR/backend/consultas/bin/consultas
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:$REPO_DIR/logs/consultas.log
+StandardError=append:$REPO_DIR/logs/consultas.log
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
 systemctl daemon-reload
-echo "    Servicios registrados: tasfb2b-{planificador,bff,carga-masiva,ejecutor}"
+echo "    Servicios registrados: tasfb2b-{planificador,bff,carga-masiva,ejecutor,consultas}"
 
 # ── 6. Habilitar y arrancar servicios ────────────────────────────────────────
 echo "[6] Habilitando servicios (arranque automático)..."
-for SVC in tasfb2b-planificador tasfb2b-bff tasfb2b-carga-masiva tasfb2b-ejecutor; do
+for SVC in tasfb2b-planificador tasfb2b-bff tasfb2b-carga-masiva tasfb2b-ejecutor tasfb2b-consultas; do
   systemctl enable "$SVC"
   echo "    enabled: $SVC"
 done
@@ -210,6 +232,22 @@ done
 echo "[7] Recargando nginx..."
 systemctl reload nginx
 echo "    OK"
+
+# ── 7.5 Reinstalar HTTPS si ya había un certificado ───────────────────────────
+# El bloque anterior sobreescribe $NGINX_CONF por completo con solo el puerto
+# 80 — si certbot ya había insertado el bloque 443 aquí, se pierde. Si detecta
+# un certificado existente para el dominio, reinstala su bloque automáticamente
+# (--reinstall funciona aunque certbot crea que ya estaba instalado).
+DOMINIO="1inf54-984-2b.inf.pucp.edu.pe"
+if [ -d "/etc/letsencrypt/live/$DOMINIO" ]; then
+  echo "[7.5] Certificado HTTPS existente detectado — reinsertando bloque 443..."
+  if certbot --nginx --cert-name "$DOMINIO" -d "$DOMINIO" -n --reinstall; then
+    echo "    OK — HTTPS reinstalado"
+  else
+    echo "    AVISO: no se pudo reinstalar automático. Corre a mano:"
+    echo "      sudo certbot --nginx -d $DOMINIO"
+  fi
+fi
 
 echo ""
 echo "================================================"

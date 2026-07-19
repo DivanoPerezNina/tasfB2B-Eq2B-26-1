@@ -11,6 +11,7 @@ import java.io.OutputStreamWriter;
 import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 
+import pe.edu.pucp.tasf.gvns.CancelacionDTO;
 import pe.edu.pucp.tasf.gvns.CriterioOrden;
 import pe.edu.pucp.tasf.gvns.EnvioAsignado;
 import pe.edu.pucp.tasf.gvns.EnvioDTO;
@@ -258,7 +259,8 @@ public class PlanificadorController {
     public record DesdeDatosRequest(
             Long iniUTC, Long finUTC, Long observacionIniUTC,
             String criterio, Long semilla,
-            List<EnvioDTO> envios) {
+            List<EnvioDTO> envios,
+            List<CancelacionDTO> cancelados) {
     }
 
     @PostMapping("/planificacion/desde-datos")
@@ -291,7 +293,7 @@ public class PlanificadorController {
         // ve como EOF), igual que el comportamiento anterior ante falta de memoria.
         StreamingResponseBody body = os -> {
             try (Writer w = new BufferedWriter(new OutputStreamWriter(os, StandardCharsets.UTF_8))) {
-                svc.planificarYStreamDesdeLista(req.envios(), crit, semilla, ini, fin, obs, w);
+                svc.planificarYStreamDesdeLista(req.envios(), crit, semilla, ini, fin, obs, req.cancelados(), w);
             }
         };
         return ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON).body(body);

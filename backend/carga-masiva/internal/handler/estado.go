@@ -81,8 +81,11 @@ func (h *EstadoHandler) Plantilla(w http.ResponseWriter, r *http.Request) {
 	case "envios":
 		filename = "_envios_XXXX__plantilla.txt"
 		content = plantillaEnvios
+	case "cancelaciones":
+		filename = "cancelaciones_plantilla.csv"
+		content = plantillaCancelaciones
 	default:
-		errResp(w, 404, "TIPO_INVALIDO", fmt.Sprintf("Tipo %q no reconocido. Use: aeropuertos, vuelos, envios", tipo))
+		errResp(w, 404, "TIPO_INVALIDO", fmt.Sprintf("Tipo %q no reconocido. Use: aeropuertos, vuelos, envios, cancelaciones", tipo))
 		return
 	}
 
@@ -145,4 +148,13 @@ const plantillaEnvios = `# TASF.B2B — Archivo de envíos (un archivo por aerop
 00000001-20260102-01-38-EBCI-006-0007729
 00000002-20260102-03-15-LATI-012-0004521
 00000003-20260103-10-00-VIDP-003-0001234
+`
+
+const plantillaCancelaciones = `# TASF.B2B — Archivo de cancelaciones de vuelo (CSV)
+# Formato: origen,destino,fecha,hora   (fecha=YYYY-MM-DD, hora=HH:MM en hora LOCAL del origen)
+# Una línea por ocurrencia (vuelo, día) a cancelar. No se valida: rutas o fechas
+# inexistentes simplemente no afectan la simulación.
+origen,destino,fecha,hora
+SKBO,EDDI,2026-01-15,19:01
+SEQM,SKBO,2026-01-16,08:00
 `

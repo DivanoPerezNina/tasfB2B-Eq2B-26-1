@@ -14,8 +14,8 @@ import (
 
 // Simulacion es el motor central de la simulación. Una instancia por ejecución.
 type Simulacion struct {
-	ID    string
-	mu    sync.RWMutex
+	ID string
+	mu sync.RWMutex
 
 	// Configuración
 	IniUTC         int64   // minuto UTC inicio del PLAN (= inicio del pre-roll de warm-up)
@@ -25,8 +25,8 @@ type Simulacion struct {
 	TickInterval   time.Duration
 
 	// Estado
-	estado        string  // cargando|ejecutando|pausado|detenido|completado
-	TiempoSimUTC  float64 // tiempo simulado actual (minutos UTC)
+	estado       string  // cargando|ejecutando|pausado|detenido|completado
+	TiempoSimUTC float64 // tiempo simulado actual (minutos UTC)
 
 	// Datos del plan
 	Envios      []EstadoEnvio
@@ -103,13 +103,13 @@ func nuevaDesdeReader(id string, r io.Reader, duracionRealMin float64,
 		TickInterval:   tickInterval,
 		estado:         "cargando",
 		TiempoSimUTC:   float64(ini),
-		Aeropuertos:   make(map[string]*EstadoAeropuerto),
-		Umbrales:      umbrales,
-		pauseCh:       make(chan struct{}, 1),
-		resumeCh:      make(chan struct{}, 1),
-		stopCh:        make(chan struct{}),
-		doneCh:        make(chan struct{}),
-		Broadcast:     func(string, interface{}) {}, // no-op hasta que se inyecte
+		Aeropuertos:    make(map[string]*EstadoAeropuerto),
+		Umbrales:       umbrales,
+		pauseCh:        make(chan struct{}, 1),
+		resumeCh:       make(chan struct{}, 1),
+		stopCh:         make(chan struct{}),
+		doneCh:         make(chan struct{}),
+		Broadcast:      func(string, interface{}) {}, // no-op hasta que se inyecte
 	}
 
 	s.cargarPlan(plan)
@@ -681,13 +681,17 @@ func (s *Simulacion) todosLosTramos() []map[string]interface{} {
 		for j := range e.Tramos {
 			tr := &e.Tramos[j]
 			out = append(out, map[string]interface{}{
-				"envioIndice": e.Indice,
-				"tramoIndex":  j,
-				"desde":       tr.Desde,
-				"hasta":       tr.Hasta,
-				"salidaUTC":   tr.SalidaUTC,
-				"llegadaUTC":  tr.LlegadaUTC,
-				"maletas":     e.Maletas,
+				"envioIndice":  e.Indice,
+				"tramoIndex":   j,
+				"desde":        tr.Desde,
+				"hasta":        tr.Hasta,
+				"salidaUTC":    tr.SalidaUTC,
+				"llegadaUTC":   tr.LlegadaUTC,
+				"maletas":      e.Maletas,
+				"origenEnvio":  e.Origen,
+				"destinoEnvio": e.Destino,
+				"registroUTC":  e.RegistroUTC,
+				"deadlineUTC":  e.DeadlineUTC,
 			})
 		}
 	}

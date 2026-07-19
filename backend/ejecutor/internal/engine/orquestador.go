@@ -28,6 +28,19 @@ type Orquestador struct {
 	Umbrales   Umbrales
 	Colapso    *ConfigColapso
 
+	// UsarCancelacionesArchivo controla si se aplican las cancelaciones cargadas
+	// por ARCHIVO (servicio de Consultas). Solo aplica a Periodo y Colapso; en
+	// Tiempo Real (día a día) se deja en false. Las cancelaciones INTERACTIVAS del
+	// buscador funcionan en todos los escenarios, independiente de este flag.
+	UsarCancelacionesArchivo bool
+
+	// ModoOperacion, cuando es true, hace que consultar() lea de la tabla
+	// envios_operacion (registrados por los operarios en Día a Día) en vez de
+	// envios (histórico/proyectado de Periodo y Colapso). Mantiene ambos
+	// datasets separados: envios_operacion se puede vaciar con TRUNCATE entre
+	// ensayos sin tocar ni un registro del dataset de simulación.
+	ModoOperacion bool
+
 	Broadcast func(event string, data interface{})
 
 	mu           sync.RWMutex
@@ -37,6 +50,18 @@ type Orquestador struct {
 	stopCh       chan struct{}
 	doneCh       chan struct{}
 	colapsoRojos map[string]int
+
+	cancelaciones []cancelacion // cancelaciones (vuelo, día) activas; se envían en cada desde-datos
+	cancelCh      chan struct{} // señal para re-planificar el bloque actual de inmediato
+}
+
+// cancelacion identifica la OCURRENCIA de vuelo a cancelar por su RUTA
+// (origen→destino en IATA) y el minuto UTC absoluto de su salida. El planificador
+// resuelve la ruta a su vueloIdx interno (el índice no es estable entre servicios).
+type cancelacion struct {
+	Origen    string `json:"origen"`
+	Destino   string `json:"destino"`
+	SalidaUTC int64  `json:"salidaUTC"`
 }
 
 // NuevoOrquestador construye el orquestador a partir de los parámetros del
@@ -67,6 +92,20 @@ func NuevoOrquestador(id, consultasURL, planificadorURL string,
 		stopCh:          make(chan struct{}),
 		doneCh:          make(chan struct{}),
 		colapsoRojos:    make(map[string]int),
+		cancelCh:        make(chan struct{}, 1),
+	}
+}
+
+// AgregarCancelacion registra una cancelación (vuelo, día) y dispara un re-plan
+// inmediato del bloque actual. Thread-safe: lo llama el handler HTTP mientras el
+// bucle Sa/Sc corre en su propia goroutine.
+func (o *Orquestador) AgregarCancelacion(origen, destino string, salidaUTC int64) {
+	o.mu.Lock()
+	o.cancelaciones = append(o.cancelaciones, cancelacion{Origen: origen, Destino: destino, SalidaUTC: salidaUTC})
+	o.mu.Unlock()
+	select {
+	case o.cancelCh <- struct{}{}:
+	default: // ya hay un re-plan pendiente; las cancelaciones nuevas entran igual
 	}
 }
 
@@ -130,6 +169,9 @@ func (o *Orquestador) Detener() {
 
 func (o *Orquestador) run() {
 	defer close(o.doneCh)
+	// Al terminar el escenario (completado, detenido o fallo) se vacía la tabla de
+	// cancelaciones de archivo: son efímeras, válidas solo para esta ejecución.
+	defer o.limpiarCancelacionesArchivo()
 
 	// Reloj de VISUALIZACIÓN continuo: avanza Sc minutos de datos por cada Sa
 	// segundos reales → avance por segundo = Sc / Sa (min-dato/seg).
@@ -156,6 +198,7 @@ func (o *Orquestador) run() {
 	o.emitirTramos(sim)
 
 	tiempo := float64(o.T0UTC)
+	finActual := finIni // fin del bloque actualmente cargado (para re-plan por cancelación)
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 
@@ -169,6 +212,18 @@ func (o *Orquestador) run() {
 			case <-o.stopCh:
 				return
 			}
+		case <-o.cancelCh:
+			// Re-plan inmediato del bloque actual con las cancelaciones nuevas
+			// (Flujo B: cancelar un vuelo desde el buscador). planificar() lee el
+			// set de cancelaciones, así que el plan resultante ya re-rutea.
+			t := int64(tiempo)
+			nsim, err := o.planificarYcargar(finActual, t)
+			if err != nil {
+				o.Broadcast("fallo", map[string]interface{}{"mensaje": err.Error()})
+				return
+			}
+			sim = nsim
+			o.emitirTramos(sim)
 		case <-ticker.C:
 			tiempo += avance
 			if tiempo > float64(o.FinUTC) {
@@ -199,6 +254,7 @@ func (o *Orquestador) run() {
 				}
 				o.emitirTramos(sim)
 				proximoH += o.Sc
+				finActual = nuevoFin
 			}
 
 			// Avanzar el estado al instante actual y emitir (cada segundo).
@@ -238,7 +294,8 @@ func (o *Orquestador) planificarYcargar(fin, t int64) (*Simulacion, error) {
 	if err != nil {
 		return nil, fmt.Errorf("consultas: %w", err)
 	}
-	resp, err := o.planificar(envios, o.IniPlanUTC, fin)
+	cancelados := o.cancelacionesParaVentana(fin)
+	resp, err := o.planificar(envios, cancelados, o.IniPlanUTC, fin)
 	if err != nil {
 		return nil, fmt.Errorf("desde-datos: %w", err)
 	}
@@ -281,6 +338,9 @@ type envioConsulta struct {
 
 func (o *Orquestador) consultar(ini, fin int64) ([]envioConsulta, error) {
 	url := fmt.Sprintf("%s/envios?ini=%d&fin=%d", o.ConsultasURL, ini, fin)
+	if o.ModoOperacion {
+		url += "&modo=operacion"
+	}
 	resp, err := http.Get(url)
 	if err != nil {
 		return nil, err
@@ -304,7 +364,68 @@ func (o *Orquestador) consultar(ini, fin int64) ([]envioConsulta, error) {
 // chunks en una goroutine, en vez de materializar el JSON completo (~cientos de
 // MB a horizontes grandes) con json.Marshal antes de enviarlo. Devuelve la
 // respuesta SIN consumir su body, para que el caller la parsee en streaming.
-func (o *Orquestador) planificar(envios []envioConsulta, ini, fin int64) (*http.Response, error) {
+// cancelacionesParaVentana combina las cancelaciones DECLARATIVAS del archivo
+// (servicio de Consultas, ventana [IniPlan, fin)) con las INTERACTIVAS del
+// buscador (set en memoria). Sin validación: si Consultas falla, solo se usan las
+// interactivas (no se aborta la simulación).
+func (o *Orquestador) cancelacionesParaVentana(fin int64) []cancelacion {
+	var archivo []cancelacion
+	// Solo Periodo y Colapso usan el archivo; Tiempo Real (día a día) lo ignora.
+	if o.UsarCancelacionesArchivo {
+		if a, err := o.consultarCancelaciones(o.IniPlanUTC, fin); err == nil {
+			archivo = a
+		}
+	}
+	o.mu.RLock()
+	inter := make([]cancelacion, len(o.cancelaciones))
+	copy(inter, o.cancelaciones)
+	o.mu.RUnlock()
+	if len(archivo) == 0 {
+		return inter
+	}
+	return append(archivo, inter...)
+}
+
+// limpiarCancelacionesArchivo vacía la tabla de cancelaciones (vía Consultas) al
+// terminar el escenario. Best-effort con timeout corto: si Consultas no responde,
+// no se bloquea el cierre del orquestador (Detener espera doneCh).
+func (o *Orquestador) limpiarCancelacionesArchivo() {
+	req, err := http.NewRequest(http.MethodDelete, o.ConsultasURL+"/cancelaciones", nil)
+	if err != nil {
+		return
+	}
+	cli := &http.Client{Timeout: 5 * time.Second}
+	resp, err := cli.Do(req)
+	if err != nil {
+		return
+	}
+	resp.Body.Close()
+}
+
+func (o *Orquestador) consultarCancelaciones(ini, fin int64) ([]cancelacion, error) {
+	url := fmt.Sprintf("%s/cancelaciones?ini=%d&fin=%d", o.ConsultasURL, ini, fin)
+	cli := &http.Client{Timeout: 10 * time.Second}
+	resp, err := cli.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	var r struct {
+		Cancelaciones []cancelacion `json:"cancelaciones"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
+		return nil, err
+	}
+	return r.Cancelaciones, nil
+}
+
+func (o *Orquestador) planificar(envios []envioConsulta, cancelados []cancelacion, ini, fin int64) (*http.Response, error) {
+	if cancelados == nil {
+		cancelados = []cancelacion{} // json: [] en vez de null
+	}
 	pr, pw := io.Pipe()
 	go func() {
 		var werr error
@@ -315,6 +436,12 @@ func (o *Orquestador) planificar(envios []envioConsulta, ini, fin int64) (*http.
 			return
 		}
 		if werr = json.NewEncoder(pw).Encode(envios); werr != nil {
+			return
+		}
+		if _, werr = io.WriteString(pw, `,"cancelados":`); werr != nil {
+			return
+		}
+		if werr = json.NewEncoder(pw).Encode(cancelados); werr != nil {
 			return
 		}
 		_, werr = io.WriteString(pw, "}")

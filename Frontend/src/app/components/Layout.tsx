@@ -1,25 +1,45 @@
+import { useEffect, useState } from 'react';
 import { Outlet } from 'react-router';
 import { Navigation } from './Navigation';
 
+const HEADER_COLLAPSED_KEY = 'tasf.header.collapsed';
+
+// El Header de Carbon es fijo (48px). Cuando se oculta, el contenido recupera
+// ese espacio para que el mapa pueda verse más amplio.
 export function Layout() {
+  const [headerCollapsed, setHeaderCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem(HEADER_COLLAPSED_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(HEADER_COLLAPSED_KEY, String(headerCollapsed));
+    } catch {
+      // localStorage no disponible
+    }
+  }, [headerCollapsed]);
+
   return (
-    <div className="flex h-screen flex-col bg-background text-foreground">
-      <div className="border-b border-panel-border bg-panel-bg px-6 py-3 shadow-sm">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-bold text-panel-text">
-              Dashboard de Logística Aeroportuaria - Tasf.B2B
-            </h1>
-            <p className="text-xs text-panel-text-faint">
-              Sistema de gestión de equipajes extraviados entre América, Asia y Europa
-            </p>
-          </div>
-        </div>
-      </div>
-      <Navigation />
-      <div className="flex-1 overflow-hidden">
+    <>
+      <Navigation
+        collapsed={headerCollapsed}
+        onToggleCollapsed={() => setHeaderCollapsed(v => !v)}
+      />
+      <div
+        style={{
+          marginTop: headerCollapsed ? 0 : '48px',
+          height: headerCollapsed ? '100vh' : 'calc(100vh - 48px)',
+          overflow: 'hidden',
+          background: 'var(--cds-background)',
+          transition: 'margin-top 180ms ease, height 180ms ease',
+        }}
+      >
         <Outlet />
       </div>
-    </div>
+    </>
   );
 }
