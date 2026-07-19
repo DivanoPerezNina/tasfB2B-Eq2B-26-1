@@ -178,14 +178,14 @@ export function Login({ onSuccess }: { onSuccess: (perfil: Perfil) => void }) {
               Al comentar se registra tu IP, navegador y dispositivo (visible abajo).
             </p>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '.5rem', maxHeight: '18rem', overflowY: 'auto' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '.5rem', maxHeight: '18rem', overflowY: 'auto', overflowX: 'hidden' }}>
               {comentarios.length === 0 && (
                 <p style={{ textAlign: 'center', fontSize: '.75rem', color: 'var(--cds-text-secondary)', padding: '1.5rem 0' }}>
                   Sé el primero en comentar
                 </p>
               )}
               {comentarios.map(c => (
-                <Tile key={c.id} style={{ background: 'var(--cds-layer-accent)' }}>
+                <Tile key={c.id} style={{ background: 'var(--cds-layer-accent)', minWidth: 0, overflow: 'hidden' }}>
                   <p style={{ fontSize: '.875rem', wordBreak: 'break-word', margin: 0 }}>{c.texto}</p>
                   <div style={{ marginTop: '.5rem', display: 'flex', flexWrap: 'wrap', gap: '.25rem' }}>
                     <Tag size="sm" type="gray" renderIcon={Earth}>{c.ip || '—'}</Tag>
