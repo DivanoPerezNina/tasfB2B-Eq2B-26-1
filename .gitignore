@@ -33,3 +33,6 @@ backend/ejecutor/bin/
 
 # ─── Backups de MySQL (dumps locales en la VM, no van al repo) ────────────────
 backups/
+
+# ─── Datos generados en runtime por el BFF ─────────────────────────────────────
+muro.json
