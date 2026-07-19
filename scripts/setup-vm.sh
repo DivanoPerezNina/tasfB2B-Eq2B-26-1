@@ -196,12 +196,34 @@ StandardError=append:$REPO_DIR/logs/ejecutor.log
 WantedBy=multi-user.target
 EOF
 
+# Consultas — fuente de datos incremental del esquema Sa/Sc (Periodo, Colapso
+# y Día a Día). El Orquestador del Ejecutor lo llama vía CONSULTAS_URL.
+cat > "$SYSTEMD_DIR/tasfb2b-consultas.service" <<EOF
+[Unit]
+Description=TASF.B2B Consultas (Go :8085)
+After=network.target
+
+[Service]
+Type=simple
+User=$APP_USER
+WorkingDirectory=$REPO_DIR
+EnvironmentFile=$REPO_DIR/.env
+ExecStart=$REPO_DIR/backend/consultas/bin/consultas
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:$REPO_DIR/logs/consultas.log
+StandardError=append:$REPO_DIR/logs/consultas.log
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
 systemctl daemon-reload
-echo "    Servicios registrados: tasfb2b-{planificador,bff,carga-masiva,ejecutor}"
+echo "    Servicios registrados: tasfb2b-{planificador,bff,carga-masiva,ejecutor,consultas}"
 
 # ── 6. Habilitar y arrancar servicios ────────────────────────────────────────
 echo "[6] Habilitando servicios (arranque automático)..."
-for SVC in tasfb2b-planificador tasfb2b-bff tasfb2b-carga-masiva tasfb2b-ejecutor; do
+for SVC in tasfb2b-planificador tasfb2b-bff tasfb2b-carga-masiva tasfb2b-ejecutor tasfb2b-consultas; do
   systemctl enable "$SVC"
   echo "    enabled: $SVC"
 done

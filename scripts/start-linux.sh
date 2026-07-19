@@ -66,6 +66,16 @@ npm install --silent
 NODE_OPTIONS="--max-old-space-size=1024" npm run build
 echo "      OK → Frontend/dist/"
 
+# nginx sirve desde /var/www/tasfb2b (ver scripts/setup-vm.sh), NO desde
+# Frontend/dist directamente — sin este paso el build queda sin publicar.
+FRONTEND_DIR="/var/www/tasfb2b"
+echo "      Publicando en $FRONTEND_DIR..."
+sudo mkdir -p "$FRONTEND_DIR"
+sudo rm -rf "${FRONTEND_DIR:?}"/*
+sudo cp -r "$REPO/Frontend/dist/." "$FRONTEND_DIR/"
+sudo chown -R www-data:www-data "$FRONTEND_DIR"
+echo "      OK → $FRONTEND_DIR"
+
 # ── 3. Planificador Java ──────────────────────────────────────────────────────
 echo ""
 echo "[3/5] Planificador (mvn package)..."
