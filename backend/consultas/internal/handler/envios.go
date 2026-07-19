@@ -23,8 +23,21 @@ type Envio struct {
 	DeadlineUTC int64  `json:"deadlineUTC"`
 }
 
-// Envios — GET /envios?ini=<utc>&fin=<utc>
+// tablaEnvios resuelve el nombre de tabla a partir de ?modo=, validado contra
+// una lista fija (nunca se interpola el valor crudo del query param en el SQL).
+// "operacion" → envios_operacion (día a día, se limpia con TRUNCATE entre
+// ensayos sin tocar el dataset histórico); cualquier otro valor → envios.
+func tablaEnvios(r *http.Request) string {
+	if r.URL.Query().Get("modo") == "operacion" {
+		return "envios_operacion"
+	}
+	return "envios"
+}
+
+// Envios — GET /envios?ini=<utc>&fin=<utc>&modo=<periodo|operacion>
 // Devuelve los envíos registrados en [ini, fin) ordenados por registro_utc.
+// modo=operacion lee de envios_operacion (día a día) en vez de envios
+// (histórico/proyectado, usado por Periodo y Colapso).
 func (h *EnviosHandler) Envios(w http.ResponseWriter, r *http.Request) {
 	ini, err1 := strconv.ParseInt(r.URL.Query().Get("ini"), 10, 64)
 	fin, err2 := strconv.ParseInt(r.URL.Query().Get("fin"), 10, 64)
@@ -32,10 +45,11 @@ func (h *EnviosHandler) Envios(w http.ResponseWriter, r *http.Request) {
 		errResp(w, 400, "PARAMS", "Se requieren 'ini' y 'fin' (minutos UTC) con fin>ini")
 		return
 	}
+	tabla := tablaEnvios(r)
 
 	rows, err := h.DB.Query(`
 		SELECT origen_iata, destino_iata, cantidad_maletas, registro_utc, deadline_utc
-		FROM envios
+		FROM `+tabla+`
 		WHERE registro_utc >= ? AND registro_utc < ?
 		ORDER BY registro_utc, origen_iata, id_envio`, ini, fin)
 	if err != nil {

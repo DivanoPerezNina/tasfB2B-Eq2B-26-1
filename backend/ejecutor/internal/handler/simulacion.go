@@ -194,7 +194,11 @@ func (h *SimulacionHandler) PeriodoProgramado(w http.ResponseWriter, r *http.Req
 	orq := engine.NuevoOrquestador("periodo", h.ConsultasURL, h.PlanificadorURL,
 		req.T0UTC, finUTC, req.Sc, sa, lookback, req.Criterio, umbrales)
 	// Periodo aplica el archivo de cancelaciones; Tiempo Real (envía false) no.
+	// Tiempo Real (día a día) tampoco lee del dataset histórico: los dos flags
+	// van juntos porque hoy solo este escenario desactiva cancelaciones-archivo;
+	// si otro escenario futuro también lo hace, separar esta señal.
 	orq.UsarCancelacionesArchivo = req.UsarCancelaciones == nil || *req.UsarCancelaciones
+	orq.ModoOperacion = !orq.UsarCancelacionesArchivo
 	orq.Broadcast = broker.Publicar
 	orq.Iniciar()
 

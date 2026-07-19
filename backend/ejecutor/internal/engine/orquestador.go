@@ -34,6 +34,13 @@ type Orquestador struct {
 	// buscador funcionan en todos los escenarios, independiente de este flag.
 	UsarCancelacionesArchivo bool
 
+	// ModoOperacion, cuando es true, hace que consultar() lea de la tabla
+	// envios_operacion (registrados por los operarios en Día a Día) en vez de
+	// envios (histórico/proyectado de Periodo y Colapso). Mantiene ambos
+	// datasets separados: envios_operacion se puede vaciar con TRUNCATE entre
+	// ensayos sin tocar ni un registro del dataset de simulación.
+	ModoOperacion bool
+
 	Broadcast func(event string, data interface{})
 
 	mu           sync.RWMutex
@@ -331,6 +338,9 @@ type envioConsulta struct {
 
 func (o *Orquestador) consultar(ini, fin int64) ([]envioConsulta, error) {
 	url := fmt.Sprintf("%s/envios?ini=%d&fin=%d", o.ConsultasURL, ini, fin)
+	if o.ModoOperacion {
+		url += "&modo=operacion"
+	}
 	resp, err := http.Get(url)
 	if err != nil {
 		return nil, err
