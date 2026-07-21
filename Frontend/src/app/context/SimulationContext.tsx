@@ -100,6 +100,9 @@ interface SimulationContextType {
   pausarSimulacion: () => Promise<void>;
   reanudarSimulacion: () => Promise<void>;
   detenerSimulacion: () => Promise<void>;
+  /** Suscripción solo-lectura al SSE si hay una simulación en curso (vista operario).
+   *  Devuelve true si quedó conectado (el broker reenvía snapshot al conectar). */
+  conectarEspectador: () => Promise<boolean>;
   cancelarVuelo: (origen: string, destino: string, salidaUTC: number) => Promise<boolean>;
   registrarCancelacionVisual: (cancelacion: VisualCancellation) => void;
   resetear: () => void;
@@ -638,6 +641,28 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     };
   };
 
+  // ── Espectador (operario): suscribirse a una sim que arrancó OTRO navegador ──
+  // El admin abre el SSE al iniciar la sim; el operario nunca la inicia, así que
+  // pregunta por /estado y, si hay una activa, se suscribe. El broker del
+  // ejecutor reenvía el último evento de cada tipo (snapshot) al conectar.
+  const conectarEspectador = useCallback(async (): Promise<boolean> => {
+    if (esRef.current) return true; // ya suscrito
+    try {
+      const r = await fetch(`${BFF}/api/simulacion/estado`, { headers: authHeader() });
+      if (!r.ok) return false;
+      const j = await r.json();
+      if (!j?.activa) return false;
+      sseErroresRef.current = 0;
+      const es = new EventSource(`${BFF}/api/simulacion/eventos`);
+      esRef.current = es;
+      attachSimulationEventSourceListeners(es, 'period');
+      setFase('ejecutando');
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
   const iniciarColapsoProgramado = useCallback(async (
     opts: { startDate: Date; criterio?: CriterioOrden; warmUp?: boolean; k?: number; saSeg?: number; maxDias?: number; umbralColapso?: number; umbralRechazosPct?: number; bloquesRojoConsecutivos?: number }
   ) => {
@@ -1033,6 +1058,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       pausarSimulacion,
       reanudarSimulacion,
       detenerSimulacion,
+      conectarEspectador,
       cancelarVuelo,
       registrarCancelacionVisual,
       resetear,

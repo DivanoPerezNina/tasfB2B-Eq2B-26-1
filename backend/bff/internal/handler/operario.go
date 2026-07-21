@@ -19,6 +19,10 @@ type OperarioHandler struct {
 	DB *sql.DB
 }
 
+// maxMaletasPorEnvio: los aeropuertos de la prueba Día a Día operan con
+// capacidad de almacén 999 — un solo envío jamás puede exceder eso.
+const maxMaletasPorEnvio = 999
+
 // aeropuertoInfo resuelve gmt_offset y continente de un IATA.
 func (h *OperarioHandler) aeropuertoInfo(iata string) (gmtOffset int, continente int, err error) {
 	err = h.DB.QueryRow(`SELECT gmt_offset, continente FROM aeropuertos WHERE iata = ?`, iata).
@@ -87,8 +91,18 @@ func (h *OperarioHandler) Registrar(w http.ResponseWriter, r *http.Request) {
 		errResp(w, 400, "DESTINO_INVALIDO", "destino_iata debe tener 4 letras")
 		return
 	}
-	if req.CantidadMaletas <= 0 {
-		errResp(w, 400, "CANTIDAD_INVALIDA", "cantidad_maletas debe ser mayor que cero")
+	if req.CantidadMaletas <= 0 || req.CantidadMaletas > maxMaletasPorEnvio {
+		errResp(w, 400, "CANTIDAD_INVALIDA", fmt.Sprintf("cantidad_maletas debe estar entre 1 y %d", maxMaletasPorEnvio))
+		return
+	}
+	// Validar el destino aquí (y no solo dentro de registrar) para responder
+	// 400 al operario en vez de un 500 genérico.
+	if _, _, err := h.aeropuertoInfo(req.DestinoIATA); err != nil {
+		if err == sql.ErrNoRows {
+			errResp(w, 400, "DESTINO_INVALIDO", "destino_iata no existe en el catálogo de aeropuertos")
+		} else {
+			errResp(w, 500, "ERROR_BD", "No se pudo validar el destino")
+		}
 		return
 	}
 	if req.IDCliente == 0 {
@@ -164,6 +178,11 @@ func (h *OperarioHandler) RegistrarArchivo(w http.ResponseWriter, r *http.Reques
 		cant, e3 := strconv.Atoi(strings.TrimSpace(parts[5]))
 		if e1 != nil || e2 != nil || e3 != nil {
 			fallidos++
+			continue
+		}
+		if cant <= 0 || cant > maxMaletasPorEnvio {
+			fallidos++
+			errores = append(errores, fmt.Sprintf("línea %d: cantidad %d fuera de rango (1-%d)", linea, cant, maxMaletasPorEnvio))
 			continue
 		}
 		cliente := 7729

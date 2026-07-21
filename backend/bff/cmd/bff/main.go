@@ -106,6 +106,9 @@ func main() {
 	mux.HandleFunc("GET /api/simulacion/eventos", ejSSE)
 	// REST: /api/simulacion/* (pausar/reanudar/detener) → solo admin
 	ejProxy := handler.NuevoProxy(cfg.EjecutorURL, "")
+	// Estado es solo-lectura y lo usa también el operario para detectar una sim
+	// en curso y suscribir su mapa al SSE; cualquier sesión válida basta.
+	mux.HandleFunc("GET /api/simulacion/estado", auth_(ejProxy))
 	mux.HandleFunc("/api/simulacion/", admin(ejProxy))
 
 	// ── CORS middleware ───────────────────────────────────────────────────────

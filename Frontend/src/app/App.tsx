@@ -17,7 +17,15 @@ export default function App() {
       {!perfil ? (
         <Login onSuccess={setPerfil} />
       ) : perfil.rol === "operario" ? (
-        <OperarioDashboard perfil={perfil} onLogout={() => setPerfil(null)} />
+        // El operario necesita Domain+Simulation para el mapa en vivo (se
+        // suscribe como espectador al SSE; no controla la simulación).
+        // El Toaster también va aquí: sin él, los toast del dashboard no se ven.
+        <DomainProvider>
+          <SimulationProvider>
+            <OperarioDashboard perfil={perfil} onLogout={() => setPerfil(null)} />
+            <Toaster />
+          </SimulationProvider>
+        </DomainProvider>
       ) : (
         <DomainProvider>
           <SimulationProvider>

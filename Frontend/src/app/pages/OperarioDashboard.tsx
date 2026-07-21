@@ -16,8 +16,13 @@ import {
 import { UserAvatar, Logout, Location, Time, Send, Upload } from '@carbon/icons-react';
 import { clearPerfil, authHeader, Perfil } from '../lib/auth';
 import { toast } from 'sonner';
+import { Map as SimulationMap } from '../components/Map';
+import { useSimulation } from '../context/SimulationContext';
 
 const BFF = import.meta.env.VITE_BFF_URL ?? '';
+
+// Tope por envío: los aeropuertos de la prueba operan con almacén de 999.
+const MAX_MALETAS = 999;
 
 interface AeroBFF {
   id: number;
@@ -34,6 +39,7 @@ interface RegistroLog {
 }
 
 export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogout: () => void }) {
+  const { conectarEspectador, fase } = useSimulation();
   const [ahora, setAhora] = useState(new Date());
   const [aeropuertos, setAeropuertos] = useState<AeroBFF[]>([]);
 
@@ -52,6 +58,15 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
     return () => clearInterval(id);
   }, []);
 
+  // El operario nunca inicia la simulación: sondea /estado y, si el admin ya
+  // arrancó Día a Día, el mapa se suscribe al SSE (con snapshot al conectar).
+  // Se sigue sondeando por si la sim actual termina y el admin arranca otra.
+  useEffect(() => {
+    conectarEspectador();
+    const id = setInterval(conectarEspectador, 15000);
+    return () => clearInterval(id);
+  }, [conectarEspectador]);
+
   useEffect(() => {
     fetch(`${BFF}/api/aeropuertos`)
       .then(r => r.json())
@@ -68,7 +83,10 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
 
   const registrar = async () => {
     if (!destino) { toast.error('Selecciona un destino'); return; }
-    if (cantidad <= 0) { toast.error('La cantidad debe ser mayor a cero'); return; }
+    if (cantidad <= 0 || cantidad > MAX_MALETAS) {
+      toast.error(`La cantidad debe estar entre 1 y ${MAX_MALETAS} maletas`);
+      return;
+    }
     setEnviando(true);
     try {
       const res = await fetch(`${BFF}/api/operario/envios`, {
@@ -128,7 +146,7 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--cds-background)', padding: '1.5rem' }}>
-      <div style={{ maxWidth: '56rem', margin: '0 auto' }}>
+      <div style={{ maxWidth: '80rem', margin: '0 auto' }}>
         <Stack gap={5}>
 
           {/* Encabezado */}
@@ -153,6 +171,23 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
             </div>
           </Tile>
 
+          {/* Mapa de operaciones — mismo mapa de la simulación, solo lectura */}
+          <Tile>
+            <Stack gap={4}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '.5rem' }}>
+                <h2 style={{ fontSize: '1rem', fontWeight: 600, margin: 0 }}>Mapa de operaciones</h2>
+                {fase === 'ejecutando' || fase === 'calentando' ? (
+                  <Tag type="green" size="sm">Día a Día en curso — vuelos en vivo</Tag>
+                ) : (
+                  <Tag type="gray" size="sm">Los vuelos aparecerán cuando el administrador inicie Día a Día</Tag>
+                )}
+              </div>
+              <div style={{ height: '32rem' }}>
+                <SimulationMap />
+              </div>
+            </Stack>
+          </Tile>
+
           {/* Registro manual */}
           <Tile>
             <Stack gap={4}>
@@ -171,7 +206,8 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
                 </div>
                 <div style={{ width: '9rem' }}>
                   <NumberInput
-                    id="cantidad" label="Maletas" min={1} value={cantidad}
+                    id="cantidad" label="Maletas" min={1} max={MAX_MALETAS} value={cantidad}
+                    invalidText={`Entre 1 y ${MAX_MALETAS}`}
                     onChange={(_e: unknown, { value }: { value: number | string }) => setCantidad(Number(value) || 1)}
                   />
                 </div>
