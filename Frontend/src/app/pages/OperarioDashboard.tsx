@@ -145,7 +145,7 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
   };
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--cds-background)', padding: '1.5rem' }}>
+    <div style={{ height: '100vh', overflowY: 'auto', background: 'var(--cds-background)', padding: '1.5rem' }}>
       <div style={{ maxWidth: '80rem', margin: '0 auto' }}>
         <Stack gap={5}>
 
