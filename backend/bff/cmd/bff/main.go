@@ -36,6 +36,7 @@ func main() {
 	auth := &handler.AuthHandler{DB: db}
 	muro := &handler.MuroHandler{Archivo: cfg.MuroFile}
 	operario := &handler.OperarioHandler{DB: db}
+	usuarios := &handler.UsuariosHandler{DB: db}
 	// admin/operario exigen ese rol; auth solo exige una sesión válida (cualquier rol).
 	admin := handler.RequireAuth(db, "admin")
 	soloOperario := handler.RequireAuth(db, "operario")
@@ -62,6 +63,10 @@ func main() {
 	mux.HandleFunc("POST /api/mantenimiento/tramos", admin(mant.CrearVuelo))
 	mux.HandleFunc("PUT /api/mantenimiento/tramos/{id}", admin(mant.ActualizarVuelo))
 	mux.HandleFunc("DELETE /api/mantenimiento/tramos/{id}", admin(mant.EliminarVuelo))
+	// Cuentas de operario/admin. Sin DELETE a propósito: se desactivan, no se borran.
+	mux.HandleFunc("GET /api/mantenimiento/usuarios", admin(usuarios.ListarUsuarios))
+	mux.HandleFunc("POST /api/mantenimiento/usuarios", admin(usuarios.CrearUsuario))
+	mux.HandleFunc("PUT /api/mantenimiento/usuarios/{id}", admin(usuarios.ActualizarActivoUsuario))
 
 	// ── Login/Logout + Muro de comentarios (público) ──────────────────────────
 	mux.HandleFunc("POST /api/login", auth.Login)

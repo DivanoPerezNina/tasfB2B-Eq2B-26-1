@@ -32,6 +32,7 @@ export function Navigation({ collapsed = false, onToggleCollapsed }: NavigationP
     { path: '/', label: 'Simulación' },
     { path: '/cancelaciones', label: 'Cancelaciones' },
     { path: '/mantenimiento', label: 'Mantenimiento' },
+    { path: '/usuarios', label: 'Usuarios' },
     { path: '/configuracion', label: 'Configuración' },
     { path: '/datos', label: 'Ingreso de datos' },
   ];

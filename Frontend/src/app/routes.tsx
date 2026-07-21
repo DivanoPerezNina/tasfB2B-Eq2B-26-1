@@ -5,6 +5,7 @@ import { SimulationConfig } from './pages/SimulationConfig';
 import { DataIngestion } from './pages/DataIngestion';
 import { Contingencies } from './pages/Contingencies';
 import { Maintenance } from './pages/Maintenance';
+import { Usuarios } from './pages/Usuarios';
 
 export const router = createBrowserRouter([
   {
@@ -16,6 +17,7 @@ export const router = createBrowserRouter([
       { path: 'cancelaciones', element: <Contingencies /> },
       { path: 'mantenimiento', element: <Maintenance /> },
       { path: 'mantenimiento/:section', element: <Maintenance /> },
+      { path: 'usuarios', element: <Usuarios /> },
       { path: 'datos', element: <DataIngestion /> },
     ],
   },
