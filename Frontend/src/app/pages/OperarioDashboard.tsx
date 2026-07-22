@@ -4,31 +4,50 @@
  * Un operario está atado a un único aeropuerto (perfil.aeropuertoIata) y solo
  * puede: (1) registrar envíos manualmente uno por uno, (2) subir un archivo
  * con varios envíos de una vez. El origen NUNCA se pide — sale de la cuenta.
- * La fecha/hora tampoco se escribe a mano: se toma del reloj del navegador
- * (por eso el reloj en vivo — confirma visualmente que la laptop está en el
- * huso horario correcto antes de empezar a registrar).
+ *
+ * La hora mostrada y usada al registrar es la hora LOCAL DEL AEROPUERTO del
+ * operario (derivada de su gmt_offset), no la del navegador: un operario
+ * puede estar probando el sistema físicamente en otro huso horario (p.ej.
+ * durante pruebas del curso), y aun así los envíos deben quedar fechados
+ * como si el operario estuviera en su aeropuerto. El backend ya interpreta
+ * fecha_hora_local como la hora de pared del origen y resta gmt_offset para
+ * obtener el UTC — aquí solo hay que construir esa hora de pared bien.
  */
 import React, { useEffect, useState } from 'react';
 import {
   Tile, Button, Stack, Tag, TextInput, NumberInput, Select, SelectItem,
   InlineNotification, FileUploaderDropContainer, FileUploaderItem,
 } from '@carbon/react';
-import { UserAvatar, Logout, Location, Time, Send, Upload } from '@carbon/icons-react';
+import { UserAvatar, Logout, Location, Time, Send, Upload, DocumentExport } from '@carbon/icons-react';
 import { clearPerfil, authHeader, Perfil } from '../lib/auth';
 import { toast } from 'sonner';
 import { Map as SimulationMap } from '../components/Map';
 import { useSimulation } from '../context/SimulationContext';
+import { useDomain } from '../context/DomainContext';
 
 const BFF = import.meta.env.VITE_BFF_URL ?? '';
 
 // Tope por envío: los aeropuertos de la prueba operan con almacén de 999.
 const MAX_MALETAS = 999;
 
-interface AeroBFF {
-  id: number;
-  iata: string;
-  ciudad: string;
-  pais: string;
+function pad2(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
+/** Instante real → hora de pared en un aeropuerto de gmt_offset dado, sin
+ *  depender de la zona horaria configurada en el navegador/SO: se lee con
+ *  getUTC* sobre un Date ya desplazado, así el navegador nunca reaplica su
+ *  propio huso encima. */
+function horaEnAeropuerto(instanteReal: Date, gmtOffset: number): Date {
+  return new Date(instanteReal.getTime() + gmtOffset * 3600 * 1000);
+}
+
+function formatHora(d: Date): string {
+  return `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}:${pad2(d.getUTCSeconds())}`;
+}
+
+function formatFecha(d: Date): string {
+  return `${pad2(d.getUTCDate())}/${pad2(d.getUTCMonth() + 1)}/${d.getUTCFullYear()}`;
 }
 
 interface RegistroLog {
@@ -40,8 +59,11 @@ interface RegistroLog {
 
 export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogout: () => void }) {
   const { conectarEspectador, fase } = useSimulation();
+  const { aeropuertosBFF } = useDomain();
+  const gmtOffset = aeropuertosBFF.find(a => a.iata === perfil.aeropuertoIata)?.gmt_offset ?? 0;
+
   const [ahora, setAhora] = useState(new Date());
-  const [aeropuertos, setAeropuertos] = useState<AeroBFF[]>([]);
+  const horaAeropuerto = horaEnAeropuerto(ahora, gmtOffset);
 
   const [destino, setDestino] = useState('');
   const [cantidad, setCantidad] = useState(1);
@@ -67,18 +89,34 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
     return () => clearInterval(id);
   }, [conectarEspectador]);
 
-  useEffect(() => {
-    fetch(`${BFF}/api/aeropuertos`)
-      .then(r => r.json())
-      .then(j => setAeropuertos(Array.isArray(j.data) ? j.data : []))
-      .catch(() => { /* la lista queda vacía; el select sigue usable a mano */ });
-  }, []);
-
-  const destinosDisponibles = aeropuertos.filter(a => a.iata !== perfil.aeropuertoIata);
+  const destinosDisponibles = aeropuertosBFF.filter(a => a.iata !== perfil.aeropuertoIata);
 
   const fechaHoraLocal = () => {
-    const p = (n: number) => String(n).padStart(2, '0');
-    return `${ahora.getFullYear()}-${p(ahora.getMonth() + 1)}-${p(ahora.getDate())}T${p(ahora.getHours())}:${p(ahora.getMinutes())}:${p(ahora.getSeconds())}`;
+    const h = horaEnAeropuerto(ahora, gmtOffset);
+    return `${h.getUTCFullYear()}-${pad2(h.getUTCMonth() + 1)}-${pad2(h.getUTCDate())}T${pad2(h.getUTCHours())}:${pad2(h.getUTCMinutes())}:${pad2(h.getUTCSeconds())}`;
+  };
+
+  // Ejemplo de línea para la plantilla, con la fecha/hora actual DEL AEROPUERTO
+  // del operario (no la del navegador) para que sirva de referencia real al
+  // escribir el archivo a mano.
+  const descargarPlantilla = () => {
+    const h = horaEnAeropuerto(new Date(), gmtOffset);
+    const fecha = `${h.getUTCFullYear()}${pad2(h.getUTCMonth() + 1)}${pad2(h.getUTCDate())}`;
+    const hhmm = `${pad2(h.getUTCHours())}-${pad2(h.getUTCMinutes())}`;
+    const ejemploDestino = destinosDisponibles[0]?.iata ?? 'SCEL';
+    const contenido = [
+      `# Plantilla de envíos — ${perfil.aeropuertoIata} (hora local del aeropuerto, no la de tu navegador)`,
+      '# Formato: id_envio-aaaammdd-hh-mm-destino-cantidad-idCliente',
+      '# El id_envio puede omitirse tal cual (se regenera al subir); una línea por envío.',
+      `10000001-${fecha}-${hhmm}-${ejemploDestino}-180-0007729`,
+    ].join('\n') + '\n';
+    const blob = new Blob([contenido], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `plantilla_envios_${perfil.aeropuertoIata}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   const registrar = async () => {
@@ -101,7 +139,7 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
       });
       const j = await res.json();
       if (!res.ok || !j.success) throw new Error(j.message ?? 'Error al registrar');
-      setLog(prev => [{ idEnvio: j.data.id_envio, destino, cantidad, hora: ahora.toLocaleTimeString() }, ...prev].slice(0, 20));
+      setLog(prev => [{ idEnvio: j.data.id_envio, destino, cantidad, hora: formatHora(horaAeropuerto) }, ...prev].slice(0, 20));
       toast.success(`Envío ${j.data.id_envio} registrado — ${cantidad} maleta(s) a ${destino}`);
       setDestino('');
       setCantidad(1);
@@ -162,7 +200,8 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
               <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
                 <span style={{ display: 'flex', alignItems: 'center', gap: '.4rem', fontFamily: 'var(--cds-code-01-font-family, monospace)', fontSize: '1rem' }}>
                   <Time size={18} />
-                  {ahora.toLocaleTimeString()} — {ahora.toLocaleDateString()}
+                  {formatHora(horaAeropuerto)} — {formatFecha(horaAeropuerto)}
+                  <Tag size="sm" type="gray">hora {perfil.aeropuertoIata}</Tag>
                 </span>
                 <Button kind="danger--tertiary" size="sm" renderIcon={Logout} onClick={salir}>
                   Cerrar sesión
@@ -193,7 +232,7 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
             <Stack gap={4}>
               <h2 style={{ fontSize: '1rem', fontWeight: 600, margin: 0 }}>Registrar envío</h2>
               <p style={{ fontSize: '.75rem', color: 'var(--cds-text-secondary)', margin: 0 }}>
-                El origen ({perfil.aeropuertoIata}) y la hora ({ahora.toLocaleTimeString()}) se toman automáticamente.
+                El origen ({perfil.aeropuertoIata}) y la hora local de ese aeropuerto ({formatHora(horaAeropuerto)}) se toman automáticamente.
               </p>
               <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
                 <div style={{ minWidth: '14rem' }}>
@@ -238,9 +277,15 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
           {/* Carga por archivo */}
           <Tile>
             <Stack gap={4}>
-              <h2 style={{ fontSize: '1rem', fontWeight: 600, margin: 0 }}>Cargar envíos desde archivo</h2>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '.5rem' }}>
+                <h2 style={{ fontSize: '1rem', fontWeight: 600, margin: 0 }}>Cargar envíos desde archivo</h2>
+                <Button kind="ghost" size="sm" renderIcon={DocumentExport} onClick={descargarPlantilla}>
+                  Descargar plantilla
+                </Button>
+              </div>
               <p style={{ fontSize: '.75rem', color: 'var(--cds-text-secondary)', margin: 0 }}>
                 Formato: id_envío-aaaammdd-hh-mm-destino-cantidad-cliente (una línea por envío).
+                Las fechas y horas deben estar en la hora local de {perfil.aeropuertoIata}, no en la de tu navegador.
               </p>
               <FileUploaderDropContainer
                 labelText="Arrastra o elige un archivo .txt"
