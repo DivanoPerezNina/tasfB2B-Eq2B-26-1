@@ -1129,9 +1129,11 @@ export const Map = memo(function Map({
         className="absolute right-4 rounded-lg backdrop-blur shadow-md border"
         style={{
           top: zoomInfoOpen ? '17.25rem' : '4.5rem',
-          bottom: '1rem',
+          // Sin legendOpen, no forzar bottom/maxHeight: el cuadro debe encogerse
+          // al tamaño de su encabezado, no quedar estirado con espacio vacío.
+          bottom: legendOpen ? '1rem' : 'auto',
           width: 'min(220px, calc(100% - 2rem))',
-          maxHeight: zoomInfoOpen ? 'calc(100% - 18.25rem)' : 'calc(100% - 5.5rem)',
+          maxHeight: legendOpen ? (zoomInfoOpen ? 'calc(100% - 18.25rem)' : 'calc(100% - 5.5rem)') : 'none',
           overflowY: legendOpen ? 'auto' : 'hidden',
           overscrollBehavior: 'contain',
           scrollbarGutter: 'stable',

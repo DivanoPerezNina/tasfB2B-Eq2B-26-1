@@ -47,6 +47,11 @@ export function Usuarios() {
   const [guardando, setGuardando] = useState(false);
   const [feedback, setFeedback] = useState<{ kind: 'success' | 'error'; title: string; subtitle: string } | null>(null);
 
+  // Interruptor de Día a Día: independiente de la simulación, decide si los
+  // operarios pueden registrar ahora mismo (ver modo_operacion.go).
+  const [modoOperacion, setModoOperacion] = useState<boolean | null>(null);
+  const [cambiandoModo, setCambiandoModo] = useState(false);
+
   const cargar = () => {
     setCargando(true);
     apiRequest('/api/mantenimiento/usuarios')
@@ -55,6 +60,30 @@ export function Usuarios() {
       .finally(() => setCargando(false));
   };
   useEffect(cargar, []);
+
+  useEffect(() => {
+    apiRequest('/api/modo-operacion')
+      .then(data => setModoOperacion(!!data?.activo))
+      .catch(() => { /* el toggle queda deshabilitado hasta poder leerlo */ });
+  }, []);
+
+  const alternarModoOperacion = async () => {
+    const nuevo = !modoOperacion;
+    setCambiandoModo(true);
+    try {
+      await apiRequest('/api/modo-operacion', { method: 'PUT', body: JSON.stringify({ activo: nuevo }) });
+      setModoOperacion(nuevo);
+      setFeedback({
+        kind: 'success',
+        title: nuevo ? 'Modo Día a Día activado' : 'Modo Día a Día desactivado',
+        subtitle: nuevo ? 'Los operarios ya pueden registrar envíos.' : 'Los operarios quedan en espera.',
+      });
+    } catch (e: any) {
+      setFeedback({ kind: 'error', title: 'No se pudo cambiar el modo', subtitle: e.message });
+    } finally {
+      setCambiandoModo(false);
+    }
+  };
 
   const abrirCrear = () => {
     setForm({ ...FORM_VACIO, aeropuerto_iata: aeropuertosBFF[0]?.iata ?? '' });
@@ -114,6 +143,24 @@ export function Usuarios() {
             onCloseButtonClick={() => setFeedback(null)}
           />
         )}
+
+        <Tile>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem' }}>
+            <div>
+              <h2 style={{ fontSize: '.9375rem', fontWeight: 600, margin: 0 }}>Modo Día a Día</h2>
+              <p style={{ fontSize: '.75rem', color: 'var(--cds-text-secondary)', margin: 0 }}>
+                Mientras esté apagado, los operarios ven su panel pero no pueden registrar envíos.
+              </p>
+            </div>
+            <Toggle
+              id="modo-operacion-toggle" size="lg" labelText=""
+              labelA="Apagado" labelB="Encendido"
+              toggled={!!modoOperacion}
+              disabled={modoOperacion === null || cambiandoModo}
+              onToggle={alternarModoOperacion}
+            />
+          </div>
+        </Tile>
 
         <Tile>
           {cargando ? (

@@ -13,12 +13,12 @@
  * fecha_hora_local como la hora de pared del origen y resta gmt_offset para
  * obtener el UTC — aquí solo hay que construir esa hora de pared bien.
  */
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Tile, Button, Stack, Tag, TextInput, NumberInput, Select, SelectItem,
-  InlineNotification, FileUploaderDropContainer, FileUploaderItem,
+  InlineNotification, FileUploaderDropContainer, FileUploaderItem, Modal,
 } from '@carbon/react';
-import { UserAvatar, Logout, Location, Time, Send, Upload, DocumentExport } from '@carbon/icons-react';
+import { UserAvatar, Logout, Location, Time, Send, Upload, DocumentExport, Renew } from '@carbon/icons-react';
 import { clearPerfil, authHeader, Perfil } from '../lib/auth';
 import { toast } from 'sonner';
 import { Map as SimulationMap } from '../components/Map';
@@ -29,6 +29,8 @@ const BFF = import.meta.env.VITE_BFF_URL ?? '';
 
 // Tope por envío: los aeropuertos de la prueba operan con almacén de 999.
 const MAX_MALETAS = 999;
+// Debe calzar con ventanaEdicionMin en operario.go (backend es quien manda).
+const ventanaEdicionMinFront = 10;
 
 function pad2(n: number): string {
   return String(n).padStart(2, '0');
@@ -57,6 +59,24 @@ interface RegistroLog {
   hora: string;
 }
 
+interface EnvioRegistrado {
+  id_envio: string;
+  origen_iata: string;
+  destino_iata: string;
+  cantidad_maletas: number;
+  id_cliente: number;
+  registro_utc: number;
+  deadline_utc: number;
+  editable: boolean;
+}
+
+type CampoOrden = 'id_envio' | 'destino_iata' | 'cantidad_maletas' | 'registro_utc';
+
+const ETIQUETAS_ORDEN: Record<CampoOrden, string> = {
+  id_envio: 'ID envío', destino_iata: 'Destino', cantidad_maletas: 'Maletas', registro_utc: 'Registrado',
+};
+const CAMPOS_ORDEN: CampoOrden[] = ['id_envio', 'destino_iata', 'cantidad_maletas', 'registro_utc'];
+
 export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogout: () => void }) {
   const { conectarEspectador, fase } = useSimulation();
   const { aeropuertosBFF } = useDomain();
@@ -75,10 +95,93 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
   const [subiendoArchivo, setSubiendoArchivo] = useState(false);
   const [resultadoArchivo, setResultadoArchivo] = useState('');
 
+  // null mientras no se sabe todavía (primer fetch en curso).
+  const [modoActivo, setModoActivo] = useState<boolean | null>(null);
+
+  const [misEnvios, setMisEnvios] = useState<EnvioRegistrado[]>([]);
+  const [filtroEnvios, setFiltroEnvios] = useState('');
+  const [ordenPor, setOrdenPor] = useState<CampoOrden>('registro_utc');
+  const [ordenAsc, setOrdenAsc] = useState(false);
+  const [editando, setEditando] = useState<EnvioRegistrado | null>(null);
+  const [editDestino, setEditDestino] = useState('');
+  const [editCantidad, setEditCantidad] = useState(1);
+  const [editCliente, setEditCliente] = useState(7729);
+  const [guardandoEdicion, setGuardandoEdicion] = useState(false);
+
   useEffect(() => {
     const id = setInterval(() => setAhora(new Date()), 1000);
     return () => clearInterval(id);
   }, []);
+
+  // El admin enciende/apaga el modo Día a Día de forma independiente a la
+  // simulación (ver modo_operacion.go): mientras esté apagado, el operario
+  // puede ver todo pero no registrar. Se sondea porque puede cambiar sin que
+  // el operario recargue la página.
+  useEffect(() => {
+    let cancelado = false;
+    const consultar = () => {
+      fetch(`${BFF}/api/modo-operacion`, { headers: authHeader() })
+        .then(r => r.json())
+        .then(j => { if (!cancelado) setModoActivo(!!j.data?.activo); })
+        .catch(() => { /* se reintenta en el próximo poll */ });
+    };
+    consultar();
+    const id = setInterval(consultar, 10000);
+    return () => { cancelado = true; clearInterval(id); };
+  }, []);
+
+  const cargarMisEnvios = () => {
+    fetch(`${BFF}/api/operario/envios`, { headers: authHeader() })
+      .then(r => r.json())
+      .then(j => setMisEnvios(Array.isArray(j.data) ? j.data : []))
+      .catch(() => { /* la tabla se queda con lo último cargado */ });
+  };
+  useEffect(cargarMisEnvios, []);
+
+  const toggleOrden = (campo: CampoOrden) => {
+    if (ordenPor === campo) setOrdenAsc(a => !a);
+    else { setOrdenPor(campo); setOrdenAsc(true); }
+  };
+
+  const enviosFiltrados = useMemo(() => {
+    const q = filtroEnvios.trim().toUpperCase();
+    const lista = q
+      ? misEnvios.filter(e => e.id_envio.toUpperCase().includes(q) || e.destino_iata.toUpperCase().includes(q))
+      : misEnvios;
+    return [...lista].sort((a, b) => {
+      const av = a[ordenPor], bv = b[ordenPor];
+      const cmp = av < bv ? -1 : av > bv ? 1 : 0;
+      return ordenAsc ? cmp : -cmp;
+    });
+  }, [misEnvios, filtroEnvios, ordenPor, ordenAsc]);
+
+  const abrirEdicion = (e: EnvioRegistrado) => {
+    setEditando(e);
+    setEditDestino(e.destino_iata);
+    setEditCantidad(e.cantidad_maletas);
+    setEditCliente(e.id_cliente);
+  };
+
+  const guardarEdicion = async () => {
+    if (!editando) return;
+    setGuardandoEdicion(true);
+    try {
+      const res = await fetch(`${BFF}/api/operario/envios/${encodeURIComponent(editando.id_envio)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', ...authHeader() },
+        body: JSON.stringify({ destino_iata: editDestino, cantidad_maletas: editCantidad, id_cliente: editCliente }),
+      });
+      const j = await res.json();
+      if (!res.ok || !j.success) throw new Error(j.message ?? 'Error al editar');
+      toast.success(`Envío ${editando.id_envio} actualizado`);
+      setEditando(null);
+      cargarMisEnvios();
+    } catch (e: any) {
+      toast.error('No se pudo editar', { description: e.message });
+    } finally {
+      setGuardandoEdicion(false);
+    }
+  };
 
   // El operario nunca inicia la simulación: sondea /estado y, si el admin ya
   // arrancó Día a Día, el mapa se suscribe al SSE (con snapshot al conectar).
@@ -143,6 +246,7 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
       toast.success(`Envío ${j.data.id_envio} registrado — ${cantidad} maleta(s) a ${destino}`);
       setDestino('');
       setCantidad(1);
+      cargarMisEnvios();
     } catch (e: any) {
       toast.error('No se pudo registrar', { description: e.message });
     } finally {
@@ -167,6 +271,7 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
       setResultadoArchivo(`${j.data.registrados} registrados, ${j.data.fallidos} fallidos`);
       toast.success('Archivo procesado', { description: `${j.data.registrados} envíos registrados` });
       setArchivo(null);
+      cargarMisEnvios();
     } catch (e: any) {
       toast.error('No se pudo subir el archivo', { description: e.message });
     } finally {
@@ -194,7 +299,14 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
                 <UserAvatar size={28} />
                 <div>
                   <h1 style={{ fontSize: '1.125rem', fontWeight: 600, margin: 0 }}>{perfil.usuario}</h1>
-                  <Tag type="blue" renderIcon={Location} size="sm">{perfil.aeropuertoIata}</Tag>
+                  <div style={{ display: 'flex', gap: '.4rem', marginTop: '.15rem' }}>
+                    <Tag type="blue" renderIcon={Location} size="sm">{perfil.aeropuertoIata}</Tag>
+                    {modoActivo === true ? (
+                      <Tag type="green" size="sm">Día a Día activo</Tag>
+                    ) : modoActivo === false ? (
+                      <Tag type="gray" size="sm">En espera del administrador</Tag>
+                    ) : null}
+                  </div>
                 </div>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
@@ -231,6 +343,10 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
           <Tile>
             <Stack gap={4}>
               <h2 style={{ fontSize: '1rem', fontWeight: 600, margin: 0 }}>Registrar envío</h2>
+              {modoActivo === false && (
+                <InlineNotification kind="warning" lowContrast hideCloseButton title="En espera"
+                  subtitle="El administrador todavía no activó el modo Día a Día. Cuando lo active, podrás registrar aquí mismo." />
+              )}
               <p style={{ fontSize: '.75rem', color: 'var(--cds-text-secondary)', margin: 0 }}>
                 El origen ({perfil.aeropuertoIata}) y la hora local de ese aeropuerto ({formatHora(horaAeropuerto)}) se toman automáticamente.
               </p>
@@ -253,7 +369,7 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
                 <div style={{ width: '9rem' }}>
                   <TextInput id="cliente" labelText="Cliente" value={String(cliente)} onChange={(e) => setCliente(Number(e.target.value) || 7729)} />
                 </div>
-                <Button renderIcon={Send} disabled={enviando || !destino} onClick={registrar}>
+                <Button renderIcon={Send} disabled={enviando || !destino || modoActivo !== true} onClick={registrar}>
                   {enviando ? 'Registrando…' : 'Registrar'}
                 </Button>
               </div>
@@ -296,17 +412,109 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
               {archivo && (
                 <FileUploaderItem name={archivo.name} status="edit" onDelete={() => setArchivo(null)} />
               )}
-              <Button renderIcon={Upload} disabled={!archivo || subiendoArchivo} onClick={subirArchivo}>
+              <Button renderIcon={Upload} disabled={!archivo || subiendoArchivo || modoActivo !== true} onClick={subirArchivo}>
                 {subiendoArchivo ? 'Subiendo…' : 'Subir'}
               </Button>
+              {modoActivo === false && (
+                <InlineNotification kind="warning" lowContrast hideCloseButton title="En espera"
+                  subtitle="El administrador todavía no activó el modo Día a Día." />
+              )}
               {resultadoArchivo && (
                 <InlineNotification kind="success" lowContrast hideCloseButton title="Listo" subtitle={resultadoArchivo} />
               )}
             </Stack>
           </Tile>
 
+          {/* Mis envíos — mantenimiento de lectura, ordenable y filtrable */}
+          <Tile>
+            <Stack gap={4}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '.5rem' }}>
+                <h2 style={{ fontSize: '1rem', fontWeight: 600, margin: 0 }}>Mis envíos registrados</h2>
+                <Button kind="ghost" size="sm" renderIcon={Renew} onClick={cargarMisEnvios}>Actualizar</Button>
+              </div>
+              <p style={{ fontSize: '.75rem', color: 'var(--cds-text-secondary)', margin: 0 }}>
+                Editable hasta {ventanaEdicionMinFront} minutos después de registrado (hora real, no simulada).
+              </p>
+              <TextInput
+                id="filtro-envios" labelText="Buscar" placeholder="Filtrar por ID o destino…"
+                value={filtroEnvios} onChange={(e) => setFiltroEnvios(e.target.value)}
+              />
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '.8125rem' }}>
+                  <thead>
+                    <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--cds-border-subtle)' }}>
+                      {CAMPOS_ORDEN.map(campo => (
+                        <th
+                          key={campo}
+                          onClick={() => toggleOrden(campo)}
+                          style={{ cursor: 'pointer', padding: '.5rem .6rem', userSelect: 'none', color: 'var(--cds-text-secondary)', whiteSpace: 'nowrap' }}
+                        >
+                          {ETIQUETAS_ORDEN[campo]}{ordenPor === campo ? (ordenAsc ? ' ▲' : ' ▼') : ''}
+                        </th>
+                      ))}
+                      <th style={{ padding: '.5rem .6rem' }}>Estado</th>
+                      <th style={{ padding: '.5rem .6rem' }} />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {enviosFiltrados.map(e => {
+                      const hora = horaEnAeropuerto(new Date(e.registro_utc * 60000), gmtOffset);
+                      return (
+                        <tr key={e.id_envio} style={{ borderBottom: '1px solid var(--cds-border-subtle)' }}>
+                          <td style={{ padding: '.45rem .6rem', fontFamily: 'monospace' }}>{e.id_envio}</td>
+                          <td style={{ padding: '.45rem .6rem' }}>{e.destino_iata}</td>
+                          <td style={{ padding: '.45rem .6rem', textAlign: 'right' }}>{e.cantidad_maletas}</td>
+                          <td style={{ padding: '.45rem .6rem', whiteSpace: 'nowrap' }}>{formatHora(hora)} {formatFecha(hora)}</td>
+                          <td style={{ padding: '.45rem .6rem' }}>
+                            <Tag size="sm" type={e.editable ? 'teal' : 'gray'}>{e.editable ? 'Editable' : 'Bloqueado'}</Tag>
+                          </td>
+                          <td style={{ padding: '.45rem .6rem', textAlign: 'right' }}>
+                            <Button size="sm" kind="ghost" disabled={!e.editable} onClick={() => abrirEdicion(e)}>Editar</Button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {enviosFiltrados.length === 0 && (
+                      <tr>
+                        <td colSpan={6} style={{ padding: '1rem', textAlign: 'center', color: 'var(--cds-text-secondary)' }}>
+                          Sin envíos registrados todavía.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </Stack>
+          </Tile>
+
         </Stack>
       </div>
+
+      {editando && (
+        <Modal
+          open={!!editando}
+          modalHeading={`Editar envío ${editando.id_envio}`}
+          primaryButtonText={guardandoEdicion ? 'Guardando…' : 'Guardar'}
+          secondaryButtonText="Cancelar"
+          primaryButtonDisabled={guardandoEdicion || !editDestino || editCantidad <= 0 || editCantidad > MAX_MALETAS}
+          onRequestSubmit={guardarEdicion}
+          onRequestClose={() => setEditando(null)}
+        >
+          <Stack gap={5}>
+            <Select id="edit-destino" labelText="Destino" value={editDestino} onChange={(e) => setEditDestino(e.target.value)}>
+              {destinosDisponibles.map(a => (
+                <SelectItem key={a.iata} value={a.iata} text={`${a.iata} — ${a.ciudad}, ${a.pais}`} />
+              ))}
+            </Select>
+            <NumberInput
+              id="edit-cantidad" label="Maletas" min={1} max={MAX_MALETAS} value={editCantidad}
+              invalidText={`Entre 1 y ${MAX_MALETAS}`}
+              onChange={(_e: unknown, { value }: { value: number | string }) => setEditCantidad(Number(value) || 1)}
+            />
+            <TextInput id="edit-cliente" labelText="Cliente" value={String(editCliente)} onChange={(e) => setEditCliente(Number(e.target.value) || 7729)} />
+          </Stack>
+        </Modal>
+      )}
     </div>
   );
 }

@@ -37,6 +37,7 @@ func main() {
 	muro := &handler.MuroHandler{Archivo: cfg.MuroFile}
 	operario := &handler.OperarioHandler{DB: db}
 	usuarios := &handler.UsuariosHandler{DB: db}
+	modoOp := &handler.ModoOperacionHandler{DB: db}
 	// admin/operario exigen ese rol; auth solo exige una sesión válida (cualquier rol).
 	admin := handler.RequireAuth(db, "admin")
 	soloOperario := handler.RequireAuth(db, "operario")
@@ -79,6 +80,12 @@ func main() {
 	// del aeropuerto_iata de la cuenta autenticada, nunca del body.
 	mux.HandleFunc("POST /api/operario/envios", soloOperario(operario.Registrar))
 	mux.HandleFunc("POST /api/operario/envios/archivo", soloOperario(operario.RegistrarArchivo))
+	mux.HandleFunc("GET /api/operario/envios", soloOperario(operario.ListarMisEnvios))
+	mux.HandleFunc("PUT /api/operario/envios/{id}", soloOperario(operario.EditarEnvio))
+
+	// ── Interruptor de Día a Día — admin lo enciende, el operario lo lee ──────
+	mux.HandleFunc("GET /api/modo-operacion", auth_(modoOp.Estado))
+	mux.HandleFunc("PUT /api/modo-operacion", admin(modoOp.Actualizar))
 
 	// ── Simulación de Periodo (orquestación BFF) — solo admin ────────────────
 	// Único punto de entrada: recibe fechaInicio+dias+criterio+duracion_real_min
