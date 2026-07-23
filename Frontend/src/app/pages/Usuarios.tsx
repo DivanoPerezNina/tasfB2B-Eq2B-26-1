@@ -9,7 +9,7 @@ import {
   Tile, Stack, Button, Tag, Toggle, Modal, TextInput, PasswordInput,
   Select, SelectItem, InlineNotification, Loading,
 } from '@carbon/react';
-import { Add, UserAdmin, UserAvatar } from '@carbon/icons-react';
+import { Add, UserAdmin, UserAvatar, TrashCan } from '@carbon/icons-react';
 import { useDomain } from '../context/DomainContext';
 import { authHeader, getPerfil } from '../lib/auth';
 
@@ -51,6 +51,7 @@ export function Usuarios() {
   // operarios pueden registrar ahora mismo (ver modo_operacion.go).
   const [modoOperacion, setModoOperacion] = useState<boolean | null>(null);
   const [cambiandoModo, setCambiandoModo] = useState(false);
+  const [limpiando, setLimpiando] = useState(false);
 
   const cargar = () => {
     setCargando(true);
@@ -82,6 +83,19 @@ export function Usuarios() {
       setFeedback({ kind: 'error', title: 'No se pudo cambiar el modo', subtitle: e.message });
     } finally {
       setCambiandoModo(false);
+    }
+  };
+
+  const limpiarDatosDiaADia = async () => {
+    if (!window.confirm('¿Vaciar TODOS los envíos de Día a Día registrados hasta ahora? No se puede deshacer. El dataset histórico (Periodo/Colapso) no se toca.')) return;
+    setLimpiando(true);
+    try {
+      await apiRequest('/api/modo-operacion/limpiar', { method: 'POST' });
+      setFeedback({ kind: 'success', title: 'Datos limpiados', subtitle: 'envios_operacion quedó vacía. Listo para un nuevo ensayo.' });
+    } catch (e: any) {
+      setFeedback({ kind: 'error', title: 'No se pudo limpiar', subtitle: e.message });
+    } finally {
+      setLimpiando(false);
     }
   };
 
@@ -159,6 +173,17 @@ export function Usuarios() {
               disabled={modoOperacion === null || cambiandoModo}
               onToggle={alternarModoOperacion}
             />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem', marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--cds-border-subtle)' }}>
+            <div>
+              <h2 style={{ fontSize: '.9375rem', fontWeight: 600, margin: 0 }}>Limpiar datos de Día a Día</h2>
+              <p style={{ fontSize: '.75rem', color: 'var(--cds-text-secondary)', margin: 0 }}>
+                Vacía los envíos registrados por los operarios para empezar un ensayo desde cero. No afecta el dataset histórico.
+              </p>
+            </div>
+            <Button kind="danger--tertiary" size="sm" renderIcon={TrashCan} disabled={limpiando} onClick={limpiarDatosDiaADia}>
+              {limpiando ? 'Limpiando…' : 'Limpiar datos'}
+            </Button>
           </div>
         </Tile>
 

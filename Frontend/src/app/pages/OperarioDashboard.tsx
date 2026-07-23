@@ -143,6 +143,15 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
     else { setOrdenPor(campo); setOrdenAsc(true); }
   };
 
+  // Se recalcula en cada tick de "ahora" (cada segundo) en vez de depender del
+  // campo `editable` que trajo el último fetch: sin esto, una fila se veía
+  // "Editable" en pantalla hasta el próximo Actualizar aunque ya hubieran
+  // pasado los 10 minutos, y el guardado fallaba recién al enviarlo.
+  const esEditable = (registroUtcMin: number) => {
+    const nowUTCMin = Math.floor(ahora.getTime() / 60000);
+    return nowUTCMin - registroUtcMin <= ventanaEdicionMinFront;
+  };
+
   const enviosFiltrados = useMemo(() => {
     const q = filtroEnvios.trim().toUpperCase();
     const lista = q
@@ -322,6 +331,11 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
             </div>
           </Tile>
 
+          {modoActivo === false && (
+            <InlineNotification kind="warning" lowContrast hideCloseButton title="En espera"
+              subtitle="El administrador todavía no activó el modo Día a Día. Cuando lo active, podrás registrar envíos (manual o por archivo) desde aquí mismo." />
+          )}
+
           {/* Mapa de operaciones — mismo mapa de la simulación, solo lectura */}
           <Tile>
             <Stack gap={4}>
@@ -343,10 +357,6 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
           <Tile>
             <Stack gap={4}>
               <h2 style={{ fontSize: '1rem', fontWeight: 600, margin: 0 }}>Registrar envío</h2>
-              {modoActivo === false && (
-                <InlineNotification kind="warning" lowContrast hideCloseButton title="En espera"
-                  subtitle="El administrador todavía no activó el modo Día a Día. Cuando lo active, podrás registrar aquí mismo." />
-              )}
               <p style={{ fontSize: '.75rem', color: 'var(--cds-text-secondary)', margin: 0 }}>
                 El origen ({perfil.aeropuertoIata}) y la hora local de ese aeropuerto ({formatHora(horaAeropuerto)}) se toman automáticamente.
               </p>
@@ -415,10 +425,6 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
               <Button renderIcon={Upload} disabled={!archivo || subiendoArchivo || modoActivo !== true} onClick={subirArchivo}>
                 {subiendoArchivo ? 'Subiendo…' : 'Subir'}
               </Button>
-              {modoActivo === false && (
-                <InlineNotification kind="warning" lowContrast hideCloseButton title="En espera"
-                  subtitle="El administrador todavía no activó el modo Día a Día." />
-              )}
               {resultadoArchivo && (
                 <InlineNotification kind="success" lowContrast hideCloseButton title="Listo" subtitle={resultadoArchivo} />
               )}
@@ -459,6 +465,7 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
                   <tbody>
                     {enviosFiltrados.map(e => {
                       const hora = horaEnAeropuerto(new Date(e.registro_utc * 60000), gmtOffset);
+                      const editable = esEditable(e.registro_utc);
                       return (
                         <tr key={e.id_envio} style={{ borderBottom: '1px solid var(--cds-border-subtle)' }}>
                           <td style={{ padding: '.45rem .6rem', fontFamily: 'monospace' }}>{e.id_envio}</td>
@@ -466,10 +473,10 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
                           <td style={{ padding: '.45rem .6rem', textAlign: 'right' }}>{e.cantidad_maletas}</td>
                           <td style={{ padding: '.45rem .6rem', whiteSpace: 'nowrap' }}>{formatHora(hora)} {formatFecha(hora)}</td>
                           <td style={{ padding: '.45rem .6rem' }}>
-                            <Tag size="sm" type={e.editable ? 'teal' : 'gray'}>{e.editable ? 'Editable' : 'Bloqueado'}</Tag>
+                            <Tag size="sm" type={editable ? 'teal' : 'gray'}>{editable ? 'Editable' : 'Bloqueado'}</Tag>
                           </td>
                           <td style={{ padding: '.45rem .6rem', textAlign: 'right' }}>
-                            <Button size="sm" kind="ghost" disabled={!e.editable} onClick={() => abrirEdicion(e)}>Editar</Button>
+                            <Button size="sm" kind="ghost" disabled={!editable} onClick={() => abrirEdicion(e)}>Editar</Button>
                           </td>
                         </tr>
                       );

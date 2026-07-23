@@ -61,7 +61,10 @@ echo "      OK (se reinician al final)"
 echo ""
 echo "[2/5] Frontend (npm build)..."
 cd "$REPO/Frontend"
-npm install --silent
+# npm ci (no install): instala exacto lo que dice package-lock.json sin la
+# fase de resolución de dependencias — más rápido y liviano en RAM/CPU, clave
+# en una VM de 4 GB. Requiere borrar node_modules primero (lo hace solo).
+npm ci --silent
 # Limitar el heap de Node para no agotar la RAM de la VM durante vite build.
 NODE_OPTIONS="--max-old-space-size=1024" npm run build
 echo "      OK → Frontend/dist/"

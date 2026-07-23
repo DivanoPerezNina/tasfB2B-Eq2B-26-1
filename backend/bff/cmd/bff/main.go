@@ -86,6 +86,7 @@ func main() {
 	// ── Interruptor de Día a Día — admin lo enciende, el operario lo lee ──────
 	mux.HandleFunc("GET /api/modo-operacion", auth_(modoOp.Estado))
 	mux.HandleFunc("PUT /api/modo-operacion", admin(modoOp.Actualizar))
+	mux.HandleFunc("POST /api/modo-operacion/limpiar", admin(modoOp.LimpiarDatos))
 
 	// ── Simulación de Periodo (orquestación BFF) — solo admin ────────────────
 	// Único punto de entrada: recibe fechaInicio+dias+criterio+duracion_real_min

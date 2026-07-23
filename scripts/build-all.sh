@@ -19,7 +19,7 @@ if command -v pnpm &>/dev/null; then
   pnpm install --frozen-lockfile
   pnpm build
 else
-  npm install
+  npm ci
   npm run build
 fi
 echo "      OK → Frontend/dist/"

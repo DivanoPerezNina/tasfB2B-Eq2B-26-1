@@ -54,3 +54,14 @@ func (h *ModoOperacionHandler) Actualizar(w http.ResponseWriter, r *http.Request
 	}
 	ok(w, map[string]interface{}{"activo": in.Activo}, "Modo operación actualizado")
 }
+
+// LimpiarDatos — POST /api/modo-operacion/limpiar (solo admin)
+// TRUNCATE envios_operacion para arrancar un ensayo desde cero — instantáneo
+// y no toca `envios` (histórico) ni el interruptor de modo_operacion.
+func (h *ModoOperacionHandler) LimpiarDatos(w http.ResponseWriter, r *http.Request) {
+	if _, err := h.DB.Exec(`TRUNCATE TABLE envios_operacion`); err != nil {
+		errResp(w, 500, "DB_ERROR", err.Error())
+		return
+	}
+	ok(w, nil, "envios_operacion vaciada")
+}
