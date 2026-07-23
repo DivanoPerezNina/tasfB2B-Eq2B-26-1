@@ -127,7 +127,11 @@ func (h *OperarioHandler) Registrar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	idEnvio := fmt.Sprintf("OP%d", time.Now().UnixNano())
+	// id_envio es VARCHAR(20): UnixNano() (19 dígitos) + "OP" se pasaba del
+	// límite y esto fallaba SIEMPRE (Error 1406). UnixMilli() (13 dígitos en
+	// 2026) deja margen de sobra y sigue siendo suficientemente único para un
+	// solo operario haciendo clic a mano.
+	idEnvio := fmt.Sprintf("OP%d", time.Now().UnixMilli())
 	if err := h.registrar(u.ID, idEnvio, *u.AeropuertoIATA, localTime, req.DestinoIATA, req.CantidadMaletas, req.IDCliente); err != nil {
 		errResp(w, 500, "REGISTRO_FALLIDO", err.Error())
 		return
