@@ -17,6 +17,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   Tile, Button, Stack, Tag, TextInput, NumberInput, Select, SelectItem,
   InlineNotification, FileUploaderDropContainer, FileUploaderItem, Modal,
+  Tabs, TabList, Tab, TabPanels, TabPanel,
 } from '@carbon/react';
 import { UserAvatar, Logout, Location, Time, Send, Upload, DocumentExport, Renew } from '@carbon/icons-react';
 import { clearPerfil, authHeader, Perfil } from '../lib/auth';
@@ -24,6 +25,7 @@ import { toast } from 'sonner';
 import { Map as SimulationMap } from '../components/Map';
 import { useSimulation } from '../context/SimulationContext';
 import { useDomain } from '../context/DomainContext';
+import { OperarioRutas } from './OperarioRutas';
 
 const BFF = import.meta.env.VITE_BFF_URL ?? '';
 
@@ -297,9 +299,12 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
   };
 
   return (
-    <div style={{ height: '100vh', overflowY: 'auto', background: 'var(--cds-background)', padding: '1.5rem' }}>
-      <div style={{ maxWidth: '80rem', margin: '0 auto' }}>
-        <Stack gap={5}>
+    // Columna de alto fijo: el encabezado queda arriba siempre y solo scrollea
+    // el contenido de la pestaña activa. Así el mapa puede ocupar el alto
+    // completo sin pelearse con el scroll de la página.
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--cds-background)' }}>
+      <div style={{ flexShrink: 0, padding: '1rem 1.5rem 0' }}>
+        <div style={{ maxWidth: '80rem', margin: '0 auto' }}>
 
           {/* Encabezado */}
           <Tile>
@@ -332,26 +337,52 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
           </Tile>
 
           {modoActivo === false && (
-            <InlineNotification kind="warning" lowContrast hideCloseButton title="En espera"
-              subtitle="El administrador todavía no activó el modo Día a Día. Cuando lo active, podrás registrar envíos (manual o por archivo) desde aquí mismo." />
+            <div style={{ marginTop: '.75rem' }}>
+              <InlineNotification kind="warning" lowContrast hideCloseButton title="En espera"
+                subtitle="El administrador todavía no activó el modo Día a Día. Cuando lo active, podrás registrar envíos y rutas desde aquí mismo." />
+            </div>
           )}
+        </div>
+      </div>
 
-          {/* Mapa de operaciones — mismo mapa de la simulación, solo lectura */}
-          <Tile>
-            <Stack gap={4}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '.5rem' }}>
-                <h2 style={{ fontSize: '1rem', fontWeight: 600, margin: 0 }}>Mapa de operaciones</h2>
+      <Tabs>
+        <div style={{ flexShrink: 0, padding: '.75rem 1.5rem 0' }}>
+          <div style={{ maxWidth: '80rem', margin: '0 auto' }}>
+            <TabList aria-label="Secciones del operario" contained>
+              <Tab>Mapa</Tab>
+              <Tab>Registros</Tab>
+            </TabList>
+          </div>
+        </div>
+
+        <TabPanels>
+          {/* ── Pantalla 1: solo el mapa ── */}
+          <TabPanel style={{ flex: 1, minHeight: 0, padding: '1rem 1.5rem 1.5rem' }}>
+            <div style={{ maxWidth: '80rem', margin: '0 auto', height: '100%', display: 'flex', flexDirection: 'column', gap: '.75rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                 {fase === 'ejecutando' || fase === 'calentando' ? (
                   <Tag type="green" size="sm">Día a Día en curso — vuelos en vivo</Tag>
                 ) : (
                   <Tag type="gray" size="sm">Los vuelos aparecerán cuando el administrador inicie Día a Día</Tag>
                 )}
               </div>
-              <div style={{ height: '32rem' }}>
+              <div style={{ flex: 1, minHeight: '30rem' }}>
                 <SimulationMap />
               </div>
-            </Stack>
-          </Tile>
+            </div>
+          </TabPanel>
+
+          {/* ── Pantalla 2: registros manuales (envíos y rutas) ── */}
+          <TabPanel style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '1rem 1.5rem 1.5rem' }}>
+            <div style={{ maxWidth: '80rem', margin: '0 auto' }}>
+              <Tabs>
+                <TabList aria-label="Tipo de registro">
+                  <Tab>Envíos</Tab>
+                  <Tab>Rutas</Tab>
+                </TabList>
+                <TabPanels>
+                  <TabPanel style={{ padding: '1rem 0 0' }}>
+                    <Stack gap={5}>
 
           {/* Registro manual */}
           <Tile>
@@ -494,8 +525,19 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
             </Stack>
           </Tile>
 
-        </Stack>
-      </div>
+                    </Stack>
+                  </TabPanel>
+
+                  {/* Rutas del día a día (vuelos_operacion) */}
+                  <TabPanel style={{ padding: '1rem 0 0' }}>
+                    <OperarioRutas modoActivo={modoActivo} />
+                  </TabPanel>
+                </TabPanels>
+              </Tabs>
+            </div>
+          </TabPanel>
+        </TabPanels>
+      </Tabs>
 
       {editando && (
         <Modal

@@ -24,7 +24,7 @@ func TestPlanificarBodyStreamingEsJSONValido(t *testing.T) {
 		{Origen: "AAAA", Destino: "BBBB", Maletas: 2, RegistroUTC: 10, DeadlineUTC: 20},
 	}
 	cancelados := []cancelacion{{Origen: "AAAA", Destino: "BBBB", SalidaUTC: 14460}}
-	resp, err := o.planificar(envios, cancelados, 5, 50)
+	resp, err := o.planificar(envios, cancelados, nil, 5, 50)
 	if err != nil {
 		t.Fatalf("planificar: %v", err)
 	}
@@ -51,6 +51,58 @@ func TestPlanificarBodyStreamingEsJSONValido(t *testing.T) {
 	if len(got.Cancelados) != 1 || got.Cancelados[0].Origen != "AAAA" ||
 		got.Cancelados[0].Destino != "BBBB" || got.Cancelados[0].SalidaUTC != 14460 {
 		t.Errorf("cancelados mal serializados: %+v", got.Cancelados)
+	}
+}
+
+// En día a día las rutas viajan en el body (tabla vuelos_operacion); en
+// Periodo/Colapso NO deben ir (el planificador usa su archivo). Este test fija
+// las dos mitades de esa regla, que es lo único que separa ambos caminos.
+func TestPlanificarIncluyeVuelosSoloSiSeLePasan(t *testing.T) {
+	var captured []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured, _ = io.ReadAll(r.Body)
+		io.WriteString(w, `{"resumen":{"ventanaIniUTC":5,"ventanaFinUTC":50,"observacionIniUTC":100},"aeropuertos":[],"envios":[]}`)
+	}))
+	defer srv.Close()
+
+	o := &Orquestador{PlanificadorURL: srv.URL, T0UTC: 100, Criterio: "EDF"}
+	envios := []envioConsulta{{Origen: "AAAA", Destino: "BBBB", Maletas: 2, RegistroUTC: 10, DeadlineUTC: 20}}
+
+	// Con vuelos (día a día): el campo debe estar y llegar intacto.
+	vuelos := []vueloConsulta{{Origen: "SPIM", Destino: "SCEL", Salida: 720, Llegada: 1080, Capacidad: 150}}
+	resp, err := o.planificar(envios, nil, vuelos, 5, 50)
+	if err != nil {
+		t.Fatalf("planificar con vuelos: %v", err)
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+
+	var conVuelos struct {
+		Vuelos []vueloConsulta `json:"vuelos"`
+	}
+	if err := json.Unmarshal(captured, &conVuelos); err != nil {
+		t.Fatalf("body no es JSON válido: %v\nbody=%s", err, captured)
+	}
+	if len(conVuelos.Vuelos) != 1 || conVuelos.Vuelos[0].Origen != "SPIM" ||
+		conVuelos.Vuelos[0].Llegada != 1080 || conVuelos.Vuelos[0].Capacidad != 150 {
+		t.Errorf("vuelos mal serializados: %+v", conVuelos.Vuelos)
+	}
+
+	// Sin vuelos (Periodo/Colapso): el campo NO debe aparecer, para que el
+	// planificador caiga a su archivo en vez de recibir una red vacía.
+	resp2, err := o.planificar(envios, nil, nil, 5, 50)
+	if err != nil {
+		t.Fatalf("planificar sin vuelos: %v", err)
+	}
+	io.Copy(io.Discard, resp2.Body)
+	resp2.Body.Close()
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(captured, &raw); err != nil {
+		t.Fatalf("body no es JSON válido: %v\nbody=%s", err, captured)
+	}
+	if _, existe := raw["vuelos"]; existe {
+		t.Errorf("sin vuelos no debe emitirse la clave 'vuelos'; body=%s", captured)
 	}
 }
 

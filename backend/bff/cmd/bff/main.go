@@ -38,6 +38,7 @@ func main() {
 	operario := &handler.OperarioHandler{DB: db}
 	usuarios := &handler.UsuariosHandler{DB: db}
 	modoOp := &handler.ModoOperacionHandler{DB: db}
+	rutasOp := &handler.RutasOperarioHandler{DB: db}
 	// admin/operario exigen ese rol; auth solo exige una sesión válida (cualquier rol).
 	admin := handler.RequireAuth(db, "admin")
 	soloOperario := handler.RequireAuth(db, "operario")
@@ -83,6 +84,15 @@ func main() {
 	mux.HandleFunc("GET /api/operario/envios", soloOperario(operario.ListarMisEnvios))
 	mux.HandleFunc("PUT /api/operario/envios/{id}", soloOperario(operario.EditarEnvio))
 
+	// ── Día a día: mantenimiento de RUTAS (tabla vuelos_operacion) ───────────
+	// El operario no está limitado a su aeropuerto aquí: puede cargar rutas de
+	// cualquier sede durante el ensayo.
+	mux.HandleFunc("GET /api/operario/rutas", soloOperario(rutasOp.Listar))
+	mux.HandleFunc("POST /api/operario/rutas", soloOperario(rutasOp.Crear))
+	mux.HandleFunc("POST /api/operario/rutas/archivo", soloOperario(rutasOp.CargarArchivo))
+	mux.HandleFunc("PUT /api/operario/rutas/{id}", soloOperario(rutasOp.Actualizar))
+	mux.HandleFunc("DELETE /api/operario/rutas/{id}", soloOperario(rutasOp.Eliminar))
+
 	// ── Interruptor de Día a Día — admin lo enciende, el operario lo lee ──────
 	mux.HandleFunc("GET /api/modo-operacion", auth_(modoOp.Estado))
 	mux.HandleFunc("PUT /api/modo-operacion", admin(modoOp.Actualizar))
@@ -122,6 +132,10 @@ func main() {
 	// Estado es solo-lectura y lo usa también el operario para detectar una sim
 	// en curso y suscribir su mapa al SSE; cualquier sesión válida basta.
 	mux.HandleFunc("GET /api/simulacion/estado", auth_(ejProxy))
+	// Cancelar un vuelo es parte del trabajo del operario en día a día (cancela
+	// la salida de hoy y dispara re-planificación). El motor ya lo soporta en
+	// todos los escenarios; lo único que faltaba era el permiso.
+	mux.HandleFunc("POST /api/simulacion/cancelar", auth_(ejProxy))
 	mux.HandleFunc("/api/simulacion/", admin(ejProxy))
 
 	// ── CORS middleware ───────────────────────────────────────────────────────

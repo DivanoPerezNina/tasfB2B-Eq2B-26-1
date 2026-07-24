@@ -335,9 +335,28 @@ public class PlanificadorService {
                                             long semilla, long iniUTC, long finUTC,
                                             long observacionIniUTC, List<CancelacionDTO> cancelados,
                                             Appendable out) throws IOException {
+        planificarYStreamDesdeLista(envios, criterio, semilla, iniUTC, finUTC,
+                observacionIniUTC, cancelados, null, out);
+    }
+
+    /**
+     * Variante que recibe también las RUTAS en el body (escenario Día a Día,
+     * tabla {@code vuelos_operacion}). Si {@code vuelos} es null o vacío se cae
+     * al archivo {@code vuelos.txt} — que es lo que hacen Periodo y Colapso,
+     * cuyo comportamiento no cambia.
+     */
+    public void planificarYStreamDesdeLista(List<EnvioDTO> envios, CriterioOrden criterio,
+                                            long semilla, long iniUTC, long finUTC,
+                                            long observacionIniUTC, List<CancelacionDTO> cancelados,
+                                            List<VueloDTO> vuelos,
+                                            Appendable out) throws IOException {
         GestorDatos datos = new GestorDatos();
         datos.cargarAeropuertos(rutaAeropuertos);
-        datos.cargarVuelos(rutaVuelos);
+        if (vuelos != null && !vuelos.isEmpty()) {
+            datos.cargarVuelosDesdeLista(vuelos);
+        } else {
+            datos.cargarVuelos(rutaVuelos);
+        }
         datos.cargarEnviosDesdeArray(envios);
 
         java.util.Set<Long> diasCancelados = clavesCanceladas(datos, cancelados);

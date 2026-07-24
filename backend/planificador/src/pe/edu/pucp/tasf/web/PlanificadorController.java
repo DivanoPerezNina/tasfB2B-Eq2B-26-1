@@ -18,6 +18,7 @@ import pe.edu.pucp.tasf.gvns.EnvioDTO;
 import pe.edu.pucp.tasf.gvns.GestorDatos;
 import pe.edu.pucp.tasf.gvns.PlanificadorService;
 import pe.edu.pucp.tasf.gvns.ResultadoPlanificacion;
+import pe.edu.pucp.tasf.gvns.VueloDTO;
 
 import java.util.List;
 import java.util.Map;
@@ -260,7 +261,10 @@ public class PlanificadorController {
             Long iniUTC, Long finUTC, Long observacionIniUTC,
             String criterio, Long semilla,
             List<EnvioDTO> envios,
-            List<CancelacionDTO> cancelados) {
+            List<CancelacionDTO> cancelados,
+            /** Rutas del día a día (tabla vuelos_operacion). Ausente en
+             *  Periodo/Colapso, que siguen usando el archivo vuelos.txt. */
+            List<VueloDTO> vuelos) {
     }
 
     @PostMapping("/planificacion/desde-datos")
@@ -293,7 +297,8 @@ public class PlanificadorController {
         // ve como EOF), igual que el comportamiento anterior ante falta de memoria.
         StreamingResponseBody body = os -> {
             try (Writer w = new BufferedWriter(new OutputStreamWriter(os, StandardCharsets.UTF_8))) {
-                svc.planificarYStreamDesdeLista(req.envios(), crit, semilla, ini, fin, obs, req.cancelados(), w);
+                svc.planificarYStreamDesdeLista(req.envios(), crit, semilla, ini, fin, obs,
+                        req.cancelados(), req.vuelos(), w);
             }
         };
         return ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON).body(body);

@@ -295,7 +295,20 @@ func (o *Orquestador) planificarYcargar(fin, t int64) (*Simulacion, error) {
 		return nil, fmt.Errorf("consultas: %w", err)
 	}
 	cancelados := o.cancelacionesParaVentana(fin)
-	resp, err := o.planificar(envios, cancelados, o.IniPlanUTC, fin)
+	// En día a día las rutas viajan en el body (tabla vuelos_operacion); en
+	// Periodo/Colapso van nil y el planificador usa su archivo, como siempre.
+	var vuelos []vueloConsulta
+	if o.ModoOperacion {
+		v, err := o.consultarVuelos()
+		if err != nil {
+			return nil, fmt.Errorf("consultas vuelos: %w", err)
+		}
+		if len(v) == 0 {
+			return nil, fmt.Errorf("no hay rutas cargadas en vuelos_operacion: los operarios deben registrar las rutas antes de planificar")
+		}
+		vuelos = v
+	}
+	resp, err := o.planificar(envios, cancelados, vuelos, o.IniPlanUTC, fin)
 	if err != nil {
 		return nil, fmt.Errorf("desde-datos: %w", err)
 	}
@@ -334,6 +347,39 @@ type envioConsulta struct {
 	Maletas     int    `json:"maletas"`
 	RegistroUTC int64  `json:"registroUTC"`
 	DeadlineUTC int64  `json:"deadlineUTC"`
+}
+
+// vueloConsulta es una ruta tal como la entrega el servicio Consultas. Los
+// minutos son LOCALES (origen/destino); el planificador los pasa a UTC con el
+// gmt_offset de cada aeropuerto, igual que hacía al leer el archivo.
+type vueloConsulta struct {
+	Origen    string `json:"origen"`
+	Destino   string `json:"destino"`
+	Salida    int    `json:"salida"`
+	Llegada   int    `json:"llegada"`
+	Capacidad int    `json:"capacidad"`
+}
+
+// consultarVuelos trae el catálogo de rutas de la tabla del día a día. Solo se
+// usa en ModoOperacion: en Periodo/Colapso el planificador sigue leyendo su
+// archivo vuelos.txt (no se toca ese camino para no cambiar su comportamiento).
+func (o *Orquestador) consultarVuelos() ([]vueloConsulta, error) {
+	resp, err := http.Get(o.ConsultasURL + "/vuelos?modo=operacion")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, b)
+	}
+	var r struct {
+		Vuelos []vueloConsulta `json:"vuelos"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
+		return nil, err
+	}
+	return r.Vuelos, nil
 }
 
 func (o *Orquestador) consultar(ini, fin int64) ([]envioConsulta, error) {
@@ -422,7 +468,7 @@ func (o *Orquestador) consultarCancelaciones(ini, fin int64) ([]cancelacion, err
 	return r.Cancelaciones, nil
 }
 
-func (o *Orquestador) planificar(envios []envioConsulta, cancelados []cancelacion, ini, fin int64) (*http.Response, error) {
+func (o *Orquestador) planificar(envios []envioConsulta, cancelados []cancelacion, vuelos []vueloConsulta, ini, fin int64) (*http.Response, error) {
 	if cancelados == nil {
 		cancelados = []cancelacion{} // json: [] en vez de null
 	}
@@ -443,6 +489,16 @@ func (o *Orquestador) planificar(envios []envioConsulta, cancelados []cancelacio
 		}
 		if werr = json.NewEncoder(pw).Encode(cancelados); werr != nil {
 			return
+		}
+		// Solo se manda "vuelos" en día a día. Si va ausente, el planificador
+		// cae a su archivo vuelos.txt (comportamiento de Periodo/Colapso).
+		if vuelos != nil {
+			if _, werr = io.WriteString(pw, `,"vuelos":`); werr != nil {
+				return
+			}
+			if werr = json.NewEncoder(pw).Encode(vuelos); werr != nil {
+				return
+			}
 		}
 		_, werr = io.WriteString(pw, "}")
 	}()

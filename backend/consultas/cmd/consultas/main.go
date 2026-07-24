@@ -25,9 +25,11 @@ func main() {
 
 	env := &handler.EnviosHandler{DB: database}
 	cancel := &handler.CancelacionesHandler{DB: database}
+	vuelos := &handler.VuelosHandler{DB: database}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /envios", env.Envios)
+	mux.HandleFunc("GET /vuelos", vuelos.Vuelos)
 	mux.HandleFunc("GET /cancelaciones", cancel.Cancelaciones)
 	mux.HandleFunc("DELETE /cancelaciones", cancel.Limpiar)
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {

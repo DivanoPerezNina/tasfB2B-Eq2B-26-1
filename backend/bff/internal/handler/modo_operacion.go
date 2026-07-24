@@ -56,12 +56,23 @@ func (h *ModoOperacionHandler) Actualizar(w http.ResponseWriter, r *http.Request
 }
 
 // LimpiarDatos — POST /api/modo-operacion/limpiar (solo admin)
-// TRUNCATE envios_operacion para arrancar un ensayo desde cero — instantáneo
-// y no toca `envios` (histórico) ni el interruptor de modo_operacion.
+// Vacía envíos y rutas del día a día para arrancar un ensayo desde cero.
+// No toca `envios`/`vuelos` (los de simulación) ni el interruptor de modo.
+//
+// ?solo=envios deja las rutas intactas — útil para repetir el registro de
+// envíos sin tener que volver a cargar el archivo de rutas del profesor.
 func (h *ModoOperacionHandler) LimpiarDatos(w http.ResponseWriter, r *http.Request) {
 	if _, err := h.DB.Exec(`TRUNCATE TABLE envios_operacion`); err != nil {
 		errResp(w, 500, "DB_ERROR", err.Error())
 		return
 	}
-	ok(w, nil, "envios_operacion vaciada")
+	if r.URL.Query().Get("solo") == "envios" {
+		ok(w, nil, "envios_operacion vaciada (las rutas se conservan)")
+		return
+	}
+	if _, err := h.DB.Exec(`TRUNCATE TABLE vuelos_operacion`); err != nil {
+		errResp(w, 500, "DB_ERROR", err.Error())
+		return
+	}
+	ok(w, nil, "envios_operacion y vuelos_operacion vaciadas")
 }

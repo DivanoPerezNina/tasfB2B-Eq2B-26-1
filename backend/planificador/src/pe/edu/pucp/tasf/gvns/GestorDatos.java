@@ -181,6 +181,62 @@ public class GestorDatos {
     }
 
     // =========================================================================
+    // CARGA DE VUELOS DESDE LISTA (escenario Día a Día)
+    // Mismo resultado que cargarVuelos(archivo), pero desde el body de
+    // /desde-datos: las rutas del día a día viven en la tabla vuelos_operacion,
+    // no en vuelos.txt. La conversión local→UTC es idéntica a la del archivo;
+    // si se cambia una, cambiar la otra.
+    // =========================================================================
+    public void cargarVuelosDesdeLista(java.util.List<VueloDTO> vuelos) {
+        if (this.numAeropuertos == 0) {
+            System.out.println("Sin aeropuertos en memoria. Carga de vuelos omitida.");
+            return;
+        }
+        if (vuelos == null || vuelos.isEmpty()) {
+            System.out.println("Lista de vuelos vacía. Carga omitida.");
+            return;
+        }
+
+        int count = 0;
+        int descartados = 0;
+        for (VueloDTO v : vuelos) {
+            if (count >= vueloOrigen.length) {
+                System.err.printf("Límite de %d vuelos alcanzado; se ignoran los restantes.%n",
+                        vueloOrigen.length);
+                break;
+            }
+            if (v == null || v.origen() == null || v.destino() == null) { descartados++; continue; }
+
+            String ori = v.origen().trim();
+            String des = v.destino().trim();
+            if (!mapaIataAId.containsKey(ori) || !mapaIataAId.containsKey(des)) { descartados++; continue; }
+
+            int idO = mapaIataAId.get(ori);
+            int idD = mapaIataAId.get(des);
+
+            // Conversión a UTC usando offset GMT del aeropuerto (igual que el archivo)
+            int salidaUTC  = v.salida()  - gmtAeropuerto[idO] * 60;
+            int llegadaUTC = v.llegada() - gmtAeropuerto[idD] * 60;
+
+            // Ajuste de rango al día [0, 1440)
+            if (salidaUTC  < 0) salidaUTC  += 1440;
+            if (llegadaUTC < 0) llegadaUTC += 1440;
+            // Si la llegada parece anterior a la salida → cruza medianoche
+            if (llegadaUTC <= salidaUTC) llegadaUTC += 1440;
+
+            vueloOrigen    [count] = idO;
+            vueloDestino   [count] = idD;
+            vueloSalidaUTC [count] = salidaUTC;
+            vueloLlegadaUTC[count] = llegadaUTC;
+            vueloCapacidad [count] = v.capacidad();
+            count++;
+        }
+        this.numVuelos = count;
+        System.out.printf("Total Vuelos (desde lista): %d%s%n", this.numVuelos,
+                descartados > 0 ? " (" + descartados + " descartados: IATA desconocido)" : "");
+    }
+
+    // =========================================================================
     // CARGA MASIVA DE ENVÍOS — OBJETIVO 1
     //
     //  Cambios respecto a la versión anterior:
