@@ -10,7 +10,7 @@ import {
 import { useSimulation } from '../context/SimulationContext';
 import { useDomain } from '../context/DomainContext';
 import { Airport, Continent, Vuelo, PlanTramoVisual, Aeropuerto, VisualCancellation } from '../types';
-import { ZoomIn, ZoomOut, Filter, Maximize2, ChevronDown, ChevronUp, X } from 'lucide-react';
+import { ZoomIn, ZoomOut, Filter, Maximize2, ChevronDown, ChevronUp, X, Expand, Shrink } from 'lucide-react';
 import { Button } from './ui/button';
 import {
   Select,
@@ -359,6 +359,28 @@ export const Map = memo(function Map({
   const [showPlanes, setShowPlanes] = useState(true);
   const [, setThemeVersion] = useState(0);
 
+  // Pantalla completa nativa sobre el contenedor del mapa. Se usa la API del
+  // navegador (no un overlay CSS) para que el mapa gane también el alto de la
+  // barra del navegador — útil al proyectar la demo.
+  const contenedorRef = React.useRef<HTMLDivElement>(null);
+  const [enPantallaCompleta, setEnPantallaCompleta] = useState(false);
+
+  React.useEffect(() => {
+    // El usuario puede salir con Esc sin pasar por el botón: hay que escuchar
+    // el evento del navegador en vez de confiar solo en nuestro estado.
+    const onCambio = () => setEnPantallaCompleta(document.fullscreenElement === contenedorRef.current);
+    document.addEventListener('fullscreenchange', onCambio);
+    return () => document.removeEventListener('fullscreenchange', onCambio);
+  }, []);
+
+  const alternarPantallaCompleta = useCallback(() => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => { /* el navegador puede rechazarlo */ });
+    } else {
+      contenedorRef.current?.requestFullscreen().catch(() => { /* idem */ });
+    }
+  }, []);
+
   React.useEffect(() => {
     const observer = new MutationObserver(() => setThemeVersion(version => version + 1));
     observer.observe(document.documentElement, {
@@ -603,7 +625,7 @@ export const Map = memo(function Map({
   }, [config.thresholds.warehouse, getLiveOccupancy, isDarkTheme]);
 
   return (
-    <div className="relative h-full w-full overflow-hidden rounded-lg border border-panel-border" style={{ backgroundColor: mc.bg }}>
+    <div ref={contenedorRef} className="relative h-full w-full overflow-hidden rounded-lg border border-panel-border" style={{ backgroundColor: mc.bg }}>
       {/* Controls */}
       <div className="absolute left-4 top-4 z-10 flex gap-2">
         <div className="flex gap-1 rounded-lg backdrop-blur p-1 shadow-md" style={{ backgroundColor: 'var(--map-overlay-bg)' }}>
@@ -616,6 +638,17 @@ export const Map = memo(function Map({
           <div className="h-8 w-px" style={{ backgroundColor: 'var(--panel-border)' }} />
           <Button size="sm" variant="ghost" onClick={resetView} title="Restablecer vista">
             <Maximize2 className="h-4 w-4" style={{ color: 'var(--map-overlay-text)' }} />
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={alternarPantallaCompleta}
+            title={enPantallaCompleta ? 'Salir de pantalla completa (Esc)' : 'Pantalla completa'}
+            aria-label={enPantallaCompleta ? 'Salir de pantalla completa' : 'Pantalla completa'}
+          >
+            {enPantallaCompleta
+              ? <Shrink className="h-4 w-4" style={{ color: 'var(--map-overlay-text)' }} />
+              : <Expand className="h-4 w-4" style={{ color: 'var(--map-overlay-text)' }} />}
           </Button>
         </div>
         <div className="flex items-center gap-2 rounded-lg backdrop-blur px-3 shadow-md" style={{ backgroundColor: 'var(--map-overlay-bg)' }}>
