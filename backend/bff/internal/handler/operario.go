@@ -41,6 +41,16 @@ func (h *OperarioHandler) aeropuertoInfo(iata string) (gmtOffset int, continente
 // origen y se resta gmt_offset para obtener registro_utc en minutos absolutos.
 func (h *OperarioHandler) registrar(operarioID int64, idEnvio, origenIATA string,
 	localTime time.Time, destinoIATA string, cantidad, idCliente int) error {
+	return h.registrarConID(operarioID, idEnvio, origenIATA, localTime, destinoIATA, cantidad, idCliente, false)
+}
+
+// registrarConID preserva el id_envio cuando viene de archivo. Esto es clave
+// para las pruebas del curso: si el archivo dice 30000001, el operario debe ver
+// 30000001 en pantalla, no un OPF... generado por el backend. Si upsert=true,
+// re-subir el mismo archivo actualiza la fila del mismo origen en vez de fallar
+// por llave primaria duplicada.
+func (h *OperarioHandler) registrarConID(operarioID int64, idEnvio, origenIATA string,
+	localTime time.Time, destinoIATA string, cantidad, idCliente int, upsert bool) error {
 
 	origenGMT, origenCont, err := h.aeropuertoInfo(origenIATA)
 	if err != nil {
@@ -60,11 +70,26 @@ func (h *OperarioHandler) registrar(operarioID int64, idEnvio, origenIATA string
 	}
 	deadlineUTC := registroUTC + ventana
 
-	_, err = h.DB.Exec(`
+	query := `
 		INSERT INTO envios_operacion
 		  (id_envio, origen_iata, fecha_registro, hora, minuto, destino_iata,
 		   cantidad_maletas, id_cliente, registro_utc, deadline_utc, operario_id)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+	if upsert {
+		query += `
+		ON DUPLICATE KEY UPDATE
+		  fecha_registro = VALUES(fecha_registro),
+		  hora = VALUES(hora),
+		  minuto = VALUES(minuto),
+		  destino_iata = VALUES(destino_iata),
+		  cantidad_maletas = VALUES(cantidad_maletas),
+		  id_cliente = VALUES(id_cliente),
+		  registro_utc = VALUES(registro_utc),
+		  deadline_utc = VALUES(deadline_utc),
+		  operario_id = VALUES(operario_id)`
+	}
+
+	_, err = h.DB.Exec(query,
 		idEnvio, origenIATA, localTime.Format("2006-01-02"),
 		localTime.Hour(), localTime.Minute(), destinoIATA,
 		cantidad, idCliente, registroUTC, deadlineUTC, operarioID)
@@ -73,7 +98,8 @@ func (h *OperarioHandler) registrar(operarioID int64, idEnvio, origenIATA string
 
 // Registrar — POST /api/operario/envios
 // body: {"destino_iata":"SCEL","cantidad_maletas":180,"id_cliente":7729,
-//        "fecha_hora_local":"2026-07-20T08:15"}  (hora tomada del navegador del operario)
+//
+//	"fecha_hora_local":"2026-07-20T08:15"}  (hora tomada del navegador del operario)
 func (h *OperarioHandler) Registrar(w http.ResponseWriter, r *http.Request) {
 	u, ok_ := UsuarioDeContexto(r)
 	if !ok_ || u.AeropuertoIATA == nil {
@@ -141,8 +167,9 @@ func (h *OperarioHandler) Registrar(w http.ResponseWriter, r *http.Request) {
 
 // RegistrarArchivo — POST /api/operario/envios/archivo (multipart, campo "archivo")
 // Formato de línea (igual al de carga masiva): id_envío-aaaammdd-hh-mm-dest-###-IdCliente
-// El id_envío del archivo se ignora (se regenera) para no chocar con otro operario;
-// hh-mm se interpreta como hora local del aeropuerto de origen, igual que el registro manual.
+// El id_envío del archivo se conserva para que el operario vea el mismo ID
+// que subió. hh-mm se interpreta como hora local del aeropuerto de origen,
+// igual que el registro manual.
 func (h *OperarioHandler) RegistrarArchivo(w http.ResponseWriter, r *http.Request) {
 	u, ok_ := UsuarioDeContexto(r)
 	if !ok_ || u.AeropuertoIATA == nil {
@@ -214,8 +241,17 @@ func (h *OperarioHandler) RegistrarArchivo(w http.ResponseWriter, r *http.Reques
 		dia, _ := strconv.Atoi(fechaStr[6:8])
 		localTime := time.Date(anio, time.Month(mes), dia, hora, min, 0, 0, time.UTC)
 
-		idEnvio := fmt.Sprintf("OPF%d%04d", horaBase, linea)
-		if err := h.registrar(u.ID, idEnvio, *u.AeropuertoIATA, localTime, dest, cant, cliente); err != nil {
+		idEnvio := strings.TrimSpace(parts[0])
+		if idEnvio == "" {
+			idEnvio = fmt.Sprintf("OPF%d%04d", horaBase, linea)
+		}
+		if len(idEnvio) > 20 || strings.ContainsAny(idEnvio, " \t\r\n") {
+			fallidos++
+			errores = append(errores, fmt.Sprintf("línea %d: id_envio inválido o mayor a 20 caracteres", linea))
+			continue
+		}
+
+		if err := h.registrarConID(u.ID, idEnvio, *u.AeropuertoIATA, localTime, dest, cant, cliente, true); err != nil {
 			fallidos++
 			errores = append(errores, fmt.Sprintf("línea %d (%s): %v", linea, line, err))
 			continue
@@ -237,13 +273,13 @@ func (h *OperarioHandler) RegistrarArchivo(w http.ResponseWriter, r *http.Reques
 // con TRUNCATE entre pruebas.
 func (h *OperarioHandler) ListarMisEnvios(w http.ResponseWriter, r *http.Request) {
 	u, ok_ := UsuarioDeContexto(r)
-	if !ok_ {
-		errResp(w, 401, "SIN_SESION", "Sesión inválida")
+	if !ok_ || u.AeropuertoIATA == nil {
+		errResp(w, 403, "SIN_AEROPUERTO", "Tu cuenta no tiene un aeropuerto asignado")
 		return
 	}
 	rows, err := h.DB.Query(`SELECT id_envio, origen_iata, destino_iata, cantidad_maletas,
-		id_cliente, registro_utc, deadline_utc
-		FROM envios_operacion WHERE operario_id = ? ORDER BY registro_utc DESC`, u.ID)
+		id_cliente, registro_utc, deadline_utc, fecha_registro, hora, minuto
+		FROM envios_operacion WHERE origen_iata = ? AND operario_id = ? ORDER BY registro_utc DESC`, *u.AeropuertoIATA, u.ID)
 	if err != nil {
 		errResp(w, 500, "DB_ERROR", err.Error())
 		return
@@ -254,9 +290,10 @@ func (h *OperarioHandler) ListarMisEnvios(w http.ResponseWriter, r *http.Request
 	envios := []map[string]interface{}{}
 	for rows.Next() {
 		var idEnvio, origen, destino string
-		var cantidad, idCliente int
+		var cantidad, idCliente, horaLocal, minutoLocal int
 		var registroUTC, deadlineUTC int64
-		if err := rows.Scan(&idEnvio, &origen, &destino, &cantidad, &idCliente, &registroUTC, &deadlineUTC); err != nil {
+		var fechaRegistro string
+		if err := rows.Scan(&idEnvio, &origen, &destino, &cantidad, &idCliente, &registroUTC, &deadlineUTC, &fechaRegistro, &horaLocal, &minutoLocal); err != nil {
 			errResp(w, 500, "DB_ERROR", err.Error())
 			return
 		}
@@ -264,6 +301,7 @@ func (h *OperarioHandler) ListarMisEnvios(w http.ResponseWriter, r *http.Request
 			"id_envio": idEnvio, "origen_iata": origen, "destino_iata": destino,
 			"cantidad_maletas": cantidad, "id_cliente": idCliente,
 			"registro_utc": registroUTC, "deadline_utc": deadlineUTC,
+			"fecha_registro": fechaRegistro, "hora": horaLocal, "minuto": minutoLocal,
 			"editable": nowUTCMin-registroUTC <= ventanaEdicionMin,
 		})
 	}

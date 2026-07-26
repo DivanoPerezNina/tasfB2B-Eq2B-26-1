@@ -54,6 +54,22 @@ function formatFecha(d: Date): string {
   return `${pad2(d.getUTCDate())}/${pad2(d.getUTCMonth() + 1)}/${d.getUTCFullYear()}`;
 }
 
+function formatFechaLocalEnvio(e: EnvioRegistrado, gmtOffset: number): string {
+  // Día a Día debe mostrar la hora local escrita en el archivo o capturada
+  // por el formulario del operario. Por eso se priorizan fecha_registro/hora/minuto
+  // guardados por el backend, en vez de recalcular desde UTC y arriesgar un
+  // desplazamiento visual por husos horarios.
+  if (e.fecha_registro && typeof e.hora === 'number' && typeof e.minuto === 'number') {
+    const [yyyy, mm, dd] = e.fecha_registro.split('-');
+    if (yyyy && mm && dd) {
+      return `${pad2(e.hora)}:${pad2(e.minuto)}:00 ${dd}/${mm}/${yyyy}`;
+    }
+  }
+
+  const h = horaEnAeropuerto(new Date(e.registro_utc * 60000), gmtOffset);
+  return `${formatHora(h)} ${formatFecha(h)}`;
+}
+
 interface RegistroLog {
   idEnvio: string;
   destino: string;
@@ -69,6 +85,9 @@ interface EnvioRegistrado {
   id_cliente: number;
   registro_utc: number;
   deadline_utc: number;
+  fecha_registro?: string;
+  hora?: number;
+  minuto?: number;
   editable: boolean;
 }
 
@@ -80,7 +99,7 @@ const ETIQUETAS_ORDEN: Record<CampoOrden, string> = {
 const CAMPOS_ORDEN: CampoOrden[] = ['id_envio', 'destino_iata', 'cantidad_maletas', 'registro_utc'];
 
 export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogout: () => void }) {
-  const { conectarEspectador, fase, planVisualCargado } = useSimulation();
+  const { conectarEspectador } = useSimulation();
   const { aeropuertosBFF } = useDomain();
   const gmtOffset = aeropuertosBFF.find(a => a.iata === perfil.aeropuertoIata)?.gmt_offset ?? 0;
 
@@ -139,20 +158,6 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
       .catch(() => { /* la tabla se queda con lo último cargado */ });
   };
   useEffect(cargarMisEnvios, []);
-
-  const solicitarReplanificacion = async () => {
-    try {
-      const res = await fetch(`${BFF}/api/simulacion/replanificar`, {
-        method: 'POST',
-        headers: authHeader(),
-      });
-      if (res.ok) {
-        conectarEspectador();
-      }
-    } catch {
-      // Si aún no hay simulación viva, el poll de conectarEspectador reintentará.
-    }
-  };
 
   const toggleOrden = (campo: CampoOrden) => {
     if (ordenPor === campo) setOrdenAsc(a => !a);
@@ -272,7 +277,6 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
       setDestino('');
       setCantidad(1);
       cargarMisEnvios();
-      solicitarReplanificacion();
     } catch (e: any) {
       toast.error('No se pudo registrar', { description: e.message });
     } finally {
@@ -298,7 +302,6 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
       toast.success('Archivo procesado', { description: `${j.data.registrados} envíos registrados` });
       setArchivo(null);
       cargarMisEnvios();
-      solicitarReplanificacion();
     } catch (e: any) {
       toast.error('No se pudo subir el archivo', { description: e.message });
     } finally {
@@ -377,15 +380,9 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
             <div style={{ maxWidth: '80rem', margin: '0 auto', height: '100%', display: 'flex', flexDirection: 'column', gap: '.75rem' }}>
               <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                 {modoActivo === true ? (
-                  fase === 'ejecutando' || fase === 'calentando' ? (
-                    <Tag type="green" size="sm">
-                      {planVisualCargado ? 'Día a Día en curso — vuelos en vivo' : 'Día a Día activo — esperando rutas/envíos'}
-                    </Tag>
-                  ) : (
-                    <Tag type="green" size="sm">Día a Día activo — conectando operación</Tag>
-                  )
+                  <Tag type="green" size="sm">Día a Día activo — rutas/envíos en vivo</Tag>
                 ) : (
-                  <Tag type="gray" size="sm">Los vuelos aparecerán cuando el administrador inicie Día a Día</Tag>
+                  <Tag type="gray" size="sm">Los vuelos aparecerán cuando el administrador active Día a Día</Tag>
                 )}
               </div>
               <div style={{ flex: 1, minHeight: '30rem' }}>
@@ -517,14 +514,14 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
                   </thead>
                   <tbody>
                     {enviosFiltrados.map(e => {
-                      const hora = horaEnAeropuerto(new Date(e.registro_utc * 60000), gmtOffset);
+                      const registradoTexto = formatFechaLocalEnvio(e, gmtOffset);
                       const editable = esEditable(e.registro_utc);
                       return (
                         <tr key={e.id_envio} style={{ borderBottom: '1px solid var(--cds-border-subtle)' }}>
                           <td style={{ padding: '.45rem .6rem', fontFamily: 'monospace' }}>{e.id_envio}</td>
                           <td style={{ padding: '.45rem .6rem' }}>{e.destino_iata}</td>
                           <td style={{ padding: '.45rem .6rem', textAlign: 'right' }}>{e.cantidad_maletas}</td>
-                          <td style={{ padding: '.45rem .6rem', whiteSpace: 'nowrap' }}>{formatHora(hora)} {formatFecha(hora)}</td>
+                          <td style={{ padding: '.45rem .6rem', whiteSpace: 'nowrap' }}>{registradoTexto}</td>
                           <td style={{ padding: '.45rem .6rem' }}>
                             <Tag size="sm" type={editable ? 'teal' : 'gray'}>{editable ? 'Editable' : 'Bloqueado'}</Tag>
                           </td>

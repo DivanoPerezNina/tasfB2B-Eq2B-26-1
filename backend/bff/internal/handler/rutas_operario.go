@@ -14,9 +14,9 @@ import (
 // operarios para el ensayo no deben mezclarse con el catálogo de Periodo y
 // Colapso.
 //
-// A diferencia de los envíos, el operario NO está limitado a su aeropuerto:
-// puede crear y editar cualquier ruta (decisión del equipo — durante el ensayo
-// alguien puede necesitar cargar rutas de otra sede).
+// Cada operario trabaja solo con rutas cuyo ORIGEN es su aeropuerto asignado.
+// Esto evita que la pantalla de SABE muestre rutas de SPIM o viceversa durante
+// las pruebas con varias pestañas/usuarios.
 type RutasOperarioHandler struct {
 	DB *sql.DB
 }
@@ -66,9 +66,15 @@ func (h *RutasOperarioHandler) continentesDe(origen, destino string) (bool, erro
 
 // Listar — GET /api/operario/rutas
 func (h *RutasOperarioHandler) Listar(w http.ResponseWriter, r *http.Request) {
+	u, ok_ := UsuarioDeContexto(r)
+	if !ok_ || u.AeropuertoIATA == nil {
+		errResp(w, 403, "SIN_AEROPUERTO", "Tu cuenta no tiene un aeropuerto asignado")
+		return
+	}
+
 	rows, err := h.DB.Query(`SELECT id, origen_iata, destino_iata, salida_minutos,
 		llegada_minutos, capacidad_max, mismo_continente
-		FROM vuelos_operacion ORDER BY origen_iata, salida_minutos`)
+		FROM vuelos_operacion WHERE origen_iata = ? ORDER BY salida_minutos, destino_iata`, *u.AeropuertoIATA)
 	if err != nil {
 		errResp(w, 500, "DB_ERROR", err.Error())
 		return
@@ -95,7 +101,12 @@ func (h *RutasOperarioHandler) Listar(w http.ResponseWriter, r *http.Request) {
 
 // Crear — POST /api/operario/rutas
 func (h *RutasOperarioHandler) Crear(w http.ResponseWriter, r *http.Request) {
-	u, _ := UsuarioDeContexto(r)
+	u, ok_ := UsuarioDeContexto(r)
+	if !ok_ || u.AeropuertoIATA == nil {
+		errResp(w, 403, "SIN_AEROPUERTO", "Tu cuenta no tiene un aeropuerto asignado")
+		return
+	}
+
 	var in rutaInput
 	if !decodeJSON(w, r, &in) {
 		return
@@ -104,20 +115,21 @@ func (h *RutasOperarioHandler) Crear(w http.ResponseWriter, r *http.Request) {
 		errResp(w, http.StatusBadRequest, "VALIDACION", err.Error())
 		return
 	}
+	if in.OrigenIATA != *u.AeropuertoIATA {
+		errResp(w, http.StatusForbidden, "ORIGEN_NO_PERMITIDO",
+			fmt.Sprintf("Tu usuario solo puede crear rutas con origen %s", *u.AeropuertoIATA))
+		return
+	}
 	mismoCont, err := h.continentesDe(in.OrigenIATA, in.DestinoIATA)
 	if err != nil {
 		errResp(w, http.StatusBadRequest, "AEROPUERTO_INVALIDO", err.Error())
 		return
 	}
-	var operarioID interface{}
-	if u != nil {
-		operarioID = u.ID
-	}
 	res, err := h.DB.Exec(`INSERT INTO vuelos_operacion
 		(origen_iata, destino_iata, salida_minutos, llegada_minutos, capacidad_max, mismo_continente, operario_id)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		in.OrigenIATA, in.DestinoIATA, in.SalidaMinutos, in.LlegadaMinutos,
-		in.CapacidadMax, mismoCont, operarioID)
+		in.CapacidadMax, mismoCont, u.ID)
 	if err != nil {
 		errResp(w, 500, "CREACION_FALLIDA", err.Error())
 		return
@@ -128,6 +140,12 @@ func (h *RutasOperarioHandler) Crear(w http.ResponseWriter, r *http.Request) {
 
 // Actualizar — PUT /api/operario/rutas/{id}
 func (h *RutasOperarioHandler) Actualizar(w http.ResponseWriter, r *http.Request) {
+	u, ok_ := UsuarioDeContexto(r)
+	if !ok_ || u.AeropuertoIATA == nil {
+		errResp(w, 403, "SIN_AEROPUERTO", "Tu cuenta no tiene un aeropuerto asignado")
+		return
+	}
+
 	id, err := parsePathID(r)
 	if err != nil {
 		errResp(w, 400, "ID_INVALIDO", err.Error())
@@ -141,21 +159,27 @@ func (h *RutasOperarioHandler) Actualizar(w http.ResponseWriter, r *http.Request
 		errResp(w, http.StatusBadRequest, "VALIDACION", err.Error())
 		return
 	}
+	if in.OrigenIATA != *u.AeropuertoIATA {
+		errResp(w, http.StatusForbidden, "ORIGEN_NO_PERMITIDO",
+			fmt.Sprintf("Tu usuario solo puede editar rutas con origen %s", *u.AeropuertoIATA))
+		return
+	}
 	mismoCont, err := h.continentesDe(in.OrigenIATA, in.DestinoIATA)
 	if err != nil {
 		errResp(w, http.StatusBadRequest, "AEROPUERTO_INVALIDO", err.Error())
 		return
 	}
-	res, err := h.DB.Exec(`UPDATE vuelos_operacion SET origen_iata=?, destino_iata=?,
-		salida_minutos=?, llegada_minutos=?, capacidad_max=?, mismo_continente=? WHERE id=?`,
-		in.OrigenIATA, in.DestinoIATA, in.SalidaMinutos, in.LlegadaMinutos,
-		in.CapacidadMax, mismoCont, id)
+	res, err := h.DB.Exec(`UPDATE vuelos_operacion SET destino_iata=?,
+		salida_minutos=?, llegada_minutos=?, capacidad_max=?, mismo_continente=?
+		WHERE id=? AND origen_iata=?`,
+		in.DestinoIATA, in.SalidaMinutos, in.LlegadaMinutos,
+		in.CapacidadMax, mismoCont, id, *u.AeropuertoIATA)
 	if err != nil {
 		errResp(w, 500, "ACTUALIZACION_FALLIDA", err.Error())
 		return
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		errResp(w, 404, "NO_ENCONTRADO", "Ruta no encontrada")
+		errResp(w, 404, "NO_ENCONTRADO", "Ruta no encontrada para tu aeropuerto")
 		return
 	}
 	ok(w, map[string]interface{}{"id": id}, "Ruta actualizada")
@@ -165,18 +189,24 @@ func (h *RutasOperarioHandler) Actualizar(w http.ResponseWriter, r *http.Request
 // Borra la ruta del catálogo del día a día. Distinto de "cancelar el vuelo de
 // hoy" (POST /api/simulacion/cancelar), que es efímero y no toca la tabla.
 func (h *RutasOperarioHandler) Eliminar(w http.ResponseWriter, r *http.Request) {
+	u, ok_ := UsuarioDeContexto(r)
+	if !ok_ || u.AeropuertoIATA == nil {
+		errResp(w, 403, "SIN_AEROPUERTO", "Tu cuenta no tiene un aeropuerto asignado")
+		return
+	}
+
 	id, err := parsePathID(r)
 	if err != nil {
 		errResp(w, 400, "ID_INVALIDO", err.Error())
 		return
 	}
-	res, err := h.DB.Exec(`DELETE FROM vuelos_operacion WHERE id=?`, id)
+	res, err := h.DB.Exec(`DELETE FROM vuelos_operacion WHERE id=? AND origen_iata=?`, id, *u.AeropuertoIATA)
 	if err != nil {
 		errResp(w, 500, "ELIMINACION_FALLIDA", err.Error())
 		return
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		errResp(w, 404, "NO_ENCONTRADO", "Ruta no encontrada")
+		errResp(w, 404, "NO_ENCONTRADO", "Ruta no encontrada para tu aeropuerto")
 		return
 	}
 	ok(w, map[string]interface{}{"id": id}, "Ruta eliminada")
@@ -188,7 +218,11 @@ func (h *RutasOperarioHandler) Eliminar(w http.ResponseWriter, r *http.Request) 
 // adicionales" tal cual). Las líneas que empiezan con # o * se ignoran, así el
 // archivo del profesor entra sin editar los comentarios.
 func (h *RutasOperarioHandler) CargarArchivo(w http.ResponseWriter, r *http.Request) {
-	u, _ := UsuarioDeContexto(r)
+	u, ok_ := UsuarioDeContexto(r)
+	if !ok_ || u.AeropuertoIATA == nil {
+		errResp(w, 403, "SIN_AEROPUERTO", "Tu cuenta no tiene un aeropuerto asignado")
+		return
+	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
 	if err := r.ParseMultipartForm(2 << 20); err != nil {
@@ -201,11 +235,6 @@ func (h *RutasOperarioHandler) CargarArchivo(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	defer file.Close()
-
-	var operarioID interface{}
-	if u != nil {
-		operarioID = u.ID
-	}
 
 	scanner := bufio.NewScanner(file)
 	registradas, fallidas := 0, 0
@@ -241,6 +270,11 @@ func (h *RutasOperarioHandler) CargarArchivo(w http.ResponseWriter, r *http.Requ
 			errores = append(errores, fmt.Sprintf("línea %d: %v", linea, err))
 			continue
 		}
+		if in.OrigenIATA != *u.AeropuertoIATA {
+			fallidas++
+			errores = append(errores, fmt.Sprintf("línea %d: origen %s no corresponde a tu aeropuerto %s", linea, in.OrigenIATA, *u.AeropuertoIATA))
+			continue
+		}
 		mismoCont, err := h.continentesDe(in.OrigenIATA, in.DestinoIATA)
 		if err != nil {
 			fallidas++
@@ -251,7 +285,7 @@ func (h *RutasOperarioHandler) CargarArchivo(w http.ResponseWriter, r *http.Requ
 			(origen_iata, destino_iata, salida_minutos, llegada_minutos, capacidad_max, mismo_continente, operario_id)
 			VALUES (?, ?, ?, ?, ?, ?, ?)`,
 			in.OrigenIATA, in.DestinoIATA, in.SalidaMinutos, in.LlegadaMinutos,
-			in.CapacidadMax, mismoCont, operarioID); err != nil {
+			in.CapacidadMax, mismoCont, u.ID); err != nil {
 			fallidas++
 			errores = append(errores, fmt.Sprintf("línea %d: %v", linea, err))
 			continue
