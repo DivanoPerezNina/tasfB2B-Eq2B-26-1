@@ -32,12 +32,20 @@ const (
 	criterioDefecto = "EDF"
 )
 
-// arrancarOperacion levanta el orquestador en modo día a día. t0 = la hora en
-// punto anterior a ahora, para que los envíos ya registrados en esta hora
-// caigan dentro de la ventana del plan (si t0 fuera "ahora exacto", todo lo
-// registrado minutos antes quedaría fuera y no se planificaría nunca).
+// arrancarOperacion levanta el orquestador en modo día a día.
+//
+// Día a Día NO debe iniciar desde la hora en punto anterior. Si se activaba a
+// las 18:42 y t0 quedaba en 18:00, con Sc=1 y Sa=60 el reloj visual tardaba
+// 42 minutos reales en alcanzar 18:42. Por eso el mapa mostraba "Sin simulación
+// activa" o no dibujaba vuelos aunque ya existieran envíos/rutas válidas.
+//
+// Usamos un pequeño lookback real para incluir envíos recién registrados y
+// vuelos que ya están por despegar o acaban de iniciar.
 func (h *ModoOperacionHandler) arrancarOperacion() error {
-	t0 := time.Now().UTC().Truncate(time.Hour).Unix() / 60
+	t0 := time.Now().UTC().Unix()/60 - 10
+	if t0 < 0 {
+		t0 = 0
+	}
 	usarCancelaciones := false // false ⇒ el ejecutor activa ModoOperacion
 	body, _ := json.Marshal(map[string]interface{}{
 		"t0_utc":             t0,
