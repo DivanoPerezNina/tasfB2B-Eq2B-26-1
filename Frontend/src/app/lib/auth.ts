@@ -1,7 +1,6 @@
 /** auth.ts — manejo de la sesión (perfil + token guardados por pestaña en sessionStorage). */
 
 const KEY = 'tasf_auth';
-const storage = typeof window !== 'undefined' ? window.sessionStorage : undefined;
 
 export type Rol = 'admin' | 'operario';
 
@@ -14,7 +13,7 @@ export interface Perfil {
 
 export function getPerfil(): Perfil | null {
   try {
-    const raw = storage?.getItem(KEY);
+    const raw = sessionStorage.getItem(KEY);
     return raw ? (JSON.parse(raw) as Perfil) : null;
   } catch {
     return null;
@@ -22,11 +21,11 @@ export function getPerfil(): Perfil | null {
 }
 
 export function setPerfil(p: Perfil): void {
-  try { storage?.setItem(KEY, JSON.stringify(p)); } catch { /* noop */ }
+  try { sessionStorage.setItem(KEY, JSON.stringify(p)); } catch { /* noop */ }
 }
 
 export function clearPerfil(): void {
-  try { storage?.removeItem(KEY); } catch { /* noop */ }
+  try { sessionStorage.removeItem(KEY); } catch { /* noop */ }
 }
 
 export function isAuthed(): boolean {

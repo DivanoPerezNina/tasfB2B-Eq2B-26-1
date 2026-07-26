@@ -69,10 +69,7 @@ async function api(path: string, options: RequestInit = {}) {
 
 export function OperarioRutas({ modoActivo }: { modoActivo: boolean | null }) {
   const { aeropuertosBFF } = useDomain();
-  const { planTramos, tiempoSimUTC, cancelarVuelo } = useSimulation();
-  const perfil = getPerfil();
-  const aeropuertoOperario = perfil?.aeropuertoIata ?? '';
-  const destinosRuta = aeropuertosBFF.filter(a => a.iata !== aeropuertoOperario);
+  const { planTramos, tiempoSimUTC, cancelarVuelo, conectarEspectador } = useSimulation();
 
   const [rutas, setRutas] = useState<Ruta[]>([]);
   const [filtro, setFiltro] = useState('');
@@ -95,6 +92,35 @@ export function OperarioRutas({ modoActivo }: { modoActivo: boolean | null }) {
   };
   useEffect(cargar, []);
 
+  const asegurarOperacionConectada = async () => {
+    try {
+      await fetch(`${BFF}/api/modo-operacion`, { headers: authHeader() });
+    } catch {
+      // best effort
+    }
+    await conectarEspectador();
+  };
+
+  const solicitarReplanificacion = async () => {
+    try {
+      await asegurarOperacionConectada();
+      const res = await fetch(`${BFF}/api/simulacion/replanificar`, {
+        method: 'POST',
+        headers: authHeader(),
+      });
+      if (!res.ok) {
+        await asegurarOperacionConectada();
+        await fetch(`${BFF}/api/simulacion/replanificar`, {
+          method: 'POST',
+          headers: authHeader(),
+        });
+      }
+      await conectarEspectador();
+    } catch {
+      // Si aún no hay operación activa, el mapa seguirá intentando conectarse.
+    }
+  };
+
   const rutasVisibles = useMemo(() => {
     const q = filtro.trim().toUpperCase();
     const lista = q
@@ -112,20 +138,29 @@ export function OperarioRutas({ modoActivo }: { modoActivo: boolean | null }) {
     else { setOrdenPor(campo); setOrdenAsc(true); }
   };
 
-  // Próxima salida de esta ruta que siga en el plan actual y no haya despegado.
-  // Se busca en planTramos (lo mismo que dibuja el mapa) en vez de recalcular la
-  // hora UTC aquí: así cancelar desde la tabla y desde el mapa son la misma cosa.
+  // Salida cancelable de esta ruta en el plan actual: primero intenta cancelar
+  // el vuelo que está en ejecución; si no hay uno activo, toma la próxima salida.
+  // Se busca en planTramos (lo mismo que dibuja el mapa), así cancelar desde la
+  // tabla y desde el mapa apuntan a la misma ocurrencia.
   const proximaSalida = (r: Ruta): number | null => {
-    const candidatos = planTramos
+    const activos = planTramos
+      .filter(t => t.desde === r.origen_iata && t.hasta === r.destino_iata && t.salidaUTC <= tiempoSimUTC && t.llegadaUTC > tiempoSimUTC)
+      .map(t => t.salidaUTC)
+      .sort((a, b) => b - a);
+    if (activos.length > 0) return activos[0];
+
+    const futuros = planTramos
       .filter(t => t.desde === r.origen_iata && t.hasta === r.destino_iata && t.salidaUTC > tiempoSimUTC)
       .map(t => t.salidaUTC)
       .sort((a, b) => a - b);
-    return candidatos.length > 0 ? candidatos[0] : null;
+    return futuros.length > 0 ? futuros[0] : null;
   };
 
   const abrirCrear = () => {
     setEditando(null);
-    setForm({ ...FORM_VACIO, origen_iata: aeropuertoOperario, destino_iata: destinosRuta[0]?.iata ?? '' });
+    const origenPerfil = getPerfil()?.aeropuertoIata ?? aeropuertosBFF[0]?.iata ?? '';
+    const destinoInicial = aeropuertosBFF.find(a => a.iata !== origenPerfil)?.iata ?? '';
+    setForm({ ...FORM_VACIO, origen_iata: origenPerfil, destino_iata: destinoInicial });
     setModalAbierto(true);
   };
 
@@ -159,6 +194,7 @@ export function OperarioRutas({ modoActivo }: { modoActivo: boolean | null }) {
       }
       setModalAbierto(false);
       cargar();
+      solicitarReplanificacion();
     } catch (e: any) {
       toast.error('No se pudo guardar', { description: e.message });
     } finally {
@@ -172,6 +208,7 @@ export function OperarioRutas({ modoActivo }: { modoActivo: boolean | null }) {
       await api(`/api/operario/rutas/${r.id}`, { method: 'DELETE' });
       toast.success('Ruta eliminada');
       cargar();
+      solicitarReplanificacion();
     } catch (e: any) {
       toast.error('No se pudo eliminar', { description: e.message });
     }
@@ -205,6 +242,7 @@ export function OperarioRutas({ modoActivo }: { modoActivo: boolean | null }) {
       toast.success('Archivo procesado', { description: `${j.data.registradas} rutas cargadas` });
       setArchivo(null);
       cargar();
+      solicitarReplanificacion();
     } catch (e: any) {
       toast.error('No se pudo subir el archivo', { description: e.message });
     } finally {
@@ -331,7 +369,7 @@ export function OperarioRutas({ modoActivo }: { modoActivo: boolean | null }) {
         onRequestClose={() => setModalAbierto(false)}
       >
         <Stack gap={5}>
-          <Select id="ruta-origen" labelText="Origen" value={form.origen_iata} disabled
+          <Select id="ruta-origen" labelText="Origen" value={form.origen_iata}
             onChange={e => setForm(f => ({ ...f, origen_iata: e.target.value }))}>
             {aeropuertosBFF.map(a => <SelectItem key={a.iata} value={a.iata} text={`${a.iata} — ${a.ciudad}, ${a.pais}`} />)}
           </Select>

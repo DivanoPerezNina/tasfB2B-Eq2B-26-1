@@ -54,20 +54,20 @@ function formatFecha(d: Date): string {
   return `${pad2(d.getUTCDate())}/${pad2(d.getUTCMonth() + 1)}/${d.getUTCFullYear()}`;
 }
 
-function formatFechaLocalEnvio(e: EnvioRegistrado, gmtOffset: number): string {
-  // Día a Día debe mostrar la hora local escrita en el archivo o capturada
-  // por el formulario del operario. Por eso se priorizan fecha_registro/hora/minuto
-  // guardados por el backend, en vez de recalcular desde UTC y arriesgar un
-  // desplazamiento visual por husos horarios.
-  if (e.fecha_registro && typeof e.hora === 'number' && typeof e.minuto === 'number') {
-    const [yyyy, mm, dd] = e.fecha_registro.split('-');
+function formatRegistroEnvio(e: EnvioRegistrado, gmtOffset: number): string {
+  // Preferimos los campos locales guardados en la BD. Así si el archivo dice
+  // 13-59, la tabla muestra 13:59, sin reconvertir a otra zona horaria.
+  if (e.fecha_registro && Number.isFinite(Number(e.hora)) && Number.isFinite(Number(e.minuto))) {
+    const fecha = String(e.fecha_registro).slice(0, 10); // soporta "2026-07-26" y "2026-07-26T00:00:00Z"
+    const [yyyy, mm, dd] = fecha.split('-');
     if (yyyy && mm && dd) {
-      return `${pad2(e.hora)}:${pad2(e.minuto)}:00 ${dd}/${mm}/${yyyy}`;
+      return `${pad2(Number(e.hora))}:${pad2(Number(e.minuto))}:00 ${dd}/${mm}/${yyyy}`;
     }
   }
 
-  const h = horaEnAeropuerto(new Date(e.registro_utc * 60000), gmtOffset);
-  return `${formatHora(h)} ${formatFecha(h)}`;
+  // Respaldo para datos antiguos que aún no traen fecha_registro/hora/minuto.
+  const hora = horaEnAeropuerto(new Date(Number(e.registro_utc) * 60000), gmtOffset);
+  return `${formatHora(hora)} ${formatFecha(hora)}`;
 }
 
 interface RegistroLog {
@@ -81,13 +81,13 @@ interface EnvioRegistrado {
   id_envio: string;
   origen_iata: string;
   destino_iata: string;
+  fecha_registro?: string;
+  hora?: number;
+  minuto?: number;
   cantidad_maletas: number;
   id_cliente: number;
   registro_utc: number;
   deadline_utc: number;
-  fecha_registro?: string;
-  hora?: number;
-  minuto?: number;
   editable: boolean;
 }
 
@@ -99,7 +99,7 @@ const ETIQUETAS_ORDEN: Record<CampoOrden, string> = {
 const CAMPOS_ORDEN: CampoOrden[] = ['id_envio', 'destino_iata', 'cantidad_maletas', 'registro_utc'];
 
 export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogout: () => void }) {
-  const { conectarEspectador } = useSimulation();
+  const { conectarEspectador, fase, planVisualCargado } = useSimulation();
   const { aeropuertosBFF } = useDomain();
   const gmtOffset = aeropuertosBFF.find(a => a.iata === perfil.aeropuertoIata)?.gmt_offset ?? 0;
 
@@ -143,7 +143,13 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
     const consultar = () => {
       fetch(`${BFF}/api/modo-operacion`, { headers: authHeader() })
         .then(r => r.json())
-        .then(j => { if (!cancelado) setModoActivo(!!j.data?.activo); })
+        .then(j => {
+          if (!cancelado) {
+            const activo = !!j.data?.activo;
+            setModoActivo(activo);
+            if (activo && j.data?.simulacion_activa) conectarEspectador();
+          }
+        })
         .catch(() => { /* se reintenta en el próximo poll */ });
     };
     consultar();
@@ -158,6 +164,39 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
       .catch(() => { /* la tabla se queda con lo último cargado */ });
   };
   useEffect(cargarMisEnvios, []);
+
+  const asegurarOperacionConectada = async () => {
+    // GET /api/modo-operacion no solo consulta: en el BFF también asegura que el
+    // orquestador de Día a Día esté vivo si el modo está activo.
+    try {
+      await fetch(`${BFF}/api/modo-operacion`, { headers: authHeader() });
+    } catch {
+      // best effort
+    }
+    await conectarEspectador();
+  };
+
+  const solicitarReplanificacion = async () => {
+    try {
+      await asegurarOperacionConectada();
+      const res = await fetch(`${BFF}/api/simulacion/replanificar`, {
+        method: 'POST',
+        headers: authHeader(),
+      });
+      if (!res.ok) {
+        // Si la operación no estaba levantada cuando se hizo el POST, se intenta
+        // arrancar/conectar y se reintenta una vez.
+        await asegurarOperacionConectada();
+        await fetch(`${BFF}/api/simulacion/replanificar`, {
+          method: 'POST',
+          headers: authHeader(),
+        });
+      }
+      await conectarEspectador();
+    } catch {
+      // Si aún no hay simulación viva, el poll de conectarEspectador reintentará.
+    }
+  };
 
   const toggleOrden = (campo: CampoOrden) => {
     if (ordenPor === campo) setOrdenAsc(a => !a);
@@ -277,6 +316,7 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
       setDestino('');
       setCantidad(1);
       cargarMisEnvios();
+      solicitarReplanificacion();
     } catch (e: any) {
       toast.error('No se pudo registrar', { description: e.message });
     } finally {
@@ -302,6 +342,7 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
       toast.success('Archivo procesado', { description: `${j.data.registrados} envíos registrados` });
       setArchivo(null);
       cargarMisEnvios();
+      solicitarReplanificacion();
     } catch (e: any) {
       toast.error('No se pudo subir el archivo', { description: e.message });
     } finally {
@@ -380,9 +421,15 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
             <div style={{ maxWidth: '80rem', margin: '0 auto', height: '100%', display: 'flex', flexDirection: 'column', gap: '.75rem' }}>
               <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                 {modoActivo === true ? (
-                  <Tag type="green" size="sm">Día a Día activo — rutas/envíos en vivo</Tag>
+                  fase === 'ejecutando' || fase === 'calentando' ? (
+                    <Tag type="green" size="sm">
+                      {planVisualCargado ? 'Día a Día en curso — vuelos en vivo' : 'Día a Día activo — esperando rutas/envíos'}
+                    </Tag>
+                  ) : (
+                    <Tag type="green" size="sm">Día a Día activo — conectando operación</Tag>
+                  )
                 ) : (
-                  <Tag type="gray" size="sm">Los vuelos aparecerán cuando el administrador active Día a Día</Tag>
+                  <Tag type="gray" size="sm">Los vuelos aparecerán cuando el administrador inicie Día a Día</Tag>
                 )}
               </div>
               <div style={{ flex: 1, minHeight: '30rem' }}>
@@ -514,7 +561,7 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
                   </thead>
                   <tbody>
                     {enviosFiltrados.map(e => {
-                      const registradoTexto = formatFechaLocalEnvio(e, gmtOffset);
+                      const registradoTexto = formatRegistroEnvio(e, gmtOffset);
                       const editable = esEditable(e.registro_utc);
                       return (
                         <tr key={e.id_envio} style={{ borderBottom: '1px solid var(--cds-border-subtle)' }}>
