@@ -80,7 +80,7 @@ const ETIQUETAS_ORDEN: Record<CampoOrden, string> = {
 const CAMPOS_ORDEN: CampoOrden[] = ['id_envio', 'destino_iata', 'cantidad_maletas', 'registro_utc'];
 
 export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogout: () => void }) {
-  const { conectarEspectador, fase } = useSimulation();
+  const { conectarEspectador, fase, planVisualCargado } = useSimulation();
   const { aeropuertosBFF } = useDomain();
   const gmtOffset = aeropuertosBFF.find(a => a.iata === perfil.aeropuertoIata)?.gmt_offset ?? 0;
 
@@ -139,6 +139,20 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
       .catch(() => { /* la tabla se queda con lo último cargado */ });
   };
   useEffect(cargarMisEnvios, []);
+
+  const solicitarReplanificacion = async () => {
+    try {
+      const res = await fetch(`${BFF}/api/simulacion/replanificar`, {
+        method: 'POST',
+        headers: authHeader(),
+      });
+      if (res.ok) {
+        conectarEspectador();
+      }
+    } catch {
+      // Si aún no hay simulación viva, el poll de conectarEspectador reintentará.
+    }
+  };
 
   const toggleOrden = (campo: CampoOrden) => {
     if (ordenPor === campo) setOrdenAsc(a => !a);
@@ -258,6 +272,7 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
       setDestino('');
       setCantidad(1);
       cargarMisEnvios();
+      solicitarReplanificacion();
     } catch (e: any) {
       toast.error('No se pudo registrar', { description: e.message });
     } finally {
@@ -283,6 +298,7 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
       toast.success('Archivo procesado', { description: `${j.data.registrados} envíos registrados` });
       setArchivo(null);
       cargarMisEnvios();
+      solicitarReplanificacion();
     } catch (e: any) {
       toast.error('No se pudo subir el archivo', { description: e.message });
     } finally {
@@ -360,8 +376,14 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
           <TabPanel style={{ flex: 1, minHeight: 0, padding: '1rem 1.5rem 1.5rem' }}>
             <div style={{ maxWidth: '80rem', margin: '0 auto', height: '100%', display: 'flex', flexDirection: 'column', gap: '.75rem' }}>
               <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                {fase === 'ejecutando' || fase === 'calentando' ? (
-                  <Tag type="green" size="sm">Día a Día en curso — vuelos en vivo</Tag>
+                {modoActivo === true ? (
+                  fase === 'ejecutando' || fase === 'calentando' ? (
+                    <Tag type="green" size="sm">
+                      {planVisualCargado ? 'Día a Día en curso — vuelos en vivo' : 'Día a Día activo — esperando rutas/envíos'}
+                    </Tag>
+                  ) : (
+                    <Tag type="green" size="sm">Día a Día activo — conectando operación</Tag>
+                  )
                 ) : (
                   <Tag type="gray" size="sm">Los vuelos aparecerán cuando el administrador inicie Día a Día</Tag>
                 )}

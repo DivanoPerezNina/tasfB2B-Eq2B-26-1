@@ -22,12 +22,11 @@ type ModoOperacionHandler struct {
 }
 
 // scOperacionMin / saOperacionSeg: ritmo del bucle Sa/Sc en día a día.
-// 60 minutos de datos por cada 60 segundos reales. No es 1:1 con el reloj de
-// pared a propósito: a 1:1 el orquestador re-planificaría una vez por hora y
-// los envíos recién registrados tardarían eso en entrar al plan. Con este
-// ritmo el plan se refresca cada minuto y un día completo cabe en ~24 min.
+// Operaciones día a día NO es un escenario de simulación acelerada: debe seguir
+// el reloj real de la sede. Por eso se avanza 1 minuto de datos cada 60 segundos
+// reales y se re-planifica cada minuto.
 const (
-	scOperacionMin  = 60
+	scOperacionMin  = 1
 	saOperacionSeg  = 60
 	diasOperacion   = 1
 	criterioDefecto = "EDF"
@@ -89,10 +88,51 @@ func modoOperacionActivo(db *sql.DB) bool {
 	return err == nil && valor == "1"
 }
 
+// operacionEnVivo pregunta al ejecutor si todavía hay un orquestador/simulación
+// activo. El interruptor puede quedar en "1" después de un reinicio o de que la
+// operación de 1 día haya completado; este chequeo permite re-levantarla.
+func (h *ModoOperacionHandler) operacionEnVivo() bool {
+	cli := &http.Client{Timeout: 3 * time.Second}
+	resp, err := cli.Get(h.EjecutorURL + "/api/simulacion/estado")
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+	var body struct {
+		Activa bool   `json:"activa"`
+		Estado string `json:"estado"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return false
+	}
+	return body.Activa || (body.Estado != "" && body.Estado != "detenido" && body.Estado != "completado")
+}
+
+// asegurarOperacionEnVivo hace que "modo activo" signifique realmente
+// "operación corriendo". Si ya corre, periodo-programado responde 409 y
+// arrancarOperacion lo toma como válido; si no corre, se levanta otra vez.
+func (h *ModoOperacionHandler) asegurarOperacionEnVivo() bool {
+	if h.operacionEnVivo() {
+		return true
+	}
+	return h.arrancarOperacion() == nil
+}
+
 // Estado — GET /api/modo-operacion (cualquier sesión válida; el operario lo
 // necesita para saber si mostrar el formulario o el aviso de espera).
 func (h *ModoOperacionHandler) Estado(w http.ResponseWriter, r *http.Request) {
-	ok(w, map[string]interface{}{"activo": modoOperacionActivo(h.DB)}, "")
+	activo := modoOperacionActivo(h.DB)
+	enVivo := false
+	if activo {
+		enVivo = h.asegurarOperacionEnVivo()
+	}
+	ok(w, map[string]interface{}{
+		"activo":            activo,
+		"simulacion_activa": enVivo,
+	}, "")
 }
 
 // Actualizar — PUT /api/modo-operacion (solo admin) body {"activo": true|false}

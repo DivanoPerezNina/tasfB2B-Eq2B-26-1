@@ -105,9 +105,17 @@ func (o *Orquestador) AgregarCancelacion(origen, destino string, salidaUTC int64
 	o.mu.Lock()
 	o.cancelaciones = append(o.cancelaciones, cancelacion{Origen: origen, Destino: destino, SalidaUTC: salidaUTC})
 	o.mu.Unlock()
+	o.SolicitarReplanificacion()
+}
+
+// SolicitarReplanificacion dispara un re-plan inmediato sin agregar
+// cancelaciones. Se usa en Día a Día cuando un operario carga rutas o registra
+// envíos después de que la operación ya está encendida: sin esto el mapa podía
+// quedarse mostrando solo aeropuertos hasta el siguiente bloque Sa/Sc.
+func (o *Orquestador) SolicitarReplanificacion() {
 	select {
 	case o.cancelCh <- struct{}{}:
-	default: // ya hay un re-plan pendiente; las cancelaciones nuevas entran igual
+	default: // ya hay un re-plan pendiente
 	}
 }
 
@@ -178,15 +186,33 @@ func (o *Orquestador) run() {
 	// Reloj de VISUALIZACIÓN continuo: avanza Sc minutos de datos por cada Sa
 	// segundos reales → avance por segundo = Sc / Sa (min-dato/seg).
 	avance := float64(o.Sc) / o.Sa.Seconds()
-	proximoH := o.T0UTC + o.Sc // se re-planifica cuando el reloj cruza este umbral
-
-	// Plan inicial: bloque [iniPlan, t0+Sc].
+	tiempoInicial := o.T0UTC
 	finIni := o.T0UTC + o.Sc
+
+	// En Día a Día, si el admin/operario activa el modo a las 13:14 y el t0 es
+	// 13:00, el mapa debe ubicarse inmediatamente en la hora real actual, no
+	// arrancar visualmente desde las 13:00 ni acelerar. Además, el primer plan
+	// debe cubrir hasta "ahora" para incluir envíos registrados minutos antes y
+	// vuelos que ya están en ejecución.
+	if o.ModoOperacion {
+		ahoraUTC := time.Now().UTC().Unix() / 60
+		if ahoraUTC > tiempoInicial {
+			tiempoInicial = ahoraUTC
+		}
+		if tiempoInicial > o.FinUTC {
+			tiempoInicial = o.FinUTC
+		}
+		finIni = tiempoInicial + o.Sc
+	}
+
 	if finIni > o.FinUTC {
 		finIni = o.FinUTC
 	}
+	proximoH := finIni // se re-planifica cuando el reloj cruza este umbral
+
+	// Plan inicial: bloque [iniPlan, finIni].
 	start := time.Now()
-	sim, err := o.planificarYcargar(finIni, o.T0UTC)
+	sim, err := o.planificarYcargar(finIni, tiempoInicial)
 	taSeg := time.Since(start).Seconds()
 	if errors.Is(err, errSinRutas) {
 		// Operación encendida sin rutas todavía: se arranca con una simulación
@@ -212,7 +238,7 @@ func (o *Orquestador) run() {
 		o.emitirTramos(sim)
 	}
 
-	tiempo := float64(o.T0UTC)
+	tiempo := float64(tiempoInicial)
 	finActual := finIni // fin del bloque actualmente cargado (para re-plan por cancelación)
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()

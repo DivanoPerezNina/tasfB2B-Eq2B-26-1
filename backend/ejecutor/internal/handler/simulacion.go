@@ -362,6 +362,25 @@ func (h *SimulacionHandler) Cancelar(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ── POST /api/simulacion/replanificar ───────────────────────────────────────
+// Fuerza un re-plan inmediato del bloque actual sin agregar cancelaciones.
+// En Día a Día se usa después de cargar rutas o envíos para que el mapa se
+// actualice al momento, sin esperar el siguiente ciclo Sa/Sc.
+func (h *SimulacionHandler) Replanificar(w http.ResponseWriter, r *http.Request) {
+	h.mu.Lock()
+	orq := h.orq
+	h.mu.Unlock()
+	if orq == nil || orq.GetEstado() == "detenido" || orq.GetEstado() == "completado" {
+		errResp(w, 404, "SIN_SIMULACION", "No hay operación en curso para re-planificar")
+		return
+	}
+	orq.SolicitarReplanificacion()
+	respond(w, 202, map[string]interface{}{
+		"estado":  "replanificacion_solicitada",
+		"mensaje": "Re-planificación solicitada para el bloque actual",
+	})
+}
+
 // ── POST /api/simulacion/pausar ──────────────────────────────────────────────
 
 func (h *SimulacionHandler) Pausar(w http.ResponseWriter, r *http.Request) {

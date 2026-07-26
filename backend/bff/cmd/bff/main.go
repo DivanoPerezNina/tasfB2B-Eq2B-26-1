@@ -136,6 +136,10 @@ func main() {
 	// la salida de hoy y dispara re-planificación). El motor ya lo soporta en
 	// todos los escenarios; lo único que faltaba era el permiso.
 	mux.HandleFunc("POST /api/simulacion/cancelar", auth_(ejProxy))
+	// Re-planificar también puede ser solicitado por operarios después de cargar
+	// rutas/envíos en Día a Día. No inicia escenarios nuevos, solo refresca el
+	// plan actual del ejecutor.
+	mux.HandleFunc("POST /api/simulacion/replanificar", auth_(ejProxy))
 	mux.HandleFunc("/api/simulacion/", admin(ejProxy))
 
 	// ── CORS middleware ───────────────────────────────────────────────────────
@@ -147,7 +151,7 @@ func main() {
 			}
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-Confirmar-Borrado")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Confirmar-Borrado")
 			if strings.ToUpper(r.Method) == "OPTIONS" {
 				w.WriteHeader(http.StatusNoContent)
 				return

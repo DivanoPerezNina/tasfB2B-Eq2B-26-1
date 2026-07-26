@@ -27,6 +27,7 @@ func main() {
 	mux.HandleFunc("POST /api/simulacion/periodo-programado", h.PeriodoProgramado)
 	mux.HandleFunc("POST /api/simulacion/colapso", h.Colapso)
 	mux.HandleFunc("POST /api/simulacion/cancelar", h.Cancelar)
+	mux.HandleFunc("POST /api/simulacion/replanificar", h.Replanificar)
 	mux.HandleFunc("POST /api/simulacion/pausar", h.Pausar)
 	mux.HandleFunc("POST /api/simulacion/reanudar", h.Reanudar)
 	mux.HandleFunc("POST /api/simulacion/detener", h.Detener)

@@ -92,6 +92,17 @@ export function OperarioRutas({ modoActivo }: { modoActivo: boolean | null }) {
   };
   useEffect(cargar, []);
 
+  const solicitarReplanificacion = async () => {
+    try {
+      await fetch(`${BFF}/api/simulacion/replanificar`, {
+        method: 'POST',
+        headers: authHeader(),
+      });
+    } catch {
+      // Si aún no hay operación activa, el mapa seguirá intentando conectarse.
+    }
+  };
+
   const rutasVisibles = useMemo(() => {
     const q = filtro.trim().toUpperCase();
     const lista = q
@@ -156,6 +167,7 @@ export function OperarioRutas({ modoActivo }: { modoActivo: boolean | null }) {
       }
       setModalAbierto(false);
       cargar();
+      solicitarReplanificacion();
     } catch (e: any) {
       toast.error('No se pudo guardar', { description: e.message });
     } finally {
@@ -169,6 +181,7 @@ export function OperarioRutas({ modoActivo }: { modoActivo: boolean | null }) {
       await api(`/api/operario/rutas/${r.id}`, { method: 'DELETE' });
       toast.success('Ruta eliminada');
       cargar();
+      solicitarReplanificacion();
     } catch (e: any) {
       toast.error('No se pudo eliminar', { description: e.message });
     }
@@ -202,6 +215,7 @@ export function OperarioRutas({ modoActivo }: { modoActivo: boolean | null }) {
       toast.success('Archivo procesado', { description: `${j.data.registradas} rutas cargadas` });
       setArchivo(null);
       cargar();
+      solicitarReplanificacion();
     } catch (e: any) {
       toast.error('No se pudo subir el archivo', { description: e.message });
     } finally {
