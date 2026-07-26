@@ -162,8 +162,9 @@ export function Usuarios() {
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem' }}>
             <div>
               <h2 style={{ fontSize: '.9375rem', fontWeight: 600, margin: 0 }}>Modo Día a Día</h2>
-              <p style={{ fontSize: '.75rem', color: 'var(--cds-text-secondary)', margin: 0 }}>
-                Mientras esté apagado, los operarios ven su panel pero no pueden registrar envíos.
+              <p style={{ fontSize: '.75rem', color: 'var(--cds-text-secondary)', margin: 0, maxWidth: '38rem' }}>
+                Al encenderlo arranca la operación en vivo y los operarios pueden registrar rutas y envíos.
+                No hace falta configurar nada en Simulación: eso es solo para Periodo y Colapso.
               </p>
             </div>
             <Toggle

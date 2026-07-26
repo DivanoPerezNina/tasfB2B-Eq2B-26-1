@@ -2,9 +2,11 @@ package engine
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -186,16 +188,29 @@ func (o *Orquestador) run() {
 	start := time.Now()
 	sim, err := o.planificarYcargar(finIni, o.T0UTC)
 	taSeg := time.Since(start).Seconds()
-	if err != nil {
+	if errors.Is(err, errSinRutas) {
+		// Operación encendida sin rutas todavía: se arranca con una simulación
+		// vacía y el bucle vuelve a intentar cada bloque. El mapa queda visible
+		// (aeropuertos, sin aviones) en vez de mostrar un error.
+		o.Broadcast("aviso", map[string]interface{}{
+			"mensaje": "Operación iniciada sin rutas. Carga las rutas del día a día para que empiecen a planificarse los envíos.",
+		})
+		sim, err = o.simulacionVacia(finIni)
+		if err != nil {
+			o.Broadcast("fallo", map[string]interface{}{"mensaje": err.Error()})
+			return
+		}
+	} else if err != nil {
 		o.Broadcast("fallo", map[string]interface{}{"mensaje": err.Error()})
 		return
+	} else {
+		if res, ok := o.detectarColapso(sim, taSeg, o.Sa.Seconds(), o.T0UTC); ok {
+			o.setEstado("completado")
+			o.Broadcast("colapso", res)
+			return
+		}
+		o.emitirTramos(sim)
 	}
-	if res, ok := o.detectarColapso(sim, taSeg, o.Sa.Seconds(), o.T0UTC); ok {
-		o.setEstado("completado")
-		o.Broadcast("colapso", res)
-		return
-	}
-	o.emitirTramos(sim)
 
 	tiempo := float64(o.T0UTC)
 	finActual := finIni // fin del bloque actualmente cargado (para re-plan por cancelación)
@@ -218,6 +233,9 @@ func (o *Orquestador) run() {
 			// set de cancelaciones, así que el plan resultante ya re-rutea.
 			t := int64(tiempo)
 			nsim, err := o.planificarYcargar(finActual, t)
+			if errors.Is(err, errSinRutas) {
+				continue // nada que re-planificar todavía
+			}
 			if err != nil {
 				o.Broadcast("fallo", map[string]interface{}{"mensaje": err.Error()})
 				return
@@ -242,6 +260,13 @@ func (o *Orquestador) run() {
 				start := time.Now()
 				nsim, err := o.planificarYcargar(nuevoFin, t)
 				taSeg := time.Since(start).Seconds()
+				if errors.Is(err, errSinRutas) {
+					// Siguen sin cargarse rutas: avanzar el reloj y reintentar
+					// en el próximo bloque, sin matar la operación.
+					proximoH += o.Sc
+					finActual = nuevoFin
+					continue
+				}
 				if err != nil {
 					o.Broadcast("fallo", map[string]interface{}{"mensaje": err.Error()})
 					return
@@ -304,7 +329,9 @@ func (o *Orquestador) planificarYcargar(fin, t int64) (*Simulacion, error) {
 			return nil, fmt.Errorf("consultas vuelos: %w", err)
 		}
 		if len(v) == 0 {
-			return nil, fmt.Errorf("no hay rutas cargadas en vuelos_operacion: los operarios deben registrar las rutas antes de planificar")
+			// No es un fallo: en día a día la operación se enciende y los
+			// operarios cargan las rutas después. Se espera al próximo ciclo.
+			return nil, errSinRutas
 		}
 		vuelos = v
 	}
@@ -347,6 +374,22 @@ type envioConsulta struct {
 	Maletas     int    `json:"maletas"`
 	RegistroUTC int64  `json:"registroUTC"`
 	DeadlineUTC int64  `json:"deadlineUTC"`
+}
+
+// errSinRutas señala que el catálogo del día a día está vacío. NO es un fallo:
+// la operación se enciende antes de que los operarios carguen sus rutas, así
+// que el bucle se salta ese ciclo y reintenta en el siguiente.
+var errSinRutas = errors.New("sin rutas cargadas en vuelos_operacion")
+
+// simulacionVacia arma una Simulacion sin aviones para poder arrancar la
+// operación antes de que existan rutas. Reusa el parser de planes en vez de
+// un constructor aparte: así no hay dos formas de construir una Simulacion
+// que puedan divergir.
+func (o *Orquestador) simulacionVacia(fin int64) (*Simulacion, error) {
+	plan := fmt.Sprintf(
+		`{"resumen":{"ventanaIniUTC":%d,"ventanaFinUTC":%d,"observacionIniUTC":%d},"aeropuertos":[],"envios":[]}`,
+		o.T0UTC, fin, o.T0UTC)
+	return nuevaDesdeReader("blk", strings.NewReader(plan), 0, o.Umbrales, time.Second)
 }
 
 // vueloConsulta es una ruta tal como la entrega el servicio Consultas. Los
