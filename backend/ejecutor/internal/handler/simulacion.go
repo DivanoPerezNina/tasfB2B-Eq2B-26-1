@@ -475,12 +475,13 @@ func (h *SimulacionHandler) Estado(w http.ResponseWriter, r *http.Request) {
 		est := orq.GetEstado()
 		if est != "detenido" && est != "completado" {
 			respond(w, 200, map[string]interface{}{
-				"tipo":         "orquestador",
-				"estado":       est,
-				"t0_utc":       orq.T0UTC,
-				"fin_utc":      orq.FinUTC,
-				"activa":       true,
-				"clientes_sse": h.brokerClientes(),
+				"tipo":           "orquestador",
+				"estado":         est,
+				"t0_utc":         orq.T0UTC,
+				"fin_utc":        orq.FinUTC,
+				"activa":         true,
+				"modo_operacion": orq.ModoOperacion,
+				"clientes_sse":   h.brokerClientes(),
 			})
 			return
 		}
@@ -504,8 +505,11 @@ func (h *SimulacionHandler) Estado(w http.ResponseWriter, r *http.Request) {
 		progreso = 0
 	}
 	respond(w, 200, map[string]interface{}{
+		"tipo":           "simulacion",
 		"simulacion_id":  sim.ID,
 		"estado":         sim.GetEstado(),
+		"activa":         sim.GetEstado() != "detenido" && sim.GetEstado() != "completado",
+		"modo_operacion": false,
 		"tiempo_sim_utc": int64(t),
 		"progreso_pct":   fmt.Sprintf("%.1f", progreso),
 		"contadores":     cont,

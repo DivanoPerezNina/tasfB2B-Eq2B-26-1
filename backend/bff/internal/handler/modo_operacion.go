@@ -42,6 +42,10 @@ const (
 // Usamos un pequeño lookback real para incluir envíos recién registrados y
 // vuelos que ya están por despegar o acaban de iniciar.
 func (h *ModoOperacionHandler) arrancarOperacion() error {
+	return h.arrancarOperacionConReintento(false)
+}
+
+func (h *ModoOperacionHandler) arrancarOperacionConReintento(reintento bool) error {
 	t0 := time.Now().UTC().Unix()/60 - 10
 	if t0 < 0 {
 		t0 = 0
@@ -62,14 +66,24 @@ func (h *ModoOperacionHandler) arrancarOperacion() error {
 		return fmt.Errorf("no se pudo contactar al ejecutor: %w", err)
 	}
 	defer resp.Body.Close()
-	// 409 = ya hay una simulación corriendo. No es un error para nosotros:
-	// el modo queda encendido y se sigue usando la que ya está en curso.
-	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusConflict {
-		var buf bytes.Buffer
-		buf.ReadFrom(resp.Body)
-		return fmt.Errorf("el ejecutor respondió %d: %s", resp.StatusCode, buf.String())
+
+	if resp.StatusCode == http.StatusAccepted {
+		return nil
 	}
-	return nil
+
+	if resp.StatusCode == http.StatusConflict && !reintento {
+		// Había otra simulación/orquestador vivo que no necesariamente era Día a Día.
+		// En la práctica dejaba el interruptor activo pero el mapa conectado a nada.
+		// Para activar Operaciones Día a Día de forma consistente detenemos lo anterior
+		// y arrancamos el orquestador con ModoOperacion=true.
+		h.detenerOperacion()
+		time.Sleep(500 * time.Millisecond)
+		return h.arrancarOperacionConReintento(true)
+	}
+
+	var buf bytes.Buffer
+	buf.ReadFrom(resp.Body)
+	return fmt.Errorf("el ejecutor respondió %d: %s", resp.StatusCode, buf.String())
 }
 
 // detenerOperacion para el orquestador al apagar el modo. Best-effort: si el
@@ -110,13 +124,15 @@ func (h *ModoOperacionHandler) operacionEnVivo() bool {
 		return false
 	}
 	var body struct {
-		Activa bool   `json:"activa"`
-		Estado string `json:"estado"`
+		Activa        bool   `json:"activa"`
+		Estado        string `json:"estado"`
+		ModoOperacion bool   `json:"modo_operacion"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		return false
 	}
-	return body.Activa || (body.Estado != "" && body.Estado != "detenido" && body.Estado != "completado")
+	activo := body.Activa || (body.Estado != "" && body.Estado != "detenido" && body.Estado != "completado")
+	return activo && body.ModoOperacion
 }
 
 // asegurarOperacionEnVivo hace que "modo activo" signifique realmente

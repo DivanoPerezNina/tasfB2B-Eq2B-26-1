@@ -646,16 +646,26 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   // pregunta por /estado y, si hay una activa, se suscribe. El broker del
   // ejecutor reenvía el último evento de cada tipo (snapshot) al conectar.
   const conectarEspectador = useCallback(async (): Promise<boolean> => {
-    if (esRef.current) return true; // ya suscrito
+    if (esRef.current && esRef.current.readyState !== EventSource.CLOSED) {
+      setFase(prev => prev === 'idle' ? 'ejecutando' : prev);
+      return true; // ya suscrito
+    }
+    if (esRef.current && esRef.current.readyState === EventSource.CLOSED) {
+      esRef.current.close();
+      esRef.current = null;
+    }
     try {
       const r = await fetch(`${BFF}/api/simulacion/estado`, { headers: authHeader() });
       if (!r.ok) return false;
-      const j = await r.json();
-      if (!j?.activa) return false;
+      const raw = await r.json();
+      const j = raw?.data ?? raw;
+      const estado = String(j?.estado ?? '');
+      const activa = !!j?.activa || (estado !== '' && estado !== 'detenido' && estado !== 'completado');
+      if (!activa) return false;
       sseErroresRef.current = 0;
       const es = new EventSource(`${BFF}/api/simulacion/eventos`);
       esRef.current = es;
-      attachSimulationEventSourceListeners(es, 'period');
+      attachSimulationEventSourceListeners(es, j?.tipo === 'colapso' ? 'collapse' : 'period');
       setFase('ejecutando');
       return true;
     } catch {
