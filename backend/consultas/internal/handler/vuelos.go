@@ -48,7 +48,7 @@ func (h *VuelosHandler) Vuelos(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.DB.Query(`
 		SELECT origen_iata, destino_iata, salida_minutos, llegada_minutos, capacidad_max
 		FROM ` + tabla + `
-		ORDER BY id`)
+		ORDER BY origen_iata, destino_iata, salida_minutos, llegada_minutos, id`)
 	if err != nil {
 		errResp(w, 500, "DB_ERROR", err.Error())
 		return
