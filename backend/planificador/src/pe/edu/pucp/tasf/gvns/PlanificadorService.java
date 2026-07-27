@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -373,23 +374,237 @@ public class PlanificadorService {
 
         PlanificadorGVNSConcurrente plan = correrSolver(datos, criterio, semilla, diasCancelados);
 
-        // Pasada 1: contar exitosos (envío con al menos un tramo asignado).
-        int exitosos = 0;
+        // Pasada 1: contar exitosos generados por GVNS.
+        int exitososGVNS = 0;
         for (int e = 0; e < total; e++) {
-            if (plan.solucionVuelos[e][0] != -1) exitosos++;
+            if (plan.solucionVuelos[e][0] != -1) exitososGVNS++;
         }
+
+        // Día a Día manda la lista de vuelos_operacion en el body. Para este modo
+        // operativo no se debe quedar iterando indefinidamente ni devolver
+        // plan-tramos [] si existe una ruta factible. Mantenemos GVNS: primero se
+        // ejecuta la solución inicial + mejora; solo si GVNS no logra asignar todos
+        // los envíos se activa un respaldo factible que usa la misma red, capacidad,
+        // horarios UTC y cancelaciones. Periodo/Colapso NO cambian.
+        boolean modoOperacion = vuelos != null && !vuelos.isEmpty();
+        List<EnvioAsignado> salidaOperativa = null;
+        int exitososFinal = exitososGVNS;
+
+        if (modoOperacion && exitososGVNS < total) {
+            salidaOperativa = construirPlanOperativoConRespaldo(datos, plan, diasCancelados);
+            int exitososFallback = contarExitosos(salidaOperativa);
+            if (exitososFallback >= exitososGVNS) {
+                exitososFinal = exitososFallback;
+                System.out.printf(
+                        "Día a Día: GVNS=%d/%d; respaldo factible=%d/%d; se devuelve plan operativo.%n",
+                        exitososGVNS, total, exitososFallback, total);
+            } else {
+                salidaOperativa = null;
+            }
+        }
+
         // meta espejo de metaDesdeEnvios: salvados/tiempos en 0 (no se serializan los demás).
         ResultadoPlanificacion meta = new ResultadoPlanificacion(
-                iniUTC, finUTC, criterio, total, exitosos, total - exitosos, 0,
+                iniUTC, finUTC, criterio, total, exitososFinal, total - exitososFinal, 0,
                 0L, 0, 0, 0, 0.0, 0.0, 0, true);
 
-        // Pasada 2: escribir cada envío sin retenerlo.
+        // Pasada 2: escribir cada envío sin retener planes enormes. En Día a Día,
+        // si hubo fallback se serializa esa solución; si no, se serializa GVNS puro.
         appendCabecera(out, meta, observacionIniUTC, caps);
-        for (int e = 0; e < total; e++) {
-            if (e > 0) out.append(',');
-            construirUno(datos, plan, e).appendJSON(out);
+        if (salidaOperativa != null) {
+            for (int e = 0; e < salidaOperativa.size(); e++) {
+                if (e > 0) out.append(',');
+                salidaOperativa.get(e).appendJSON(out);
+            }
+        } else {
+            for (int e = 0; e < total; e++) {
+                if (e > 0) out.append(',');
+                construirUno(datos, plan, e).appendJSON(out);
+            }
         }
         out.append("]}");
+    }
+
+
+    // ── Respaldo operativo para Día a Día ───────────────────────────────────
+
+    private static int contarExitosos(List<EnvioAsignado> envios) {
+        int n = 0;
+        if (envios == null) return 0;
+        for (EnvioAsignado e : envios) {
+            if (e != null && "Exitoso".equals(e.estado) && !e.tramos.isEmpty()) n++;
+        }
+        return n;
+    }
+
+    /**
+     * Construye una solución factible rápida para Operaciones Día a Día cuando
+     * GVNS no consigue devolver tramos. No reemplaza al GVNS: se ejecuta después
+     * de GVNS y solo como respaldo para no dejar el mapa sin plan si existe una
+     * ruta válida en vuelos_operacion.
+     */
+    private static List<EnvioAsignado> construirPlanOperativoConRespaldo(
+            GestorDatos datos,
+            PlanificadorGVNSConcurrente plan,
+            java.util.Set<Long> diasCancelados) {
+
+        List<EnvioAsignado> res = new ArrayList<>(datos.numEnvios);
+        Map<Long, Integer> ocupacion = new HashMap<>();
+
+        for (int e = 0; e < datos.numEnvios; e++) {
+            EnvioAsignado asignado = buscarRutaOperativa(datos, e, ocupacion, diasCancelados);
+            if (asignado == null && plan != null && plan.solucionVuelos[e][0] != -1) {
+                // Si GVNS sí resolvió este envío, preservamos su resultado.
+                asignado = construirUno(datos, plan, e);
+            }
+            if (asignado == null) {
+                asignado = new EnvioAsignado(
+                        e,
+                        datos.iataAeropuerto[datos.envioOrigen[e]],
+                        datos.iataAeropuerto[datos.envioDestino[e]],
+                        datos.envioMaletas[e],
+                        datos.envioRegistroUTC[e],
+                        datos.envioDeadlineUTC[e],
+                        "Rechazado",
+                        new ArrayList<>());
+            }
+            res.add(asignado);
+        }
+        return res;
+    }
+
+    private static EnvioAsignado buscarRutaOperativa(GestorDatos datos, int e,
+                                                      Map<Long, Integer> ocupacion,
+                                                      java.util.Set<Long> cancelados) {
+        int origen = datos.envioOrigen[e];
+        int destino = datos.envioDestino[e];
+        int maletas = datos.envioMaletas[e];
+        long registro = datos.envioRegistroUTC[e];
+        long deadline = datos.envioDeadlineUTC[e];
+
+        // 1) Directo
+        for (int v = 0; v < datos.numVuelos; v++) {
+            if (datos.vueloOrigen[v] != origen || datos.vueloDestino[v] != destino) continue;
+            long sal = proximaSalida(registro, datos.vueloSalidaUTC[v]);
+            long lle = sal + duracion(datos, v);
+            if (lle > deadline) continue;
+            if (!reservarOperativo(datos, v, sal, maletas, ocupacion, cancelados)) continue;
+            return envioOperativo(datos, e, tramo(datos, v, sal));
+        }
+
+        // 2) Una escala
+        for (int v1 = 0; v1 < datos.numVuelos; v1++) {
+            if (datos.vueloOrigen[v1] != origen) continue;
+            int escala = datos.vueloDestino[v1];
+            if (escala == destino || escala == origen) continue;
+
+            long sal1 = proximaSalida(registro, datos.vueloSalidaUTC[v1]);
+            long lle1 = sal1 + duracion(datos, v1);
+            if (lle1 + 10 > deadline) continue;
+            if (!reservarOperativo(datos, v1, sal1, maletas, ocupacion, cancelados)) continue;
+
+            for (int v2 = 0; v2 < datos.numVuelos; v2++) {
+                if (datos.vueloOrigen[v2] != escala || datos.vueloDestino[v2] != destino) continue;
+                long sal2 = proximaSalida(lle1 + 10, datos.vueloSalidaUTC[v2]);
+                long lle2 = sal2 + duracion(datos, v2);
+                if (lle2 > deadline) continue;
+                if (!reservarOperativo(datos, v2, sal2, maletas, ocupacion, cancelados)) continue;
+                return envioOperativo(datos, e, tramo(datos, v1, sal1), tramo(datos, v2, sal2));
+            }
+            liberarOperativo(v1, sal1, maletas, ocupacion);
+        }
+
+        // 3) Dos escalas
+        for (int v1 = 0; v1 < datos.numVuelos; v1++) {
+            if (datos.vueloOrigen[v1] != origen) continue;
+            int escala1 = datos.vueloDestino[v1];
+            if (escala1 == origen || escala1 == destino) continue;
+
+            long sal1 = proximaSalida(registro, datos.vueloSalidaUTC[v1]);
+            long lle1 = sal1 + duracion(datos, v1);
+            if (lle1 + 10 > deadline) continue;
+            if (!reservarOperativo(datos, v1, sal1, maletas, ocupacion, cancelados)) continue;
+
+            boolean resolvio = false;
+            for (int v2 = 0; v2 < datos.numVuelos && !resolvio; v2++) {
+                if (datos.vueloOrigen[v2] != escala1) continue;
+                int escala2 = datos.vueloDestino[v2];
+                if (escala2 == origen || escala2 == escala1 || escala2 == destino) continue;
+
+                long sal2 = proximaSalida(lle1 + 10, datos.vueloSalidaUTC[v2]);
+                long lle2 = sal2 + duracion(datos, v2);
+                if (lle2 + 10 > deadline) continue;
+                if (!reservarOperativo(datos, v2, sal2, maletas, ocupacion, cancelados)) continue;
+
+                for (int v3 = 0; v3 < datos.numVuelos; v3++) {
+                    if (datos.vueloOrigen[v3] != escala2 || datos.vueloDestino[v3] != destino) continue;
+                    long sal3 = proximaSalida(lle2 + 10, datos.vueloSalidaUTC[v3]);
+                    long lle3 = sal3 + duracion(datos, v3);
+                    if (lle3 > deadline) continue;
+                    if (!reservarOperativo(datos, v3, sal3, maletas, ocupacion, cancelados)) continue;
+                    return envioOperativo(datos, e,
+                            tramo(datos, v1, sal1), tramo(datos, v2, sal2), tramo(datos, v3, sal3));
+                }
+                liberarOperativo(v2, sal2, maletas, ocupacion);
+            }
+            liberarOperativo(v1, sal1, maletas, ocupacion);
+        }
+
+        return null;
+    }
+
+    private static EnvioAsignado envioOperativo(GestorDatos datos, int e, EnvioAsignado.Tramo... tramos) {
+        List<EnvioAsignado.Tramo> lista = new ArrayList<>(tramos.length);
+        for (EnvioAsignado.Tramo t : tramos) lista.add(t);
+        return new EnvioAsignado(
+                e,
+                datos.iataAeropuerto[datos.envioOrigen[e]],
+                datos.iataAeropuerto[datos.envioDestino[e]],
+                datos.envioMaletas[e],
+                datos.envioRegistroUTC[e],
+                datos.envioDeadlineUTC[e],
+                "Exitoso",
+                lista);
+    }
+
+    private static EnvioAsignado.Tramo tramo(GestorDatos datos, int v, long salida) {
+        return new EnvioAsignado.Tramo(
+                v,
+                datos.iataAeropuerto[datos.vueloOrigen[v]],
+                datos.iataAeropuerto[datos.vueloDestino[v]],
+                salida,
+                salida + duracion(datos, v));
+    }
+
+    private static long duracion(GestorDatos datos, int v) {
+        long dur = datos.vueloLlegadaUTC[v] - datos.vueloSalidaUTC[v];
+        return dur < 0 ? dur + 1440 : dur;
+    }
+
+    private static long proximaSalida(long desdeUTC, int salidaDiaUTC) {
+        long minDelDia = Math.floorMod(desdeUTC, 1440L);
+        long diaAbs = Math.floorDiv(desdeUTC, 1440L);
+        return (minDelDia <= salidaDiaUTC)
+                ? diaAbs * 1440L + salidaDiaUTC
+                : (diaAbs + 1L) * 1440L + salidaDiaUTC;
+    }
+
+    private static boolean reservarOperativo(GestorDatos datos, int v, long salida, int maletas,
+                                             Map<Long, Integer> ocupacion,
+                                             java.util.Set<Long> cancelados) {
+        long key = PlanificadorGVNSConcurrente.claveVueloDia(v, salida);
+        if (cancelados != null && cancelados.contains(key)) return false;
+        int actual = ocupacion.getOrDefault(key, 0);
+        if (actual + maletas > datos.vueloCapacidad[v]) return false;
+        ocupacion.put(key, actual + maletas);
+        return true;
+    }
+
+    private static void liberarOperativo(int v, long salida, int maletas, Map<Long, Integer> ocupacion) {
+        long key = PlanificadorGVNSConcurrente.claveVueloDia(v, salida);
+        int actual = ocupacion.getOrDefault(key, 0) - maletas;
+        if (actual <= 0) ocupacion.remove(key);
+        else ocupacion.put(key, actual);
     }
 
     /**
