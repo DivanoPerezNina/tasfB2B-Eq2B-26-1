@@ -43,6 +43,7 @@ echo "[1.5] Apuntando servicios a la BD local (127.0.0.1)..."
 ensure_env DB_HOST 127.0.0.1
 ensure_env DB_PORT 3306
 ensure_env DB_NAME tasfb2b
+ensure_env PLANIFICADOR_AEROPUERTOS_FUENTE bd
 if ! grep -q "^DB_USER=" "$ENV_FILE" || ! grep -q "^DB_PASS=" "$ENV_FILE"; then
   echo "      ⚠ Falta DB_USER/DB_PASS en $ENV_FILE — añádelos (usuario de la BD local)."
 fi

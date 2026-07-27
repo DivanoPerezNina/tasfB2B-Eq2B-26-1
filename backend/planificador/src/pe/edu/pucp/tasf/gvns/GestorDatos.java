@@ -5,6 +5,11 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.ResultSet;
+import java.sql.Statement;
+import java.util.Properties;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -59,6 +64,98 @@ public class GestorDatos {
     // CARGA DE AEROPUERTOS
     // =========================================================================
     public void cargarAeropuertos(String rutaArchivo) {
+        limpiarAeropuertos();
+
+        // En la VM, el Planificador ya no debe depender de /tmp/tasf/aeropuertos.txt.
+        // Por defecto carga la tabla maestra `aeropuertos` de MySQL usando las
+        // credenciales del .env (DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASS).
+        // Para forzar el comportamiento antiguo: PLANIFICADOR_AEROPUERTOS_FUENTE=txt.
+        if (!"txt".equalsIgnoreCase(env("PLANIFICADOR_AEROPUERTOS_FUENTE", "bd"))) {
+            if (cargarAeropuertosDesdeBD()) {
+                return;
+            }
+            System.err.println("No se pudo cargar aeropuertos desde BD; intentando archivo como respaldo...");
+        }
+
+        cargarAeropuertosDesdeArchivo(rutaArchivo);
+    }
+
+    private void limpiarAeropuertos() {
+        mapaIataAId.clear();
+        numAeropuertos = 0;
+        capacidadAlmacen = new int[50];
+        gmtAeropuerto    = new int[50];
+        continenteAero   = new int[50];
+        iataAeropuerto   = new String[50];
+    }
+
+    private static String env(String key, String def) {
+        String v = System.getenv(key);
+        return (v == null || v.isBlank()) ? def : v.trim();
+    }
+
+    private boolean cargarAeropuertosDesdeBD() {
+        String host = env("DB_HOST", "127.0.0.1");
+        String port = env("DB_PORT", "3306");
+        String name = env("DB_NAME", "tasfb2b");
+        String user = env("DB_USER", "");
+        String pass = env("DB_PASS", "");
+
+        if (user.isBlank()) {
+            System.err.println("DB_USER no configurado; no se puede cargar aeropuertos desde BD.");
+            return false;
+        }
+
+        String url = "jdbc:mysql://" + host + ":" + port + "/" + name
+                + "?useUnicode=true&characterEncoding=utf8&serverTimezone=UTC";
+
+        Properties props = new Properties();
+        props.setProperty("user", user);
+        props.setProperty("password", pass);
+
+        String sql = "SELECT iata, gmt_offset, capacidad_almacen, continente "
+                + "FROM aeropuertos ORDER BY id";
+
+        System.out.println("Cargando aeropuertos desde BD: " + user + "@" + host + ":" + port + "/" + name);
+
+        try (Connection cn = DriverManager.getConnection(url, props);
+             Statement st = cn.createStatement();
+             ResultSet rs = st.executeQuery(sql)) {
+
+            int idActual = 1;
+            while (rs.next()) {
+                if (idActual >= iataAeropuerto.length) {
+                    throw new IllegalStateException("Más aeropuertos que la capacidad del arreglo: " + iataAeropuerto.length);
+                }
+
+                String codigoIata = rs.getString("iata");
+                int gmt = rs.getInt("gmt_offset");
+                int capacidad = rs.getInt("capacidad_almacen");
+                int continente = rs.getInt("continente");
+
+                if (codigoIata == null || codigoIata.isBlank()) continue;
+                codigoIata = codigoIata.trim().toUpperCase();
+
+                mapaIataAId.put(codigoIata, idActual);
+                iataAeropuerto [idActual] = codigoIata;
+                capacidadAlmacen[idActual] = capacidad;
+                gmtAeropuerto  [idActual] = gmt;
+                continenteAero [idActual] = continente;
+                idActual++;
+            }
+
+            this.numAeropuertos = idActual - 1;
+            System.out.println("Total Aeropuertos (BD): " + this.numAeropuertos);
+            return this.numAeropuertos > 0;
+
+        } catch (Exception e) {
+            System.err.println("Error cargando aeropuertos desde BD: " + e.getMessage());
+            limpiarAeropuertos();
+            return false;
+        }
+    }
+
+    private void cargarAeropuertosDesdeArchivo(String rutaArchivo) {
         int idActual        = 1;
         int continenteActual= 1;
 
@@ -155,20 +252,14 @@ public class GestorDatos {
                 int hS = Integer.parseInt(tSal[0]), mS = Integer.parseInt(tSal[1]);
                 int hL = Integer.parseInt(tLle[0]), mL = Integer.parseInt(tLle[1]);
 
-                // Conversión a UTC usando offset GMT del aeropuerto.
-                // IMPORTANTE: después de convertir, normalizamos la salida al
-                // minuto del día UTC [0, 1439]. Antes solo se corregían valores
-                // negativos; por eso una salida local 22:34 en SABE (GMT-3)
-                // quedaba como 1534 y el solver la interpretaba como la salida
-                // del día siguiente, rechazando envíos válidos de Día a Día.
-                int salidaRawUTC  = (hS - gmtAeropuerto[idO]) * 60 + mS;
-                int llegadaRawUTC = (hL - gmtAeropuerto[idD]) * 60 + mL;
+                // Conversión a UTC usando offset GMT del aeropuerto
+                int salidaUTC  = (hS - gmtAeropuerto[idO]) * 60 + mS;
+                int llegadaUTC = (hL - gmtAeropuerto[idD]) * 60 + mL;
 
-                int salidaUTC  = Math.floorMod(salidaRawUTC, 1440);
-                int llegadaUTC = Math.floorMod(llegadaRawUTC, 1440);
-                // Si la llegada UTC queda antes o igual que la salida UTC,
-                // significa que el vuelo cruza medianoche en eje UTC.
-                // Guardamos llegada como salida + duración relativa.
+                // Ajuste de rango al día [0, 1440)
+                if (salidaUTC  < 0) salidaUTC  += 1440;
+                if (llegadaUTC < 0) llegadaUTC += 1440;
+                // Si la llegada parece anterior a la salida → cruza medianoche
                 if (llegadaUTC <= salidaUTC) llegadaUTC += 1440;
 
                 vueloOrigen    [count] = idO;
@@ -220,16 +311,14 @@ public class GestorDatos {
             int idO = mapaIataAId.get(ori);
             int idD = mapaIataAId.get(des);
 
-            // Conversión a UTC usando offset GMT del aeropuerto (igual que el archivo).
-            // Día a Día usa horas locales de la tabla vuelos_operacion. Para
-            // aeropuertos con GMT negativo, una salida nocturna puede producir
-            // un minuto UTC mayor a 1440; debe normalizarse al minuto del día.
-            int salidaRawUTC  = v.salida()  - gmtAeropuerto[idO] * 60;
-            int llegadaRawUTC = v.llegada() - gmtAeropuerto[idD] * 60;
+            // Conversión a UTC usando offset GMT del aeropuerto (igual que el archivo)
+            int salidaUTC  = v.salida()  - gmtAeropuerto[idO] * 60;
+            int llegadaUTC = v.llegada() - gmtAeropuerto[idD] * 60;
 
-            int salidaUTC  = Math.floorMod(salidaRawUTC, 1440);
-            int llegadaUTC = Math.floorMod(llegadaRawUTC, 1440);
-            // Si la llegada parece anterior o igual a la salida → cruza medianoche.
+            // Ajuste de rango al día [0, 1440)
+            if (salidaUTC  < 0) salidaUTC  += 1440;
+            if (llegadaUTC < 0) llegadaUTC += 1440;
+            // Si la llegada parece anterior a la salida → cruza medianoche
             if (llegadaUTC <= salidaUTC) llegadaUTC += 1440;
 
             vueloOrigen    [count] = idO;
