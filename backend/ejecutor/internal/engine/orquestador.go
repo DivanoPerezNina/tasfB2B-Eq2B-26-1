@@ -269,10 +269,22 @@ func (o *Orquestador) run() {
 			sim = nsim
 			o.emitirTramos(sim)
 		case <-ticker.C:
-			tiempo += avance
-			if tiempo > float64(o.FinUTC) {
-				tiempo = float64(o.FinUTC)
+			if o.ModoOperacion {
+				tiempo = float64(time.Now().UTC().Unix()) / 60.0
+
+				if tiempo < float64(o.T0UTC) {
+					tiempo = float64(o.T0UTC)
+				}
+				if tiempo > float64(o.FinUTC) {
+					tiempo = float64(o.FinUTC)
+				}
+			} else {
+				tiempo += avance
+				if tiempo > float64(o.FinUTC) {
+					tiempo = float64(o.FinUTC)
+				}
 			}
+
 			t := int64(tiempo)
 
 			// Re-planificación PROGRAMADA: cada vez que el reloj cruza un bloque
