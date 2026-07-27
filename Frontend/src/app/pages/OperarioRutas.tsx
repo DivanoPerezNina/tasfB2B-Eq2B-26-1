@@ -142,18 +142,36 @@ export function OperarioRutas({ modoActivo }: { modoActivo: boolean | null }) {
   // el vuelo que está en ejecución; si no hay uno activo, toma la próxima salida.
   // Se busca en planTramos (lo mismo que dibuja el mapa), así cancelar desde la
   // tabla y desde el mapa apuntan a la misma ocurrencia.
-  const proximaSalida = (r: Ruta): number | null => {
-    const activos = planTramos
-      .filter(t => t.desde === r.origen_iata && t.hasta === r.destino_iata && t.salidaUTC <= tiempoSimUTC && t.llegadaUTC > tiempoSimUTC)
-      .map(t => t.salidaUTC)
-      .sort((a, b) => b - a);
-    if (activos.length > 0) return activos[0];
+  const salidaUTCDeFila = (r: Ruta): number | null => {
+    const origen = aeropuertosBFF.find(a => a.iata === r.origen_iata);
+    const destino = aeropuertosBFF.find(a => a.iata === r.destino_iata);
 
-    const futuros = planTramos
-      .filter(t => t.desde === r.origen_iata && t.hasta === r.destino_iata && t.salidaUTC > tiempoSimUTC)
-      .map(t => t.salidaUTC)
-      .sort((a, b) => a - b);
-    return futuros.length > 0 ? futuros[0] : null;
+    if (!origen || !destino || !Number.isFinite(tiempoSimUTC)) {
+      return null;
+    }
+
+    const gmtOrigen = origen.gmt_offset;
+    const gmtDestino = destino.gmt_offset;
+
+    // Día local actual del aeropuerto de origen
+    const minutoLocalOrigenActual = tiempoSimUTC + gmtOrigen * 60;
+    const diaLocalOrigen = Math.floor(minutoLocalOrigenActual / 1440);
+
+    // Salida exacta de la fila, convertida a UTC absoluto
+    const salidaUTC = diaLocalOrigen * 1440 + r.salida_minutos - gmtOrigen * 60;
+
+    // Llegada estimada para saber si ya terminó
+    let llegadaUTC = diaLocalOrigen * 1440 + r.llegada_minutos - gmtDestino * 60;
+    if (llegadaUTC <= salidaUTC) {
+      llegadaUTC += 1440;
+    }
+
+    // Si ya terminó, no se puede cancelar
+    if (llegadaUTC <= tiempoSimUTC) {
+      return null;
+    }
+
+    return salidaUTC;
   };
 
   const abrirCrear = () => {
@@ -215,7 +233,7 @@ export function OperarioRutas({ modoActivo }: { modoActivo: boolean | null }) {
   };
 
   const cancelarSalida = async (r: Ruta) => {
-    const salidaUTC = proximaSalida(r);
+    const salidaUTC = salidaUTCDeFila(r);
     if (salidaUTC == null) return;
     if (!window.confirm(`¿Cancelar la salida ${r.origen_iata} → ${r.destino_iata}? Las maletas asignadas se re-planificarán por otra ruta.`)) return;
     const okCancel = await cancelarVuelo(r.origen_iata, r.destino_iata, salidaUTC);
@@ -313,7 +331,7 @@ export function OperarioRutas({ modoActivo }: { modoActivo: boolean | null }) {
               </thead>
               <tbody>
                 {rutasVisibles.map(r => {
-                  const salidaUTC = proximaSalida(r);
+                  const salidaUTC = salidaUTCDeFila(r);
                   return (
                     <tr key={r.id} style={{ borderBottom: '1px solid var(--cds-border-subtle)' }}>
                       <td style={{ padding: '.45rem .6rem', fontFamily: 'monospace' }}>{r.origen_iata}</td>
