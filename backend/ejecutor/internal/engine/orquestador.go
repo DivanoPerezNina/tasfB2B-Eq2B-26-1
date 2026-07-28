@@ -108,40 +108,12 @@ func NuevoOrquestador(id, consultasURL, planificadorURL string,
 // inmediato del bloque actual. Thread-safe: lo llama el handler HTTP mientras el
 // bucle Sa/Sc corre en su propia goroutine.
 func (o *Orquestador) AgregarCancelacion(vueloID int64, origen, destino string, salidaUTC int64) {
-	origen = strings.ToUpper(strings.TrimSpace(origen))
-	destino = strings.ToUpper(strings.TrimSpace(destino))
-	nueva := cancelacion{VueloID: vueloID, Origen: origen, Destino: destino, SalidaUTC: salidaUTC}
-
 	o.mu.Lock()
-	// Idempotencia: varios clics o la llamada adicional de replanificación del
-	// frontend no deben acumular cancelaciones duplicadas. En Día a Día la clave
-	// es vueloId+día; en escenarios antiguos se conserva ruta+minuto absoluto.
-	duplicada := false
-	for _, actual := range o.cancelaciones {
-		if vueloID > 0 && actual.VueloID > 0 {
-			if actual.VueloID == vueloID && floorDiv1440Orq(actual.SalidaUTC) == floorDiv1440Orq(salidaUTC) {
-				duplicada = true
-				break
-			}
-		} else if actual.VueloID == 0 && vueloID == 0 && actual.Origen == origen &&
-			actual.Destino == destino && actual.SalidaUTC == salidaUTC {
-			duplicada = true
-			break
-		}
-	}
-	if !duplicada {
-		o.cancelaciones = append(o.cancelaciones, nueva)
-	}
+	o.cancelaciones = append(o.cancelaciones, cancelacion{
+		VueloID: vueloID, Origen: origen, Destino: destino, SalidaUTC: salidaUTC,
+	})
 	o.mu.Unlock()
 	o.SolicitarReplanificacion()
-}
-
-func floorDiv1440Orq(v int64) int64 {
-	q := v / 1440
-	if v < 0 && v%1440 != 0 {
-		q--
-	}
-	return q
 }
 
 // SolicitarReplanificacion dispara un re-plan inmediato sin agregar

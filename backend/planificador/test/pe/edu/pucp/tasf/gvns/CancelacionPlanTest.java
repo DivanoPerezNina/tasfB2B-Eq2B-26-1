@@ -76,42 +76,6 @@ class CancelacionPlanTest {
         assertEquals(0, p.solucionVuelos[0][0], "cancelar otro día no debe afectar a este");
     }
 
-
-    @Test
-    void vueloIdExactoNoCancelaSalidasVecinas() {
-        GestorDatos d = datosAB();
-        d.numVuelos = 3;
-        d.vueloOrigen[0] = 1; d.vueloDestino[0] = 2; d.vueloSalidaUTC[0] = 815; d.vueloLlegadaUTC[0] = 1380; d.vueloCapacidad[0] = 150; d.vueloIdExterno[0] = 101;
-        d.vueloOrigen[1] = 1; d.vueloDestino[1] = 2; d.vueloSalidaUTC[1] = 816; d.vueloLlegadaUTC[1] = 1380; d.vueloCapacidad[1] = 150; d.vueloIdExterno[1] = 102;
-        d.vueloOrigen[2] = 1; d.vueloDestino[2] = 2; d.vueloSalidaUTC[2] = 817; d.vueloLlegadaUTC[2] = 1380; d.vueloCapacidad[2] = 150; d.vueloIdExterno[2] = 103;
-
-        long dia = 20L * 1440L;
-        // salidaUTC está deliberadamente corrida cinco minutos. Con vueloId la
-        // cancelación sigue siendo exacta y solo usa el día de la ocurrencia.
-        Set<Long> claves = PlanificadorService.clavesCanceladas(
-                d, List.of(new CancelacionDTO(101L, "AAAA", "BBBB", dia + 820)));
-
-        assertEquals(Set.of(PlanificadorGVNSConcurrente.claveVueloDia(0, dia + 820)), claves);
-        assertFalse(claves.contains(PlanificadorGVNSConcurrente.claveVueloDia(1, dia + 820)));
-        assertFalse(claves.contains(PlanificadorGVNSConcurrente.claveVueloDia(2, dia + 820)));
-    }
-
-    @Test
-    void fallbackSinVueloIdExigeMinutoExacto() {
-        GestorDatos d = datosAB();
-        d.numVuelos = 3;
-        for (int v = 0; v < 3; v++) {
-            d.vueloOrigen[v] = 1; d.vueloDestino[v] = 2;
-            d.vueloSalidaUTC[v] = 815 + v;
-            d.vueloLlegadaUTC[v] = 1380;
-            d.vueloCapacidad[v] = 150;
-        }
-        long dia = 20L * 1440L;
-        Set<Long> claves = PlanificadorService.clavesCanceladas(
-                d, List.of(new CancelacionDTO("AAAA", "BBBB", dia + 815)));
-        assertEquals(Set.of(PlanificadorGVNSConcurrente.claveVueloDia(0, dia + 815)), claves);
-    }
-
     @Test
     void clavesCanceladasTraduceDTO() {
         GestorDatos d = datosAB();

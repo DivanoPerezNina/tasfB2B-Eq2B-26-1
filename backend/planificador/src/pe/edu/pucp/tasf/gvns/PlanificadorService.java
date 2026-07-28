@@ -635,44 +635,18 @@ public class PlanificadorService {
 
         java.util.Set<Long> claves = new java.util.HashSet<>(cancelados.size() * 2);
         for (CancelacionDTO c : cancelados) {
-            if (c == null) continue;
-
-            // Día a Día siempre envía el ID estable de vuelos_operacion. Cuando
-            // existe ese ID, él es la fuente de verdad: se cancela únicamente esa
-            // unidad en el día indicado por salidaUTC. No se vuelve a comparar la
-            // hora del patrón, porque una diferencia de zona horaria o una foto SSE
-            // ligeramente desfasada hacía que la cancelación no se aplicara. El
-            // frontend ocultaba el vuelo, pero el planificador seguía usándolo.
-            if (c.vueloId() != null && c.vueloId() > 0L) {
-                boolean encontrado = false;
-                for (int v = 0; v < datos.numVuelos; v++) {
-                    if (datos.vueloIdExterno[v] != c.vueloId()) continue;
-                    claves.add(PlanificadorGVNSConcurrente.claveVueloDia(v, c.salidaUTC()));
-                    encontrado = true;
-                    break;
-                }
-                if (!encontrado) {
-                    System.err.printf(
-                            "Cancelación ignorada: vueloId=%d no existe en vuelos_operacion.%n",
-                            c.vueloId());
-                }
-                continue;
-            }
-
-            // Compatibilidad con Periodo/Colapso, donde no existe vueloId externo.
-            // La coincidencia por ruta debe ser de minuto exacto. La tolerancia
-            // anterior de ±2 minutos cancelaba también vuelos consecutivos como
-            // 13:35, 13:36 y 13:37, dando la impresión de cancelar toda la ruta.
-            if (c.origen() == null || c.destino() == null) continue;
+            if (c == null || c.origen() == null || c.destino() == null) continue;
             Integer oid = datos.mapaIataAId.get(c.origen());
             Integer did = datos.mapaIataAId.get(c.destino());
             if (oid == null || did == null) continue;
 
-            int salDiaWanted = Math.floorMod(c.salidaUTC(), 1440);
+            int salDiaWanted = (int) (((c.salidaUTC() % 1440) + 1440) % 1440);
             for (int v = 0; v < datos.numVuelos; v++) {
                 if (datos.vueloOrigen[v] != oid || datos.vueloDestino[v] != did) continue;
-                int salDia = Math.floorMod(datos.vueloSalidaUTC[v], 1440);
-                if (salDia == salDiaWanted) {
+                if (c.vueloId() != null && c.vueloId() > 0L
+                        && datos.vueloIdExterno[v] != c.vueloId()) continue;
+                int salDia = ((datos.vueloSalidaUTC[v] % 1440) + 1440) % 1440;
+                if (Math.abs(salDia - salDiaWanted) <= 2) {
                     claves.add(PlanificadorGVNSConcurrente.claveVueloDia(v, c.salidaUTC()));
                 }
             }

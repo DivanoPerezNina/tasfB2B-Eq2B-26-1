@@ -398,29 +398,3 @@ func TestAjusteCancelacionConexionRespetaEscala(t *testing.T) {
 		t.Fatalf("disponibleDesdeUTC=%d; quiero 190 (llegada 180 + 10)", got.DisponibleDesdeUTC)
 	}
 }
-
-// TestAjusteCancelacionPorIDNoAfectaVuelosVecinos reproduce tres salidas
-// consecutivas de la misma ruta. Una cancelación con vueloId exacto debe afectar
-// solo a esa unidad, aunque salidaUTC llegue desfasada algunos minutos.
-func TestAjusteCancelacionPorIDNoAfectaVuelosVecinos(t *testing.T) {
-	dia := int64(20 * 1440)
-	s := &Simulacion{Envios: []EstadoEnvio{
-		{Indice: 0, Origen: "VIDP", Destino: "SKBO", RegistroUTC: dia + 700,
-			Tramos: []TramoSim{{VueloID: 101, Desde: "VIDP", Hasta: "SKBO", SalidaUTC: dia + 815, LlegadaUTC: dia + 1380}}},
-		{Indice: 1, Origen: "VIDP", Destino: "SKBO", RegistroUTC: dia + 700,
-			Tramos: []TramoSim{{VueloID: 102, Desde: "VIDP", Hasta: "SKBO", SalidaUTC: dia + 816, LlegadaUTC: dia + 1380}}},
-	}}
-
-	// La hora llega con +4 minutos de diferencia, pero el ID y el día son los
-	// mismos. Solo el envío del vuelo 101 debe entrar a replanificación.
-	ajustes := s.ajustesPorCancelaciones([]cancelacion{{
-		VueloID: 101, Origen: "VIDP", Destino: "SKBO", SalidaUTC: dia + 819,
-	}}, dia+820)
-
-	if _, ok := ajustes[0]; !ok {
-		t.Fatal("el envío del vueloId 101 debe replanificarse")
-	}
-	if _, ok := ajustes[1]; ok {
-		t.Fatal("el vuelo vecino 102 no debe verse afectado")
-	}
-}

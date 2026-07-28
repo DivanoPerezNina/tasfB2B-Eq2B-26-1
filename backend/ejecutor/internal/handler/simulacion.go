@@ -352,13 +352,7 @@ func (h *SimulacionHandler) Cancelar(w http.ResponseWriter, r *http.Request) {
 		errResp(w, 404, "SIN_SIMULACION", "No hay simulación de periodo en curso")
 		return
 	}
-	if orq.ModoOperacion && req.VueloID <= 0 {
-		errResp(w, 400, "VUELO_ID_REQUERIDO", "Día a Día requiere el ID exacto de vuelos_operacion para no cancelar toda la ruta")
-		return
-	}
 
-	fmt.Printf("Cancelación solicitada: modoOperacion=%t vueloId=%d %s->%s salidaUTC=%d\n",
-		orq.ModoOperacion, req.VueloID, strings.ToUpper(req.Origen), strings.ToUpper(req.Destino), req.SalidaUTC)
 	orq.AgregarCancelacion(req.VueloID, req.Origen, req.Destino, req.SalidaUTC)
 	respond(w, 202, map[string]interface{}{
 		"estado":    "cancelacion_aplicada",
