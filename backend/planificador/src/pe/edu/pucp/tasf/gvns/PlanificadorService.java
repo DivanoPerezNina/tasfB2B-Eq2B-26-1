@@ -387,17 +387,23 @@ public class PlanificadorService {
         // los envíos se activa un respaldo factible que usa la misma red, capacidad,
         // horarios UTC y cancelaciones. Periodo/Colapso NO cambian.
         boolean modoOperacion = vuelos != null && !vuelos.isEmpty();
+        boolean hayCancelaciones = cancelados != null && !cancelados.isEmpty();
         List<EnvioAsignado> salidaOperativa = null;
         int exitososFinal = exitososGVNS;
 
-        if (modoOperacion && exitososGVNS < total) {
+        if (modoOperacion && (hayCancelaciones || exitososGVNS < total)) {
             salidaOperativa = construirPlanOperativoConRespaldo(datos, plan, diasCancelados);
             int exitososFallback = contarExitosos(salidaOperativa);
-            if (exitososFallback >= exitososGVNS) {
+
+            // En Día a Día con cancelaciones se fuerza la salida operativa: así
+            // garantizamos que el vuelo cancelado quede excluido y que, si existe
+            // una ruta restante factible, se use inmediatamente. GVNS igual corre
+            // primero; este paso solo normaliza la respuesta operativa del caso vivo.
+            if (hayCancelaciones || exitososFallback >= exitososGVNS) {
                 exitososFinal = exitososFallback;
                 System.out.printf(
-                        "Día a Día: GVNS=%d/%d; respaldo factible=%d/%d; se devuelve plan operativo.%n",
-                        exitososGVNS, total, exitososFallback, total);
+                        "Día a Día: GVNS=%d/%d; respaldo operativo=%d/%d; cancelaciones=%s; se devuelve plan operativo.%n",
+                        exitososGVNS, total, exitososFallback, total, hayCancelaciones);
             } else {
                 salidaOperativa = null;
             }

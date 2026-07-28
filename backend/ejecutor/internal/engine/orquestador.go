@@ -236,6 +236,7 @@ func (o *Orquestador) run() {
 			return
 		}
 		o.emitirTramos(sim)
+		o.emitirSnapshot(sim, tiempoInicial)
 	}
 
 	tiempo := float64(tiempoInicial)
@@ -268,6 +269,7 @@ func (o *Orquestador) run() {
 			}
 			sim = nsim
 			o.emitirTramos(sim)
+			o.emitirSnapshot(sim, t)
 		case <-ticker.C:
 			if o.ModoOperacion {
 				tiempo = float64(time.Now().UTC().Unix()) / 60.0
@@ -316,6 +318,7 @@ func (o *Orquestador) run() {
 					return
 				}
 				o.emitirTramos(sim)
+				o.emitirSnapshot(sim, t)
 				proximoH += o.Sc
 				finActual = nuevoFin
 			}
@@ -404,6 +407,65 @@ func (o *Orquestador) emitirTramos(sim *Simulacion) {
 	o.Broadcast("plan-tramos", tramos)
 }
 
+// emitirSnapshot empuja inmediatamente tick + aeropuertos después de una
+// re-planificación. Sin esto, el plan nuevo podía llegar por SSE, pero el mapa
+// seguía con aeropuertos/contadores del plan anterior hasta el siguiente tick.
+func (o *Orquestador) emitirSnapshot(sim *Simulacion, t int64) {
+	sim.mu.Lock()
+	sim.TiempoSimUTC = float64(t)
+	sim.procesarEventos(t)
+	aeropuertos := sim.snapshotAeropuertos()
+	cont := sim.calcularContadores()
+	sim.mu.Unlock()
+
+	progreso := 0.0
+	if o.FinUTC > o.T0UTC {
+		progreso = (float64(t) - float64(o.T0UTC)) / float64(o.FinUTC-o.T0UTC) * 100.0
+	}
+	if progreso < 0 {
+		progreso = 0
+	}
+	if progreso > 100 {
+		progreso = 100
+	}
+	o.Broadcast("tick", map[string]interface{}{
+		"tiempo_sim_utc": t,
+		"progreso_pct":   fmt.Sprintf("%.1f", progreso),
+		"contadores":     cont,
+	})
+	o.Broadcast("aeropuertos", aeropuertos)
+}
+
+// aeropuertosDesdePlanificador trae el catálogo de aeropuertos del planificador
+// para que una operación vacía igual pinte la red base. Best-effort: si falla,
+// se devuelve [] y el próximo plan con datos volverá a poblarlos.
+func (o *Orquestador) aeropuertosDesdePlanificador() []AeropuertoPlan {
+	cli := &http.Client{Timeout: 5 * time.Second}
+	resp, err := cli.Get(o.PlanificadorURL + "/api/aeropuertos")
+	if err != nil {
+		return []AeropuertoPlan{}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return []AeropuertoPlan{}
+	}
+	var raw []struct {
+		IATA      string `json:"iata"`
+		Capacidad int    `json:"capacidad"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return []AeropuertoPlan{}
+	}
+	out := make([]AeropuertoPlan, 0, len(raw))
+	for _, a := range raw {
+		if a.IATA == "" {
+			continue
+		}
+		out = append(out, AeropuertoPlan{IATA: a.IATA, Capacidad: a.Capacidad})
+	}
+	return out
+}
+
 // ─── Llamadas a los servicios ────────────────────────────────────────────────
 
 type envioConsulta struct {
@@ -424,10 +486,26 @@ var errSinRutas = errors.New("sin rutas cargadas en vuelos_operacion")
 // un constructor aparte: así no hay dos formas de construir una Simulacion
 // que puedan divergir.
 func (o *Orquestador) simulacionVacia(fin int64) (*Simulacion, error) {
-	plan := fmt.Sprintf(
-		`{"resumen":{"ventanaIniUTC":%d,"ventanaFinUTC":%d,"observacionIniUTC":%d},"aeropuertos":[],"envios":[]}`,
-		o.T0UTC, fin, o.T0UTC)
-	return nuevaDesdeReader("blk", strings.NewReader(plan), 0, o.Umbrales, time.Second)
+	// Aun sin rutas/envíos, el mapa debe recibir los aeropuertos para pintar la
+	// red base. Antes este plan vacío mandaba "aeropuertos":[] y el EventStream
+	// quedaba alternando tick/aeropuertos vacíos hasta que aparecía un plan.
+	plan := PlanResponse{
+		Resumen: ResumenPlan{
+			TotalEnvios:       0,
+			Exitosos:          0,
+			Rechazados:        0,
+			VentanaIniUTC:     o.T0UTC,
+			VentanaFinUTC:     fin,
+			ObservacionIniUTC: o.T0UTC,
+		},
+		Aeropuertos: o.aeropuertosDesdePlanificador(),
+		Envios:      []EnvioPlan{},
+	}
+	b, err := json.Marshal(plan)
+	if err != nil {
+		return nil, err
+	}
+	return nuevaDesdeReader("blk", strings.NewReader(string(b)), 0, o.Umbrales, time.Second)
 }
 
 // vueloConsulta es una ruta tal como la entrega el servicio Consultas. Los

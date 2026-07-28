@@ -216,6 +216,10 @@ function getActiveFlightsFromPlan(
   };
 
   const currentMinute = simMinuteUTC;
+  // La activación usa el minuto confirmado por tick, no la extrapolación suave.
+  // Así no aparece un avión segundos antes de su hora de salida por interpolación
+  // del mapa. La extrapolación se usa solo para moverlo una vez ya activo.
+  const activationMinute = Math.floor(simMinuteUTC + 1e-9);
   const occurrences = new globalThis.Map<string, ActiveOccurrence>();
 
   // Importante: el mapa solo debe dibujar vuelos que realmente estén siendo
@@ -223,7 +227,7 @@ function getActiveFlightsFromPlan(
   // completo de vuelos, porque eso hacía aparecer cientos de vuelos vacíos al
   // inicio de la simulación.
   for (const tramo of planTramos) {
-    if (currentMinute < tramo.salidaUTC || currentMinute >= tramo.llegadaUTC) continue;
+    if (activationMinute < Math.floor(tramo.salidaUTC) || currentMinute >= tramo.llegadaUTC) continue;
 
     const key = `${tramo.desde}|${tramo.hasta}|${Math.round(tramo.salidaUTC)}|${Math.round(tramo.llegadaUTC)}`;
     const existing = occurrences.get(key);
