@@ -350,7 +350,7 @@ export function OperarioRutas({ modoActivo }: { modoActivo: boolean | null }) {
               </thead>
               <tbody>
                 {rutasVisibles.map(r => {
-                  const salidaUTC = salidaUTCDeFila(r);
+                  const salidaUTC = ocurrenciaUTCDeFila(r)?.salidaUTC ?? null;
                   return (
                     <tr key={r.id} style={{ borderBottom: '1px solid var(--cds-border-subtle)' }}>
                       <td style={{ padding: '.45rem .6rem', fontFamily: 'monospace' }}>{r.origen_iata}</td>
