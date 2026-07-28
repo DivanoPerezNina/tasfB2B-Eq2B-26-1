@@ -236,7 +236,6 @@ func (o *Orquestador) run() {
 			return
 		}
 		o.emitirTramos(sim)
-		o.emitirSnapshot(sim, tiempoInicial)
 	}
 
 	tiempo := float64(tiempoInicial)
@@ -269,7 +268,7 @@ func (o *Orquestador) run() {
 			}
 			sim = nsim
 			o.emitirTramos(sim)
-			o.emitirSnapshot(sim, t)
+			o.emitirSnapshotActual(sim, t)
 		case <-ticker.C:
 			if o.ModoOperacion {
 				tiempo = float64(time.Now().UTC().Unix()) / 60.0
@@ -318,7 +317,7 @@ func (o *Orquestador) run() {
 					return
 				}
 				o.emitirTramos(sim)
-				o.emitirSnapshot(sim, t)
+				o.emitirSnapshotActual(sim, t)
 				proximoH += o.Sc
 				finActual = nuevoFin
 			}
@@ -356,11 +355,29 @@ func (o *Orquestador) run() {
 // planificarYcargar consulta [iniPlan, fin], planifica (desde-datos) y carga el
 // plan en una Simulacion posicionada en el instante t.
 func (o *Orquestador) planificarYcargar(fin, t int64) (*Simulacion, error) {
-	envios, err := o.consultar(o.IniPlanUTC, fin)
+	// En Día a Día no conviene planificar solo el bloque de 1 minuto actual:
+	// si el operario carga envíos/rutas con algunos minutos de anticipación, el
+	// re-plan inmediato debe verlos y devolver plan-tramos al mapa. Por eso se
+	// usa un horizonte móvil amplio, sin afectar Periodo/Colapso.
+	finPlan := fin
+	if o.ModoOperacion {
+		minFin := t + 2*1440 // cubre envíos intercontinentales y pruebas futuras del día
+		if minFin > finPlan {
+			finPlan = minFin
+		}
+		if finPlan > o.FinUTC {
+			finPlan = o.FinUTC
+		}
+		if finPlan <= o.IniPlanUTC {
+			finPlan = o.IniPlanUTC + 1
+		}
+	}
+
+	envios, err := o.consultar(o.IniPlanUTC, finPlan)
 	if err != nil {
 		return nil, fmt.Errorf("consultas: %w", err)
 	}
-	cancelados := o.cancelacionesParaVentana(fin)
+	cancelados := o.cancelacionesParaVentana(finPlan)
 	// En día a día las rutas viajan en el body (tabla vuelos_operacion); en
 	// Periodo/Colapso van nil y el planificador usa su archivo, como siempre.
 	var vuelos []vueloConsulta
@@ -376,7 +393,7 @@ func (o *Orquestador) planificarYcargar(fin, t int64) (*Simulacion, error) {
 		}
 		vuelos = v
 	}
-	resp, err := o.planificar(envios, cancelados, vuelos, o.IniPlanUTC, fin)
+	resp, err := o.planificar(envios, cancelados, vuelos, o.IniPlanUTC, finPlan)
 	if err != nil {
 		return nil, fmt.Errorf("desde-datos: %w", err)
 	}
@@ -407,10 +424,11 @@ func (o *Orquestador) emitirTramos(sim *Simulacion) {
 	o.Broadcast("plan-tramos", tramos)
 }
 
-// emitirSnapshot empuja inmediatamente tick + aeropuertos después de una
-// re-planificación. Sin esto, el plan nuevo podía llegar por SSE, pero el mapa
-// seguía con aeropuertos/contadores del plan anterior hasta el siguiente tick.
-func (o *Orquestador) emitirSnapshot(sim *Simulacion, t int64) {
+// emitirSnapshotActual fuerza al frontend a refrescar contadores y almacenes
+// inmediatamente después de un re-plan manual/cancelación. Antes solo se enviaba
+// plan-tramos y el mapa podía quedarse mostrando el almacén anterior hasta el
+// siguiente tick. En Día a Día esto se notaba como "no actualiza almacén".
+func (o *Orquestador) emitirSnapshotActual(sim *Simulacion, t int64) {
 	sim.mu.Lock()
 	sim.TiempoSimUTC = float64(t)
 	sim.procesarEventos(t)
@@ -418,10 +436,7 @@ func (o *Orquestador) emitirSnapshot(sim *Simulacion, t int64) {
 	cont := sim.calcularContadores()
 	sim.mu.Unlock()
 
-	progreso := 0.0
-	if o.FinUTC > o.T0UTC {
-		progreso = (float64(t) - float64(o.T0UTC)) / float64(o.FinUTC-o.T0UTC) * 100.0
-	}
+	progreso := (float64(t) - float64(o.T0UTC)) / float64(o.FinUTC-o.T0UTC) * 100.0
 	if progreso < 0 {
 		progreso = 0
 	}
@@ -434,36 +449,6 @@ func (o *Orquestador) emitirSnapshot(sim *Simulacion, t int64) {
 		"contadores":     cont,
 	})
 	o.Broadcast("aeropuertos", aeropuertos)
-}
-
-// aeropuertosDesdePlanificador trae el catálogo de aeropuertos del planificador
-// para que una operación vacía igual pinte la red base. Best-effort: si falla,
-// se devuelve [] y el próximo plan con datos volverá a poblarlos.
-func (o *Orquestador) aeropuertosDesdePlanificador() []AeropuertoPlan {
-	cli := &http.Client{Timeout: 5 * time.Second}
-	resp, err := cli.Get(o.PlanificadorURL + "/api/aeropuertos")
-	if err != nil {
-		return []AeropuertoPlan{}
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return []AeropuertoPlan{}
-	}
-	var raw []struct {
-		IATA      string `json:"iata"`
-		Capacidad int    `json:"capacidad"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
-		return []AeropuertoPlan{}
-	}
-	out := make([]AeropuertoPlan, 0, len(raw))
-	for _, a := range raw {
-		if a.IATA == "" {
-			continue
-		}
-		out = append(out, AeropuertoPlan{IATA: a.IATA, Capacidad: a.Capacidad})
-	}
-	return out
 }
 
 // ─── Llamadas a los servicios ────────────────────────────────────────────────
@@ -486,26 +471,36 @@ var errSinRutas = errors.New("sin rutas cargadas en vuelos_operacion")
 // un constructor aparte: así no hay dos formas de construir una Simulacion
 // que puedan divergir.
 func (o *Orquestador) simulacionVacia(fin int64) (*Simulacion, error) {
-	// Aun sin rutas/envíos, el mapa debe recibir los aeropuertos para pintar la
-	// red base. Antes este plan vacío mandaba "aeropuertos":[] y el EventStream
-	// quedaba alternando tick/aeropuertos vacíos hasta que aparecía un plan.
-	plan := PlanResponse{
-		Resumen: ResumenPlan{
-			TotalEnvios:       0,
-			Exitosos:          0,
-			Rechazados:        0,
-			VentanaIniUTC:     o.T0UTC,
-			VentanaFinUTC:     fin,
-			ObservacionIniUTC: o.T0UTC,
-		},
-		Aeropuertos: o.aeropuertosDesdePlanificador(),
-		Envios:      []EnvioPlan{},
-	}
-	b, err := json.Marshal(plan)
+	plan := fmt.Sprintf(
+		`{"resumen":{"ventanaIniUTC":%d,"ventanaFinUTC":%d,"observacionIniUTC":%d},"aeropuertos":%s,"envios":[]}`,
+		o.T0UTC, fin, o.T0UTC, o.aeropuertosJSON())
+	return nuevaDesdeReader("blk", strings.NewReader(plan), 0, o.Umbrales, time.Second)
+}
+
+// aeropuertosJSON trae las capacidades reales desde el Planificador para que,
+// incluso si Día a Día arranca sin rutas/envíos, el mapa ya tenga aeropuertos y
+// almacenes válidos. Si falla, se cae a [] sin tumbar la operación.
+func (o *Orquestador) aeropuertosJSON() string {
+	resp, err := http.Get(o.PlanificadorURL + "/api/aeropuertos")
 	if err != nil {
-		return nil, err
+		return "[]"
 	}
-	return nuevaDesdeReader("blk", strings.NewReader(string(b)), 0, o.Umbrales, time.Second)
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return "[]"
+	}
+	var arr []struct {
+		IATA      string `json:"iata"`
+		Capacidad int    `json:"capacidad"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&arr); err != nil || len(arr) == 0 {
+		return "[]"
+	}
+	b, err := json.Marshal(arr)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
 }
 
 // vueloConsulta es una ruta tal como la entrega el servicio Consultas. Los

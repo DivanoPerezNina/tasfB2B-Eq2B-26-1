@@ -216,10 +216,6 @@ function getActiveFlightsFromPlan(
   };
 
   const currentMinute = simMinuteUTC;
-  // La activación usa el minuto confirmado por tick, no la extrapolación suave.
-  // Así no aparece un avión segundos antes de su hora de salida por interpolación
-  // del mapa. La extrapolación se usa solo para moverlo una vez ya activo.
-  const activationMinute = Math.floor(simMinuteUTC + 1e-9);
   const occurrences = new globalThis.Map<string, ActiveOccurrence>();
 
   // Importante: el mapa solo debe dibujar vuelos que realmente estén siendo
@@ -227,7 +223,7 @@ function getActiveFlightsFromPlan(
   // completo de vuelos, porque eso hacía aparecer cientos de vuelos vacíos al
   // inicio de la simulación.
   for (const tramo of planTramos) {
-    if (activationMinute < Math.floor(tramo.salidaUTC) || currentMinute >= tramo.llegadaUTC) continue;
+    if (currentMinute < tramo.salidaUTC || currentMinute >= tramo.llegadaUTC) continue;
 
     const key = `${tramo.desde}|${tramo.hasta}|${Math.round(tramo.salidaUTC)}|${Math.round(tramo.llegadaUTC)}`;
     const existing = occurrences.get(key);
@@ -530,8 +526,11 @@ export const Map = memo(function Map({
     if (!showPlanes || !simHasStarted || !planVisualCargado || planTramos.length === 0) {
       return { flights: [], totalActive: 0 };
     }
-    return getActiveFlightsFromPlan(smoothMinute, planTramos, airports, aeropuertosBackend, vuelosBackend, filter);
-  }, [smoothMinute, showPlanes, simHasStarted, planVisualCargado, planTramos, airports, aeropuertosBackend, vuelosBackend, filter]);
+    // Para activar/desactivar vuelos usamos SOLO el último tick confirmado por
+    // el backend. La extrapolación suave podía adelantar algunos segundos el
+    // reloj visual y hacer que el avión aparezca antes de su hora real de salida.
+    return getActiveFlightsFromPlan(tiempoSimUTC, planTramos, airports, aeropuertosBackend, vuelosBackend, filter);
+  }, [tiempoSimUTC, showPlanes, simHasStarted, planVisualCargado, planTramos, airports, aeropuertosBackend, vuelosBackend, filter]);
 
   const allActiveFlights = activeFlightResult.flights;
   const activeFlights = useMemo(() => allActiveFlights.filter((flight) => {
@@ -577,14 +576,14 @@ export const Map = memo(function Map({
   const activeCancellations = useMemo(() => {
     if (!simHasStarted) return [];
     return allVisualCancellations
-      .filter(c => smoothMinute >= c.salidaUTC && smoothMinute <= c.llegadaUTC)
+      .filter(c => tiempoSimUTC >= c.salidaUTC && tiempoSimUTC <= c.llegadaUTC)
       .map(c => {
         const from = airports.find(a => a.code === c.origen);
         const to = airports.find(a => a.code === c.destino);
         return from && to ? { ...c, from, to } : null;
       })
       .filter(Boolean) as Array<VisualCancellation & { from: Airport; to: Airport }>;
-  }, [allVisualCancellations, smoothMinute, simHasStarted, airports]);
+  }, [allVisualCancellations, tiempoSimUTC, simHasStarted, airports]);
 
   const handleZoomIn = useCallback(() => setZoom(z => Math.min(z * 1.5, 8)), []);
   const handleZoomOut = useCallback(() => setZoom(z => Math.max(z / 1.5, 1)), []);

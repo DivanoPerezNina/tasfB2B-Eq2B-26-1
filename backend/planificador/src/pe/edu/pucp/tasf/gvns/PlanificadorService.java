@@ -387,23 +387,23 @@ public class PlanificadorService {
         // los envíos se activa un respaldo factible que usa la misma red, capacidad,
         // horarios UTC y cancelaciones. Periodo/Colapso NO cambian.
         boolean modoOperacion = vuelos != null && !vuelos.isEmpty();
-        boolean hayCancelaciones = cancelados != null && !cancelados.isEmpty();
         List<EnvioAsignado> salidaOperativa = null;
         int exitososFinal = exitososGVNS;
 
-        if (modoOperacion && (hayCancelaciones || exitososGVNS < total)) {
+        if (modoOperacion) {
+            // Día a Día necesita respuesta determinista y cancelable: si hay una ruta
+            // directa/alternativa no cancelada, debe devolverla aunque GVNS haya
+            // encontrado otra solución o conserve una anterior. GVNS se ejecuta igual
+            // (para mantener el componente de optimización), pero la salida operativa
+            // se reconstruye siempre con la capa factible que respeta horarios,
+            // capacidad y cancelaciones exactas.
             salidaOperativa = construirPlanOperativoConRespaldo(datos, plan, diasCancelados);
             int exitososFallback = contarExitosos(salidaOperativa);
-
-            // En Día a Día con cancelaciones se fuerza la salida operativa: así
-            // garantizamos que el vuelo cancelado quede excluido y que, si existe
-            // una ruta restante factible, se use inmediatamente. GVNS igual corre
-            // primero; este paso solo normaliza la respuesta operativa del caso vivo.
-            if (hayCancelaciones || exitososFallback >= exitososGVNS) {
+            if (exitososFallback > 0 || exitososGVNS == 0 || !diasCancelados.isEmpty()) {
                 exitososFinal = exitososFallback;
                 System.out.printf(
-                        "Día a Día: GVNS=%d/%d; respaldo operativo=%d/%d; cancelaciones=%s; se devuelve plan operativo.%n",
-                        exitososGVNS, total, exitososFallback, total, hayCancelaciones);
+                        "Día a Día: GVNS=%d/%d; operativo=%d/%d; cancelaciones=%d; se devuelve plan operativo.%n",
+                        exitososGVNS, total, exitososFallback, total, diasCancelados.size());
             } else {
                 salidaOperativa = null;
             }
