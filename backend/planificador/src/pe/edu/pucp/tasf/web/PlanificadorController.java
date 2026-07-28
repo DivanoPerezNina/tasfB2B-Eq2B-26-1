@@ -262,9 +262,11 @@ public class PlanificadorController {
             String criterio, Long semilla,
             List<EnvioDTO> envios,
             List<CancelacionDTO> cancelados,
-            /** Rutas del día a día (tabla vuelos_operacion). Ausente en
-             *  Periodo/Colapso, que siguen usando el archivo vuelos.txt. */
-            List<VueloDTO> vuelos) {
+            /** Catálogo de rutas enviado por el Ejecutor. Puede provenir de
+             *  vuelos_operacion (Día a Día) o vuelos (Periodo/Colapso). */
+            List<VueloDTO> vuelos,
+            /** Separa la estrategia operativa rápida del GVNS de Periodo. */
+            Boolean modoOperacion) {
     }
 
     @PostMapping("/planificacion/desde-datos")
@@ -298,7 +300,7 @@ public class PlanificadorController {
         StreamingResponseBody body = os -> {
             try (Writer w = new BufferedWriter(new OutputStreamWriter(os, StandardCharsets.UTF_8))) {
                 svc.planificarYStreamDesdeLista(req.envios(), crit, semilla, ini, fin, obs,
-                        req.cancelados(), req.vuelos(), w);
+                        req.cancelados(), req.vuelos(), Boolean.TRUE.equals(req.modoOperacion()), w);
             }
         };
         return ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON).body(body);

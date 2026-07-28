@@ -478,22 +478,38 @@ func (o *Orquestador) planificarYcargar(fin, t int64) (*Simulacion, error) {
 		o.mu.RUnlock()
 	}
 	cancelados := o.cancelacionesParaVentana(finConsulta)
-	// En día a día las rutas viajan en el body (tabla vuelos_operacion); en
-	// Periodo/Colapso van nil y el planificador usa su archivo, como siempre.
+	// Las rutas se consultan desde MySQL también en Periodo/Colapso. Antes esos
+	// escenarios dejaban `vuelos=nil` y el Planificador intentaba abrir
+	// /tmp/tasf/vuelos.txt; en la VM ese archivo podía no existir y Sim5D fallaba
+	// inmediatamente. Si Consultas no está disponible se conserva el fallback al
+	// archivo para no romper instalaciones antiguas.
 	var vuelos []vueloConsulta
+	modoVuelos := "periodo"
 	if o.ModoOperacion {
-		v, err := o.consultarVuelos()
-		if err != nil {
+		modoVuelos = "operacion"
+	}
+	v, err := o.consultarVuelos(modoVuelos)
+	if err != nil {
+		if o.ModoOperacion {
 			return nil, fmt.Errorf("consultas vuelos: %w", err)
 		}
-		if len(v) == 0 {
+		fmt.Printf("Periodo: no se pudo consultar vuelos desde BD (%v); se usará el archivo configurado.\n", err)
+	} else if len(v) == 0 {
+		if o.ModoOperacion {
 			// No es un fallo: en día a día la operación se enciende y los
 			// operarios cargan las rutas después. Se espera al próximo ciclo.
 			return nil, errSinRutas
 		}
+		fmt.Println("Periodo: la tabla vuelos está vacía; se usará el archivo configurado.")
+	} else {
 		vuelos = v
-		fmt.Printf("Día a Día replan: ventana=[%d,%d] t=%d envios=%d vuelos=%d cancelaciones=%d\n",
-			iniConsulta, finConsulta, t, len(envios), len(vuelos), len(cancelados))
+		if o.ModoOperacion {
+			fmt.Printf("Día a Día replan: ventana=[%d,%d] t=%d envios=%d vuelos=%d cancelaciones=%d\n",
+				iniConsulta, finConsulta, t, len(envios), len(vuelos), len(cancelados))
+		} else {
+			fmt.Printf("Periodo %dD: rutas desde BD=%d, envíos del bloque=%d, ventana=[%d,%d].\n",
+				(o.FinUTC-o.T0UTC)/1440, len(vuelos), len(envios), iniConsulta, finConsulta)
+		}
 	}
 	resp, err := o.planificar(envios, cancelados, vuelos, iniConsulta, finConsulta)
 	if err != nil {
@@ -597,8 +613,11 @@ type vueloConsulta struct {
 // consultarVuelos trae el catálogo de rutas de la tabla del día a día. Solo se
 // usa en ModoOperacion: en Periodo/Colapso el planificador sigue leyendo su
 // archivo vuelos.txt (no se toca ese camino para no cambiar su comportamiento).
-func (o *Orquestador) consultarVuelos() ([]vueloConsulta, error) {
-	resp, err := http.Get(o.ConsultasURL + "/vuelos?modo=operacion")
+func (o *Orquestador) consultarVuelos(modo string) ([]vueloConsulta, error) {
+	if modo != "operacion" {
+		modo = "periodo"
+	}
+	resp, err := http.Get(o.ConsultasURL + "/vuelos?modo=" + modo)
 	if err != nil {
 		return nil, err
 	}
@@ -719,8 +738,8 @@ func (o *Orquestador) planificar(envios []envioConsulta, cancelados []cancelacio
 		var werr error
 		defer func() { pw.CloseWithError(werr) }()
 		if _, werr = fmt.Fprintf(pw,
-			`{"iniUTC":%d,"finUTC":%d,"observacionIniUTC":%d,"criterio":%q,"envios":`,
-			ini, fin, o.T0UTC, o.Criterio); werr != nil {
+			`{"iniUTC":%d,"finUTC":%d,"observacionIniUTC":%d,"criterio":%q,"modoOperacion":%t,"envios":`,
+			ini, fin, o.T0UTC, o.Criterio, o.ModoOperacion); werr != nil {
 			return
 		}
 		if werr = json.NewEncoder(pw).Encode(envios); werr != nil {
@@ -732,8 +751,8 @@ func (o *Orquestador) planificar(envios []envioConsulta, cancelados []cancelacio
 		if werr = json.NewEncoder(pw).Encode(cancelados); werr != nil {
 			return
 		}
-		// Solo se manda "vuelos" en día a día. Si va ausente, el planificador
-		// cae a su archivo vuelos.txt (comportamiento de Periodo/Colapso).
+		// Se manda "vuelos" cuando Consultas pudo leer el catálogo desde BD. Si
+		// va ausente, el Planificador cae al archivo configurado como respaldo.
 		if vuelos != nil {
 			if _, werr = io.WriteString(pw, `,"vuelos":`); werr != nil {
 				return

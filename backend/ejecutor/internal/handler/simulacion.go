@@ -178,8 +178,15 @@ func (h *SimulacionHandler) PeriodoProgramado(w http.ResponseWriter, r *http.Req
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if hayEnCurso(h.activa, h.orq) {
-		errResp(w, 409, "SIMULACION_ACTIVA", "Ya hay una simulación en curso. Deténgala antes.")
-		return
+		// La demo de Sim5D debe poder iniciarse aunque haya quedado Día a Día u
+		// otra corrida activa. Solo 5D reemplaza automáticamente la ejecución
+		// anterior; los demás escenarios conservan la protección 409.
+		esPeriodo5D := req.Dias == 5 && (req.UsarCancelaciones == nil || *req.UsarCancelaciones)
+		if !esPeriodo5D {
+			errResp(w, 409, "SIMULACION_ACTIVA", "Ya hay una simulación en curso. Deténgala antes.")
+			return
+		}
+		fmt.Println("Sim5D: se detendrá la ejecución anterior para iniciar una corrida limpia.")
 	}
 	h.limpiarActivos()
 

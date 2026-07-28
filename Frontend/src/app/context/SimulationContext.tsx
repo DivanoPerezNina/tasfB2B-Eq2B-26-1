@@ -94,7 +94,7 @@ interface SimulationContextType {
   // ── Acciones ──
   updateConfig: (patch: Partial<SimulationConfig>) => void;
   iniciarPlanificacion: (overrides?: Partial<Pick<SimulationConfig, 'startDate' | 'dias' | 'criterio' | 'duracionRealMin' | 'warmUp'>>) => Promise<void>;
-  iniciarPeriodoProgramado: (opts: { startDate: Date; dias: number; criterio?: CriterioOrden; warmUp?: boolean; scMin?: number; saSeg?: number }) => Promise<void>;
+  iniciarPeriodoProgramado: (opts: { startDate: Date; dias: number; criterio?: CriterioOrden; warmUp?: boolean; scMin?: number; saSeg?: number; usarCancelaciones?: boolean }) => Promise<void>;
   iniciarColapsoProgramado: (opts: { startDate: Date; criterio?: CriterioOrden; warmUp?: boolean; k?: number; saSeg?: number; maxDias?: number; umbralColapso?: number; umbralRechazosPct?: number; bloquesRojoConsecutivos?: number }) => Promise<void>;
   iniciarSimulacion: () => Promise<void>;
   pausarSimulacion: () => Promise<void>;
@@ -763,6 +763,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     opts: { startDate: Date; dias: number; criterio?: CriterioOrden; warmUp?: boolean; scMin?: number; saSeg?: number; usarCancelaciones?: boolean }
   ) => {
     const efectivo = { ...config, ...opts };
+    setFase('planificando');
     setErrorMsg(null);
     setPlanTramos([]); setPlanResumen(null); setPlanVisualCargado(false);
     setVisualCancellations([]);
@@ -782,27 +783,39 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const saSeg = opts.saSeg ?? 120;
 
     try {
-      const res = await fetch(`${BFF}/api/simulacion/periodo-programado`, {
+      const requestBody = {
+        t0_utc:  t0utc,
+        fecha_inicio_local: fechaInicioLocal,
+        dias:    efectivo.dias,
+        sc,
+        sa_seg:  saSeg,
+        warmup:  efectivo.warmUp ?? false,
+        criterio: efectivo.criterio ?? 'EDF',
+        // El archivo de cancelaciones solo aplica a Periodo/Colapso, no a día a día.
+        usar_cancelaciones: opts.usarCancelaciones ?? true,
+        umbrales: {
+          verde_hasta: config.thresholds.warehouse.green  / 100,
+          ambar_hasta: config.thresholds.warehouse.yellow / 100,
+        },
+      };
+
+      const lanzar = () => fetch(`${BFF}/api/simulacion/periodo-programado`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeader() },
-        body: JSON.stringify({
-          t0_utc:  t0utc,
-          fecha_inicio_local: fechaInicioLocal,
-          dias:    efectivo.dias,
-          sc,
-          sa_seg:  saSeg,
-          warmup:  efectivo.warmUp ?? false,
-          criterio: efectivo.criterio ?? 'EDF',
-          // El archivo de cancelaciones solo aplica a Periodo/Colapso, no a día a día.
-          usar_cancelaciones: opts.usarCancelaciones ?? true,
-          umbrales: {
-            verde_hasta: config.thresholds.warehouse.green  / 100,
-            ambar_hasta: config.thresholds.warehouse.yellow / 100,
-          },
-        }),
+        body: JSON.stringify(requestBody),
       });
+
+      let res = await lanzar();
+      // Respaldo del cliente: si una VM todavía responde 409 por una corrida
+      // anterior, Sim5D la detiene y reintenta una sola vez.
+      if (res.status === 409 && efectivo.dias === 5) {
+        await fetch(`${BFF}/api/simulacion/detener`, { method: 'POST', headers: authHeader() }).catch(() => null);
+        await new Promise(resolve => setTimeout(resolve, 350));
+        res = await lanzar();
+      }
+
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.mensaje ?? data.error ?? `HTTP ${res.status}`);
+      if (!res.ok) throw new Error(data.mensaje ?? data.message ?? data.error ?? `HTTP ${res.status}`);
 
       setJobId('periodo');
       setFase('ejecutando');
