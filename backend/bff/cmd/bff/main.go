@@ -35,10 +35,10 @@ func main() {
 	}
 	auth := &handler.AuthHandler{DB: db}
 	muro := &handler.MuroHandler{Archivo: cfg.MuroFile}
-	operario := &handler.OperarioHandler{DB: db}
+	operario := &handler.OperarioHandler{DB: db, EjecutorURL: cfg.EjecutorURL}
 	usuarios := &handler.UsuariosHandler{DB: db}
 	modoOp := &handler.ModoOperacionHandler{DB: db, EjecutorURL: cfg.EjecutorURL}
-	rutasOp := &handler.RutasOperarioHandler{DB: db}
+	rutasOp := &handler.RutasOperarioHandler{DB: db, EjecutorURL: cfg.EjecutorURL}
 	// admin/operario exigen ese rol; auth solo exige una sesión válida (cualquier rol).
 	admin := handler.RequireAuth(db, "admin")
 	soloOperario := handler.RequireAuth(db, "operario")

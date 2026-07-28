@@ -372,42 +372,34 @@ public class PlanificadorService {
             return;
         }
 
-        PlanificadorGVNSConcurrente plan = correrSolver(datos, criterio, semilla, diasCancelados);
-
-        // Pasada 1: contar exitosos generados por GVNS.
-        int exitososGVNS = 0;
-        for (int e = 0; e < total; e++) {
-            if (plan.solucionVuelos[e][0] != -1) exitososGVNS++;
-        }
-
-        // Día a Día manda la lista de vuelos_operacion en el body. Para este modo
-        // operativo no se debe quedar iterando indefinidamente ni devolver
-        // plan-tramos [] si existe una ruta factible. Mantenemos GVNS: primero se
-        // ejecuta la solución inicial + mejora; solo si GVNS no logra asignar todos
-        // los envíos se activa un respaldo factible que usa la misma red, capacidad,
-        // horarios UTC y cancelaciones. Periodo/Colapso NO cambian.
+        // Día a Día manda la lista de vuelos_operacion en el body. Es un modo
+        // ONLINE: cuatro operarios pueden registrar datos casi al mismo tiempo y
+        // cada alta/cancelación solicita una replanificación inmediata. Ejecutar
+        // aquí la Fase 3 de GVNS (hasta 120 s) bloqueaba el único bucle del
+        // Ejecutor; la tercera y cuarta cuenta quedaban esperando y el mapa parecía
+        // no recibir sus envíos. Para operación se usa directamente el planificador
+        // determinístico ya existente, que respeta capacidad, horarios, escalas,
+        // estado actual y cancelaciones. Periodo/Colapso conservan GVNS sin cambios.
         boolean modoOperacion = vuelos != null && !vuelos.isEmpty();
+        PlanificadorGVNSConcurrente plan = null;
         List<EnvioAsignado> salidaOperativa = null;
-        int exitososFinal = exitososGVNS;
+        int exitososFinal;
 
         if (modoOperacion) {
-            // En Día a Día mantenemos GVNS para construir/evaluar la solución,
-            // pero la salida que consume el mapa debe ser determinística y debe
-            // respetar inmediatamente las cancelaciones. Por eso reconstruimos el
-            // plan operativo sobre la misma red/capacidad/cancelados, eligiendo la
-            // salida factible más temprana. Esto evita que, tras cancelar un vuelo,
-            // el mapa siga recibiendo la ruta anterior aunque haya una salida de
-            // respaldo disponible.
+            long t0Operativo = System.currentTimeMillis();
             salidaOperativa = construirPlanOperativoConRespaldo(datos, diasCancelados);
-            int exitososFallback = contarExitosos(salidaOperativa);
-            // En operación la solución determinística es la fuente de verdad:
-            // parte del estado actual y excluye cancelaciones por ID. Aunque
-            // temporalmente tenga menos envíos asignados que GVNS, es preferible
-            // mantenerlos Pendientes a devolver rutas históricas o ya canceladas.
-            exitososFinal = exitososFallback;
+            exitososFinal = contarExitosos(salidaOperativa);
+            double segundos = (System.currentTimeMillis() - t0Operativo) / 1000.0;
             System.out.printf(
-                    "Día a Día: GVNS=%d/%d; operativo=%d/%d; se devuelve plan operativo determinístico.%n",
-                    exitososGVNS, total, exitososFallback, total);
+                    "Día a Día: plan operativo determinístico=%d/%d en %.3fs.%n",
+                    exitososFinal, total, segundos);
+        } else {
+            plan = correrSolver(datos, criterio, semilla, diasCancelados);
+            int exitososGVNS = 0;
+            for (int e = 0; e < total; e++) {
+                if (plan.solucionVuelos[e][0] != -1) exitososGVNS++;
+            }
+            exitososFinal = exitososGVNS;
         }
 
         // meta espejo de metaDesdeEnvios: salvados/tiempos en 0 (no se serializan los demás).
@@ -415,8 +407,8 @@ public class PlanificadorService {
                 iniUTC, finUTC, criterio, total, exitososFinal, total - exitososFinal, 0,
                 0L, 0, 0, 0, 0.0, 0.0, 0, true);
 
-        // Pasada 2: escribir cada envío sin retener planes enormes. En Día a Día,
-        // si hubo fallback se serializa esa solución; si no, se serializa GVNS puro.
+        // Pasada 2: escribir cada envío sin retener planes enormes. Día a Día
+        // serializa el plan operativo rápido; Periodo/Colapso serializan GVNS.
         appendCabecera(out, meta, observacionIniUTC, caps);
         if (salidaOperativa != null) {
             for (int e = 0; e < salidaOperativa.size(); e++) {
@@ -445,10 +437,10 @@ public class PlanificadorService {
     }
 
     /**
-     * Construye una solución factible rápida para Operaciones Día a Día cuando
-     * GVNS no consigue devolver tramos. No reemplaza al GVNS: se ejecuta después
-     * de GVNS y solo como respaldo para no dejar el mapa sin plan si existe una
-     * ruta válida en vuelos_operacion.
+     * Construye la solución online de Operaciones Día a Día. Usa la misma red,
+     * capacidad, horarios, escalas y cancelaciones que el solver, pero responde
+     * en milisegundos para no bloquear las altas simultáneas de los operarios.
+     * Periodo y Colapso siguen usando GVNS.
      */
     private static List<EnvioAsignado> construirPlanOperativoConRespaldo(
             GestorDatos datos,

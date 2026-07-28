@@ -16,7 +16,8 @@ import (
 // Periodo y Colapso. El origen NUNCA lo manda el cliente: se toma del
 // aeropuerto_iata fijado en la cuenta del operario autenticado.
 type OperarioHandler struct {
-	DB *sql.DB
+	DB          *sql.DB
+	EjecutorURL string
 }
 
 // maxMaletasPorEnvio: los aeropuertos de la prueba Día a Día operan con
@@ -137,6 +138,7 @@ func (h *OperarioHandler) Registrar(w http.ResponseWriter, r *http.Request) {
 		errResp(w, 500, "REGISTRO_FALLIDO", err.Error())
 		return
 	}
+	solicitarReplanificacionOperacion(h.EjecutorURL)
 	ok(w, map[string]string{"id_envio": idEnvio}, "Envío registrado")
 }
 
@@ -175,11 +177,11 @@ func (h *OperarioHandler) RegistrarArchivo(w http.ResponseWriter, r *http.Reques
 	horaBase := time.Now().Unix()
 
 	for scanner.Scan() {
+		linea++
 		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "*") {
 			continue
 		}
-		linea++
 
 		parts := strings.SplitN(line, "-", 7)
 		idArchivo := strings.TrimSpace(parts[0])
@@ -229,6 +231,9 @@ func (h *OperarioHandler) RegistrarArchivo(w http.ResponseWriter, r *http.Reques
 		registrados++
 	}
 
+	if registrados > 0 {
+		solicitarReplanificacionOperacion(h.EjecutorURL)
+	}
 	ok(w, map[string]interface{}{
 		"registrados": registrados,
 		"fallidos":    fallidos,
@@ -356,5 +361,6 @@ func (h *OperarioHandler) EditarEnvio(w http.ResponseWriter, r *http.Request) {
 		errResp(w, 500, "ACTUALIZACION_FALLIDA", err.Error())
 		return
 	}
+	solicitarReplanificacionOperacion(h.EjecutorURL)
 	ok(w, map[string]interface{}{"id_envio": idEnvio}, "Envío actualizado")
 }

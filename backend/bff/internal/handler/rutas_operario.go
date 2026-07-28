@@ -18,7 +18,8 @@ import (
 // listar, crear, editar, eliminar o cargar rutas cuyo origen sea el aeropuerto
 // asociado a su cuenta. Esto evita que SPIM vea o modifique rutas de SABE, etc.
 type RutasOperarioHandler struct {
-	DB *sql.DB
+	DB          *sql.DB
+	EjecutorURL string
 }
 
 type rutaInput struct {
@@ -144,6 +145,7 @@ func (h *RutasOperarioHandler) Crear(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, _ := res.LastInsertId()
+	solicitarReplanificacionOperacion(h.EjecutorURL)
 	ok(w, map[string]interface{}{"id": id}, "Ruta creada")
 }
 
@@ -182,6 +184,7 @@ func (h *RutasOperarioHandler) Actualizar(w http.ResponseWriter, r *http.Request
 		errResp(w, 404, "NO_ENCONTRADO", "Ruta no encontrada")
 		return
 	}
+	solicitarReplanificacionOperacion(h.EjecutorURL)
 	ok(w, map[string]interface{}{"id": id}, "Ruta actualizada")
 }
 
@@ -208,6 +211,7 @@ func (h *RutasOperarioHandler) Eliminar(w http.ResponseWriter, r *http.Request) 
 		errResp(w, 404, "NO_ENCONTRADO", "Ruta no encontrada")
 		return
 	}
+	solicitarReplanificacionOperacion(h.EjecutorURL)
 	ok(w, map[string]interface{}{"id": id}, "Ruta eliminada")
 }
 
@@ -297,6 +301,9 @@ func (h *RutasOperarioHandler) CargarArchivo(w http.ResponseWriter, r *http.Requ
 		registradas++
 	}
 
+	if registradas > 0 {
+		solicitarReplanificacionOperacion(h.EjecutorURL)
+	}
 	ok(w, map[string]interface{}{
 		"registradas": registradas,
 		"fallidas":    fallidas,

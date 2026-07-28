@@ -45,6 +45,10 @@ class CancelacionPlanTest {
 
     private static PlanificadorGVNSConcurrente correr(GestorDatos d, Set<Long> cancelados) {
         PlanificadorGVNSConcurrente p = new PlanificadorGVNSConcurrente(d, 42L, CriterioOrden.EDF);
+        // Las pruebas verifican factibilidad/cancelaciones, no la calidad tras
+        // dos minutos de metaheurística. Un límite corto evita que cada build de
+        // despliegue tarde 120 s cuando el caso de prueba deja un envío sin ruta.
+        p.TIEMPO_LIMITE_MS = 200L;
         p.setDiasCancelados(cancelados);
         p.construirSolucionInicial();
         if (p.enviosExitosos.get() < d.numEnvios) p.ejecutarMejoraGVNS();

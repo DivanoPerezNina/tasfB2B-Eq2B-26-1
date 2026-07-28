@@ -31,7 +31,7 @@ class SerializacionPlanTest {
         assertEquals(
             "{\"indice\":0,\"origen\":\"AAAA\",\"destino\":\"BBBB\",\"maletas\":5,"
           + "\"registroUTC\":1000,\"deadlineUTC\":2440,\"estado\":\"Exitoso\","
-          + "\"tramos\":[{\"vueloIdx\":7,\"desde\":\"AAAA\",\"hasta\":\"BBBB\","
+          + "\"tramos\":[{\"vueloIdx\":7,\"vueloId\":0,\"desde\":\"AAAA\",\"hasta\":\"BBBB\","
           + "\"salidaUTC\":1010,\"llegadaUTC\":1130}]}",
             sb.toString());
     }
