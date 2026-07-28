@@ -237,8 +237,12 @@ export function OperarioRutas({ modoActivo }: { modoActivo: boolean | null }) {
     if (salidaUTC == null) return;
     if (!window.confirm(`¿Cancelar la salida ${r.origen_iata} → ${r.destino_iata}? Las maletas asignadas se re-planificarán por otra ruta.`)) return;
     const okCancel = await cancelarVuelo(r.origen_iata, r.destino_iata, salidaUTC);
-    if (okCancel) toast.success(`Vuelo ${r.origen_iata} → ${r.destino_iata} cancelado — re-planificando`);
-    else toast.error('No se pudo cancelar el vuelo');
+    if (okCancel) {
+      toast.success(`Vuelo ${r.origen_iata} → ${r.destino_iata} cancelado — re-planificando`);
+      // El backend ya dispara replanificación al cancelar, pero esta llamada es
+      // idempotente y cubre casos donde el operario se reconectó/reabrió la vista.
+      solicitarReplanificacion();
+    } else toast.error('No se pudo cancelar el vuelo');
   };
 
   const subirArchivo = async () => {

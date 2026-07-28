@@ -391,19 +391,20 @@ public class PlanificadorService {
         int exitososFinal = exitososGVNS;
 
         if (modoOperacion) {
-            // Día a Día necesita respuesta determinista y cancelable: si hay una ruta
-            // directa/alternativa no cancelada, debe devolverla aunque GVNS haya
-            // encontrado otra solución o conserve una anterior. GVNS se ejecuta igual
-            // (para mantener el componente de optimización), pero la salida operativa
-            // se reconstruye siempre con la capa factible que respeta horarios,
-            // capacidad y cancelaciones exactas.
+            // En Día a Día mantenemos GVNS para construir/evaluar la solución,
+            // pero la salida que consume el mapa debe ser determinística y debe
+            // respetar inmediatamente las cancelaciones. Por eso reconstruimos el
+            // plan operativo sobre la misma red/capacidad/cancelados, eligiendo la
+            // salida factible más temprana. Esto evita que, tras cancelar un vuelo,
+            // el mapa siga recibiendo la ruta anterior aunque haya una salida de
+            // respaldo disponible.
             salidaOperativa = construirPlanOperativoConRespaldo(datos, plan, diasCancelados);
             int exitososFallback = contarExitosos(salidaOperativa);
-            if (exitososFallback > 0 || exitososGVNS == 0 || !diasCancelados.isEmpty()) {
+            if (exitososFallback >= exitososGVNS) {
                 exitososFinal = exitososFallback;
                 System.out.printf(
-                        "Día a Día: GVNS=%d/%d; operativo=%d/%d; cancelaciones=%d; se devuelve plan operativo.%n",
-                        exitososGVNS, total, exitososFallback, total, diasCancelados.size());
+                        "Día a Día: GVNS=%d/%d; operativo=%d/%d; se devuelve plan operativo determinístico.%n",
+                        exitososGVNS, total, exitososFallback, total);
             } else {
                 salidaOperativa = null;
             }

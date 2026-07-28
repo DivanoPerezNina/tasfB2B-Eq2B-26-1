@@ -526,9 +526,9 @@ export const Map = memo(function Map({
     if (!showPlanes || !simHasStarted || !planVisualCargado || planTramos.length === 0) {
       return { flights: [], totalActive: 0 };
     }
-    // Para activar/desactivar vuelos usamos SOLO el último tick confirmado por
-    // el backend. La extrapolación suave podía adelantar algunos segundos el
-    // reloj visual y hacer que el avión aparezca antes de su hora real de salida.
+    // Para decidir si un vuelo ya salió usamos el tick confirmado del servidor.
+    // La extrapolación suave podía adelantar el reloj unos segundos y hacer que
+    // el avión aparezca antes de la hora exacta de salida.
     return getActiveFlightsFromPlan(tiempoSimUTC, planTramos, airports, aeropuertosBackend, vuelosBackend, filter);
   }, [tiempoSimUTC, showPlanes, simHasStarted, planVisualCargado, planTramos, airports, aeropuertosBackend, vuelosBackend, filter]);
 
@@ -576,14 +576,14 @@ export const Map = memo(function Map({
   const activeCancellations = useMemo(() => {
     if (!simHasStarted) return [];
     return allVisualCancellations
-      .filter(c => tiempoSimUTC >= c.salidaUTC && tiempoSimUTC <= c.llegadaUTC)
+      .filter(c => smoothMinute >= c.salidaUTC && smoothMinute <= c.llegadaUTC)
       .map(c => {
         const from = airports.find(a => a.code === c.origen);
         const to = airports.find(a => a.code === c.destino);
         return from && to ? { ...c, from, to } : null;
       })
       .filter(Boolean) as Array<VisualCancellation & { from: Airport; to: Airport }>;
-  }, [allVisualCancellations, tiempoSimUTC, simHasStarted, airports]);
+  }, [allVisualCancellations, smoothMinute, simHasStarted, airports]);
 
   const handleZoomIn = useCallback(() => setZoom(z => Math.min(z * 1.5, 8)), []);
   const handleZoomOut = useCallback(() => setZoom(z => Math.max(z / 1.5, 1)), []);
