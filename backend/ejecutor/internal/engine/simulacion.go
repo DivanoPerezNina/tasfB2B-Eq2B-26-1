@@ -207,50 +207,65 @@ func (s *Simulacion) ajustesPorCancelaciones(cancelaciones []cancelacion, ahoraU
 
 	for i := range s.Envios {
 		e := &s.Envios[i]
-		afectado := false
+		tramoCancelado := -1
+		var cancelacionAplicada cancelacion
+
 		for j := range e.Tramos {
 			tr := &e.Tramos[j]
 			for _, c := range cancelaciones {
+				coincide := false
 				if c.VueloID > 0 && tr.VueloID > 0 {
-					if c.VueloID == tr.VueloID && abs64(c.SalidaUTC-tr.SalidaUTC) <= 1 {
-						afectado = true
-						break
-					}
-				} else if tr.Desde == c.Origen && tr.Hasta == c.Destino && abs64(c.SalidaUTC-tr.SalidaUTC) <= 1 {
-					afectado = true
+					coincide = c.VueloID == tr.VueloID && abs64(c.SalidaUTC-tr.SalidaUTC) <= 1
+				} else {
+					coincide = tr.Desde == c.Origen && tr.Hasta == c.Destino && abs64(c.SalidaUTC-tr.SalidaUTC) <= 1
+				}
+				if coincide {
+					tramoCancelado = j
+					cancelacionAplicada = c
 					break
 				}
 			}
-			if afectado {
+			if tramoCancelado >= 0 {
 				break
 			}
 		}
-		if !afectado {
+		if tramoCancelado < 0 {
 			continue
 		}
 
-		origenActual := e.Origen
-		disponible := ahoraUTC
+		// Una cancelación significa que la ocurrencia nunca despegó. Incluso si el
+		// operario pulsa el botón unos minutos después de la hora programada, las
+		// maletas deben volver al aeropuerto de salida del tramo cancelado y poder
+		// tomar una alternativa posterior. Antes se trataba al envío como si ya
+		// estuviera volando y se lo movía al destino del vuelo cancelado; por eso la
+		// segunda salida de la prueba (p. ej. 12:43 tras cancelar 12:42) nunca se usaba.
+		tr := &e.Tramos[tramoCancelado]
+		origenActual := tr.Desde
+		disponible := cancelacionAplicada.SalidaUTC
+		if disponible <= 0 {
+			disponible = tr.SalidaUTC
+		}
 		if disponible < e.RegistroUTC {
 			disponible = e.RegistroUTC
 		}
 
-		// Recorre la ruta anterior para ubicar físicamente las maletas.
-		// Si ya están en vuelo, se consideran disponibles al aterrizar; si están
-		// esperando, permanecen en el aeropuerto de salida del próximo tramo.
-		for j := range e.Tramos {
-			tr := &e.Tramos[j]
-			switch {
-			case ahoraUTC < tr.SalidaUTC:
-				origenActual = tr.Desde
-			case ahoraUTC >= tr.SalidaUTC && ahoraUTC < tr.LlegadaUTC:
-				origenActual = tr.Hasta
-				disponible = tr.LlegadaUTC
-			default:
-				origenActual = tr.Hasta
+		// Si el vuelo cancelado era una conexión, las maletas solo pueden volver a
+		// salir después de aterrizar en la escala y cumplir los 10 minutos mínimos.
+		if tramoCancelado > 0 {
+			prev := &e.Tramos[tramoCancelado-1]
+			minConexion := prev.LlegadaUTC + 10
+			if disponible < minConexion {
+				disponible = minConexion
+			}
+		}
+
+		// Si la cancelación correspondiera a un tramo que ya terminó y el envío ya
+		// avanzó por un tramo posterior, no se rebobina una operación consolidada.
+		if tr.LlegadaUTC <= ahoraUTC && tramoCancelado+1 < len(e.Tramos) {
+			siguiente := &e.Tramos[tramoCancelado+1]
+			if siguiente.SalidaUTC <= ahoraUTC {
 				continue
 			}
-			break
 		}
 
 		out[e.Indice] = ajusteReplanEnvio{

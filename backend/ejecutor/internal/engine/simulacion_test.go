@@ -318,3 +318,83 @@ func esperar(t *testing.T, timeout time.Duration, cond func() bool) {
 	}
 	t.Fatalf("timeout esperando condición tras %v", timeout)
 }
+
+// TestAjusteCancelacionDevuelveMaletasAlOrigen reproduce el caso real de Día a
+// Día: un envío estaba asignado al vuelo 101 de las 12:42 y existe un vuelo 102
+// a las 12:43. Si el operario cancela a las 12:44, la ocurrencia cancelada se
+// considera no despegada y el envío queda disponible desde las 12:42 en el
+// aeropuerto de origen; así el planificador puede reasignarlo a las 12:43 y el
+// Ejecutor lo mostrará inmediatamente en vuelo al reconstruir el estado actual.
+func TestAjusteCancelacionDevuelveMaletasAlOrigen(t *testing.T) {
+	s := &Simulacion{
+		Envios: []EstadoEnvio{{
+			Indice:      0,
+			Origen:      "VIDP",
+			Destino:     "SLLP",
+			Maletas:     1,
+			RegistroUTC: 100,
+			Tramos: []TramoSim{{
+				VueloIdx:   0,
+				VueloID:    101,
+				Desde:      "VIDP",
+				Hasta:      "SLLP",
+				SalidaUTC:  102,
+				LlegadaUTC: 420,
+			}},
+		}},
+	}
+
+	ajustes := s.ajustesPorCancelaciones([]cancelacion{{
+		VueloID:   101,
+		Origen:    "VIDP",
+		Destino:   "SLLP",
+		SalidaUTC: 102,
+	}}, 104)
+
+	got, ok := ajustes[0]
+	if !ok {
+		t.Fatal("el envío asignado al vuelo cancelado debe requerir replanificación")
+	}
+	if got.OrigenActual != "VIDP" {
+		t.Fatalf("origen actual=%s; quiero VIDP", got.OrigenActual)
+	}
+	if got.DisponibleDesdeUTC != 102 {
+		t.Fatalf("disponibleDesdeUTC=%d; quiero 102 (salida cancelada)", got.DisponibleDesdeUTC)
+	}
+}
+
+// TestAjusteCancelacionConexionRespetaEscala asegura que al cancelar una
+// conexión el envío no vuelve al origen inicial: permanece en la escala y solo
+// queda disponible después de llegada previa + 10 minutos.
+func TestAjusteCancelacionConexionRespetaEscala(t *testing.T) {
+	s := &Simulacion{
+		Envios: []EstadoEnvio{{
+			Indice:      7,
+			Origen:      "SPIM",
+			Destino:     "SLLP",
+			RegistroUTC: 100,
+			Tramos: []TramoSim{
+				{VueloID: 201, Desde: "SPIM", Hasta: "SKBO", SalidaUTC: 120, LlegadaUTC: 180},
+				{VueloID: 202, Desde: "SKBO", Hasta: "SLLP", SalidaUTC: 185, LlegadaUTC: 300},
+			},
+		}},
+	}
+
+	ajustes := s.ajustesPorCancelaciones([]cancelacion{{
+		VueloID:   202,
+		Origen:    "SKBO",
+		Destino:   "SLLP",
+		SalidaUTC: 185,
+	}}, 186)
+
+	got, ok := ajustes[7]
+	if !ok {
+		t.Fatal("la conexión cancelada debe requerir replanificación")
+	}
+	if got.OrigenActual != "SKBO" {
+		t.Fatalf("origen actual=%s; quiero SKBO", got.OrigenActual)
+	}
+	if got.DisponibleDesdeUTC != 190 {
+		t.Fatalf("disponibleDesdeUTC=%d; quiero 190 (llegada 180 + 10)", got.DisponibleDesdeUTC)
+	}
+}
