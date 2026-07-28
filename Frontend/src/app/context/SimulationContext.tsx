@@ -845,15 +845,13 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   ): Promise<boolean> => {
     const normalizedOrigin = origen.toUpperCase();
     const normalizedDestination = destino.toUpperCase();
-    const normalizedVueloId = Number(vueloId);
-    const hasExactVueloId = Number.isFinite(normalizedVueloId) && normalizedVueloId > 0;
     const currentPlan = planTramosRef.current.length > 0 ? planTramosRef.current : planTramos;
     const affectedIndices = Array.from(new Set(
       currentPlan
         .filter((tramo) => {
-          const tieneIdExacto = hasExactVueloId && Number.isFinite(Number(tramo.vueloId));
+          const tieneIdExacto = Number.isFinite(vueloId) && Number.isFinite(tramo.vueloId);
           if (tieneIdExacto) {
-            return Number(tramo.vueloId) === normalizedVueloId
+            return Number(tramo.vueloId) === Number(vueloId)
               && Math.abs(tramo.salidaUTC - salidaUTC) <= 1;
           }
           return tramo.desde === normalizedOrigin
@@ -888,18 +886,17 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeader() },
         body: JSON.stringify({
-          vueloId: hasExactVueloId ? normalizedVueloId : undefined,
+          vueloId: Number.isFinite(vueloId) ? vueloId : undefined,
           origen: normalizedOrigin,
           destino: normalizedDestination,
           salidaUTC,
         }),
       });
       if (!res.ok) {
-        const errorBody = await res.json().catch(() => ({}));
         const rollbackAudits = cancellationAuditsRef.current.filter((item) => item.id !== auditId);
         cancellationAuditsRef.current = rollbackAudits;
         setCancellationAudits(rollbackAudits);
-        console.warn('[Sim] cancelar vuelo rechazado por el backend:', res.status, errorBody);
+        console.warn('[Sim] cancelar vuelo rechazado por el backend:', res.status);
         return false;
       }
       return true;
