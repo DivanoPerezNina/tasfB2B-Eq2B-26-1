@@ -215,9 +215,16 @@ func (s *Simulacion) ajustesPorCancelaciones(cancelaciones []cancelacion, ahoraU
 			for _, c := range cancelaciones {
 				coincide := false
 				if c.VueloID > 0 && tr.VueloID > 0 {
-					coincide = c.VueloID == tr.VueloID && abs64(c.SalidaUTC-tr.SalidaUTC) <= 1
+					// Con ID estable basta comparar la unidad y el día de la
+					// ocurrencia. No exigimos el mismo minuto exacto: el frontend puede
+					// obtener salidaUTC de una foto SSE anterior o recalcularla con la
+					// zona horaria. El ID evita afectar a los vuelos consecutivos de la
+					// misma ruta y el día evita cancelar la recurrencia de mañana.
+					coincide = c.VueloID == tr.VueloID && mismoDiaUTC(c.SalidaUTC, tr.SalidaUTC)
 				} else {
-					coincide = tr.Desde == c.Origen && tr.Hasta == c.Destino && abs64(c.SalidaUTC-tr.SalidaUTC) <= 1
+					// Fallback histórico sin vueloId: coincidencia exacta. La tolerancia
+					// de ±1 minuto podía afectar vuelos vecinos.
+					coincide = tr.Desde == c.Origen && tr.Hasta == c.Destino && c.SalidaUTC == tr.SalidaUTC
 				}
 				if coincide {
 					tramoCancelado = j
@@ -274,6 +281,18 @@ func (s *Simulacion) ajustesPorCancelaciones(cancelaciones []cancelacion, ahoraU
 		}
 	}
 	return out
+}
+
+func mismoDiaUTC(a, b int64) bool {
+	return floorDiv1440(a) == floorDiv1440(b)
+}
+
+func floorDiv1440(v int64) int64 {
+	q := v / 1440
+	if v < 0 && v%1440 != 0 {
+		q--
+	}
+	return q
 }
 
 func abs64(v int64) int64 {
