@@ -13,5 +13,12 @@ public record EnvioDTO(
         String destino,
         int    maletas,
         long   registroUTC,
-        long   deadlineUTC) {
+        long   deadlineUTC,
+        String origenActual,
+        Long   disponibleDesdeUTC) {
+
+    public EnvioDTO(String origen, String destino, int maletas,
+                    long registroUTC, long deadlineUTC) {
+        this(origen, destino, maletas, registroUTC, deadlineUTC, null, null);
+    }
 }

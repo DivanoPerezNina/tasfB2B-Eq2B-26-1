@@ -131,7 +131,7 @@ func (h *ModoOperacionHandler) operacionEnVivo() bool {
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		return false
 	}
-	activo := body.Activa || (body.Estado != "" && body.Estado != "detenido" && body.Estado != "completado")
+	activo := body.Activa || (body.Estado != "" && body.Estado != "detenido" && body.Estado != "completado" && body.Estado != "fallo")
 	return activo && body.ModoOperacion
 }
 

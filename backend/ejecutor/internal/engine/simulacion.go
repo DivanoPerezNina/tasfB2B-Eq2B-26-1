@@ -183,6 +183,91 @@ func (s *Simulacion) GetAeropuertos() map[string]EstadoAeropuerto {
 	return copia
 }
 
+// ajusteReplanEnvio describe desde dónde y desde qué minuto puede volver a
+// planificarse un envío afectado por una cancelación operativa. Se mantiene
+// separado del estado serializado para no alterar Periodo/Colapso.
+type ajusteReplanEnvio struct {
+	OrigenActual       string
+	DisponibleDesdeUTC int64
+}
+
+// ajustesPorCancelaciones toma una fotografía del estado físico actual y
+// devuelve únicamente los envíos cuyo plan contiene alguna ocurrencia
+// cancelada. En Día a Día evita reconstruirlos desde el registro histórico:
+// la ruta nueva parte del aeropuerto donde están ahora y nunca usa una salida
+// anterior al instante de re-planificación.
+func (s *Simulacion) ajustesPorCancelaciones(cancelaciones []cancelacion, ahoraUTC int64) map[int]ajusteReplanEnvio {
+	out := make(map[int]ajusteReplanEnvio)
+	if len(cancelaciones) == 0 {
+		return out
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for i := range s.Envios {
+		e := &s.Envios[i]
+		afectado := false
+		for j := range e.Tramos {
+			tr := &e.Tramos[j]
+			for _, c := range cancelaciones {
+				if c.VueloID > 0 && tr.VueloID > 0 {
+					if c.VueloID == tr.VueloID && abs64(c.SalidaUTC-tr.SalidaUTC) <= 1 {
+						afectado = true
+						break
+					}
+				} else if tr.Desde == c.Origen && tr.Hasta == c.Destino && abs64(c.SalidaUTC-tr.SalidaUTC) <= 1 {
+					afectado = true
+					break
+				}
+			}
+			if afectado {
+				break
+			}
+		}
+		if !afectado {
+			continue
+		}
+
+		origenActual := e.Origen
+		disponible := ahoraUTC
+		if disponible < e.RegistroUTC {
+			disponible = e.RegistroUTC
+		}
+
+		// Recorre la ruta anterior para ubicar físicamente las maletas.
+		// Si ya están en vuelo, se consideran disponibles al aterrizar; si están
+		// esperando, permanecen en el aeropuerto de salida del próximo tramo.
+		for j := range e.Tramos {
+			tr := &e.Tramos[j]
+			switch {
+			case ahoraUTC < tr.SalidaUTC:
+				origenActual = tr.Desde
+			case ahoraUTC >= tr.SalidaUTC && ahoraUTC < tr.LlegadaUTC:
+				origenActual = tr.Hasta
+				disponible = tr.LlegadaUTC
+			default:
+				origenActual = tr.Hasta
+				continue
+			}
+			break
+		}
+
+		out[e.Indice] = ajusteReplanEnvio{
+			OrigenActual:       origenActual,
+			DisponibleDesdeUTC: disponible,
+		}
+	}
+	return out
+}
+
+func abs64(v int64) int64 {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
 // ─── Control ─────────────────────────────────────────────────────────────────
 
 // Iniciar lanza el tick engine en una goroutine.
@@ -536,6 +621,13 @@ func (s *Simulacion) cargarPlan(plan PlanResponse) {
 		if ep.Estado == "Rechazado" {
 			e.Estado = "rechazado"
 			e.MotivoRechazo = "planificador"
+		} else if ep.Estado == "Pendiente" && len(ep.Tramos) == 0 {
+			// Día a Día: no encontrar una ruta en este instante no es un rechazo
+			// terminal. El envío permanece físicamente en su almacén y vuelve a
+			// intentarse cuando se cargue una ruta o se solicite otro re-plan.
+			e.Estado = "pendiente"
+			e.MotivoRechazo = "sin_ruta_temporal"
+			s.asegurarAeropuerto(e.Origen)
 		} else if len(ep.Tramos) == 0 {
 			e.Estado = "rechazado"
 			e.MotivoRechazo = "sin_ruta"
@@ -549,6 +641,7 @@ func (s *Simulacion) cargarPlan(plan PlanResponse) {
 				}
 				e.Tramos[i] = TramoSim{
 					VueloIdx:   t.VueloIdx,
+					VueloID:    t.VueloID,
 					Desde:      t.Desde,
 					Hasta:      t.Hasta,
 					SalidaUTC:  t.SalidaUTC,
@@ -683,6 +776,7 @@ func (s *Simulacion) todosLosTramos() []map[string]interface{} {
 			out = append(out, map[string]interface{}{
 				"envioIndice":  e.Indice,
 				"tramoIndex":   j,
+				"vueloId":      tr.VueloID,
 				"desde":        tr.Desde,
 				"hasta":        tr.Hasta,
 				"salidaUTC":    tr.SalidaUTC,

@@ -22,6 +22,7 @@ type VuelosHandler struct {
 // planificador los convierte a UTC con el gmt_offset de cada aeropuerto,
 // igual que hacía al parsear el archivo.
 type Vuelo struct {
+	ID        int64  `json:"id"`
 	Origen    string `json:"origen"`
 	Destino   string `json:"destino"`
 	Salida    int    `json:"salida"`
@@ -46,7 +47,7 @@ func (h *VuelosHandler) Vuelos(w http.ResponseWriter, r *http.Request) {
 	tabla := tablaVuelos(r)
 
 	rows, err := h.DB.Query(`
-		SELECT origen_iata, destino_iata, salida_minutos, llegada_minutos, capacidad_max
+		SELECT id, origen_iata, destino_iata, salida_minutos, llegada_minutos, capacidad_max
 		FROM ` + tabla + `
 		ORDER BY origen_iata, destino_iata, salida_minutos, llegada_minutos, id`)
 	if err != nil {
@@ -58,7 +59,7 @@ func (h *VuelosHandler) Vuelos(w http.ResponseWriter, r *http.Request) {
 	vuelos := make([]Vuelo, 0, 2048)
 	for rows.Next() {
 		var v Vuelo
-		if err := rows.Scan(&v.Origen, &v.Destino, &v.Salida, &v.Llegada, &v.Capacidad); err != nil {
+		if err := rows.Scan(&v.ID, &v.Origen, &v.Destino, &v.Salida, &v.Llegada, &v.Capacidad); err != nil {
 			errResp(w, 500, "SCAN", err.Error())
 			return
 		}

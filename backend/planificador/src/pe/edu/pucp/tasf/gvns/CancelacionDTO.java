@@ -16,5 +16,9 @@ package pe.edu.pucp.tasf.gvns;
  * <p>El día de la ocurrencia se deriva de {@code salidaUTC / 1440}; el minuto del
  * día ({@code salidaUTC % 1440}) sirve para emparejar el vuelo en su horario UTC.
  */
-public record CancelacionDTO(String origen, String destino, long salidaUTC) {
+public record CancelacionDTO(Long vueloId, String origen, String destino, long salidaUTC) {
+
+    public CancelacionDTO(String origen, String destino, long salidaUTC) {
+        this(null, origen, destino, salidaUTC);
+    }
 }

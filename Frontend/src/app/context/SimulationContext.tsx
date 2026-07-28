@@ -103,7 +103,7 @@ interface SimulationContextType {
   /** Suscripción solo-lectura al SSE si hay una simulación en curso (vista operario).
    *  Devuelve true si quedó conectado (el broker reenvía snapshot al conectar). */
   conectarEspectador: () => Promise<boolean>;
-  cancelarVuelo: (origen: string, destino: string, salidaUTC: number) => Promise<boolean>;
+  cancelarVuelo: (origen: string, destino: string, salidaUTC: number, vueloId?: number) => Promise<boolean>;
   registrarCancelacionVisual: (cancelacion: VisualCancellation) => void;
   resetear: () => void;
 
@@ -835,7 +835,12 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   // ─── Cancelar ocurrencia de vuelo (Flujo B: desde el buscador) ─────────────
   // Registra la cancelación (vuelo, día) en el orquestador, que re-planifica el
   // bloque actual de inmediato. El plan re-ruteado llega por SSE (plan-tramos).
-  const cancelarVuelo = useCallback(async (origen: string, destino: string, salidaUTC: number): Promise<boolean> => {
+  const cancelarVuelo = useCallback(async (
+    origen: string,
+    destino: string,
+    salidaUTC: number,
+    vueloId?: number,
+  ): Promise<boolean> => {
     const normalizedOrigin = origen.toUpperCase();
     const normalizedDestination = destino.toUpperCase();
     const currentPlan = planTramosRef.current.length > 0 ? planTramosRef.current : planTramos;
@@ -873,7 +878,12 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       const res = await fetch(`${BFF}/api/simulacion/cancelar`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...authHeader() },
-        body: JSON.stringify({ origen: normalizedOrigin, destino: normalizedDestination, salidaUTC }),
+        body: JSON.stringify({
+          vueloId: Number.isFinite(vueloId) ? vueloId : undefined,
+          origen: normalizedOrigin,
+          destino: normalizedDestination,
+          salidaUTC,
+        }),
       });
       if (!res.ok) {
         const rollbackAudits = cancellationAuditsRef.current.filter((item) => item.id !== auditId);

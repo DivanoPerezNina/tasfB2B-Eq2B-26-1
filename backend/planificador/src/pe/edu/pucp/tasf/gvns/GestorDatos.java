@@ -42,6 +42,8 @@ public class GestorDatos {
     public int[] vueloSalidaUTC = new int[5000];   // minutos dentro del día UTC
     public int[] vueloLlegadaUTC= new int[5000];   // minutos dentro del día UTC
     public int[] vueloCapacidad = new int[5000];
+    /** ID de vuelos_operacion. En Periodo/Colapso queda en 0. */
+    public long[] vueloIdExterno = new long[5000];
 
     // ── ENVÍOS ────────────────────────────────────────────────────────────────
     // Arrays primitivos: ~80 MB cada int[], ~160 MB cada long[].
@@ -59,6 +61,10 @@ public class GestorDatos {
     public int[]  envioMaletas      = new int [0];
     public long[] envioRegistroUTC  = new long[0];
     public long[] envioDeadlineUTC  = new long[0];
+    /** Origen original del envío, aunque la re-planificación parta de una escala. */
+    public int[]  envioOrigenOriginal = new int [0];
+    /** Primer minuto UTC permitido para la ruta nueva. */
+    public long[] envioDisponibleUTC  = new long[0];
 
     // =========================================================================
     // CARGA DE AEROPUERTOS
@@ -267,6 +273,7 @@ public class GestorDatos {
                 vueloSalidaUTC [count] = salidaUTC;
                 vueloLlegadaUTC[count] = llegadaUTC;
                 vueloCapacidad [count] = Integer.parseInt(p[4].trim());
+                vueloIdExterno [count] = 0L;
                 count++;
             }
             this.numVuelos = count;
@@ -326,6 +333,7 @@ public class GestorDatos {
             vueloSalidaUTC [count] = salidaUTC;
             vueloLlegadaUTC[count] = llegadaUTC;
             vueloCapacidad [count] = v.capacidad();
+            vueloIdExterno [count] = v.id();
             count++;
         }
         this.numVuelos = count;
@@ -386,6 +394,8 @@ public class GestorDatos {
             envioMaletas     = new int [CAP_FILE];
             envioRegistroUTC = new long[CAP_FILE];
             envioDeadlineUTC = new long[CAP_FILE];
+            envioOrigenOriginal = new int [CAP_FILE];
+            envioDisponibleUTC  = new long[CAP_FILE];
         }
 
         File[] archivos = carpeta.listFiles();
@@ -461,9 +471,11 @@ public class GestorDatos {
                 if (minutosUTC < inicioUTC || minutosUTC >= finUTC) continue;
 
                 envioOrigen    [numEnvios] = idOrigen;
+                envioOrigenOriginal[numEnvios] = idOrigen;
                 envioDestino   [numEnvios] = idDestino;
                 envioMaletas   [numEnvios] = cantMaletas;
                 envioRegistroUTC[numEnvios]= minutosUTC;
+                envioDisponibleUTC[numEnvios] = minutosUTC;
 
                 envioDeadlineUTC[numEnvios] = calcularDeadline(minutosUTC,
                         continenteAero[idOrigen], continenteAero[idDestino]);
@@ -524,18 +536,29 @@ public class GestorDatos {
         envioMaletas     = new int [n];
         envioRegistroUTC = new long[n];
         envioDeadlineUTC = new long[n];
+        envioOrigenOriginal = new int [n];
+        envioDisponibleUTC  = new long[n];
         numEnvios = 0;
         for (EnvioDTO e : envios) {
             if (e.origen() == null || e.destino() == null) continue;
-            Integer idO = mapaIataAId.get(e.origen());
+            Integer idOriginal = mapaIataAId.get(e.origen());
+            String origenPlan = (e.origenActual() == null || e.origenActual().isBlank())
+                    ? e.origen()
+                    : e.origenActual().trim();
+            Integer idO = mapaIataAId.get(origenPlan);
             Integer idD = mapaIataAId.get(e.destino());
-            if (idO == null || idD == null) continue;
+            if (idOriginal == null || idO == null || idD == null) continue;
 
             envioOrigen     [numEnvios] = idO;
+            envioOrigenOriginal[numEnvios] = idOriginal;
             envioDestino    [numEnvios] = idD;
             envioMaletas    [numEnvios] = e.maletas();
             envioRegistroUTC[numEnvios] = e.registroUTC();
             envioDeadlineUTC[numEnvios] = e.deadlineUTC();
+            long disponible = e.disponibleDesdeUTC() != null
+                    ? e.disponibleDesdeUTC()
+                    : e.registroUTC();
+            envioDisponibleUTC[numEnvios] = Math.max(disponible, e.registroUTC());
             numEnvios++;
         }
         System.out.println("Envíos cargados desde lista: " + numEnvios);

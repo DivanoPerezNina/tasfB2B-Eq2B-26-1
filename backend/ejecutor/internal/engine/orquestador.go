@@ -55,12 +55,17 @@ type Orquestador struct {
 
 	cancelaciones []cancelacion // cancelaciones (vuelo, día) activas; se envían en cada desde-datos
 	cancelCh      chan struct{} // señal para re-planificar el bloque actual de inmediato
+	// En Día a Día conserva el punto físico desde el cual deben re-planificarse
+	// los envíos afectados por una cancelación. La clave es envioIndice, estable
+	// mientras Consultas mantenga el ORDER BY de envios_operacion.
+	ajustesReplan map[int]ajusteReplanEnvio
 }
 
 // cancelacion identifica la OCURRENCIA de vuelo a cancelar por su RUTA
 // (origen→destino en IATA) y el minuto UTC absoluto de su salida. El planificador
 // resuelve la ruta a su vueloIdx interno (el índice no es estable entre servicios).
 type cancelacion struct {
+	VueloID   int64  `json:"vueloId,omitempty"`
 	Origen    string `json:"origen"`
 	Destino   string `json:"destino"`
 	SalidaUTC int64  `json:"salidaUTC"`
@@ -95,15 +100,18 @@ func NuevoOrquestador(id, consultasURL, planificadorURL string,
 		doneCh:          make(chan struct{}),
 		colapsoRojos:    make(map[string]int),
 		cancelCh:        make(chan struct{}, 1),
+		ajustesReplan:   make(map[int]ajusteReplanEnvio),
 	}
 }
 
 // AgregarCancelacion registra una cancelación (vuelo, día) y dispara un re-plan
 // inmediato del bloque actual. Thread-safe: lo llama el handler HTTP mientras el
 // bucle Sa/Sc corre en su propia goroutine.
-func (o *Orquestador) AgregarCancelacion(origen, destino string, salidaUTC int64) {
+func (o *Orquestador) AgregarCancelacion(vueloID int64, origen, destino string, salidaUTC int64) {
 	o.mu.Lock()
-	o.cancelaciones = append(o.cancelaciones, cancelacion{Origen: origen, Destino: destino, SalidaUTC: salidaUTC})
+	o.cancelaciones = append(o.cancelaciones, cancelacion{
+		VueloID: vueloID, Origen: origen, Destino: destino, SalidaUTC: salidaUTC,
+	})
 	o.mu.Unlock()
 	o.SolicitarReplanificacion()
 }
@@ -223,10 +231,12 @@ func (o *Orquestador) run() {
 		})
 		sim, err = o.simulacionVacia(finIni)
 		if err != nil {
+			o.setEstado("fallo")
 			o.Broadcast("fallo", map[string]interface{}{"mensaje": err.Error()})
 			return
 		}
 	} else if err != nil {
+		o.setEstado("fallo")
 		o.Broadcast("fallo", map[string]interface{}{"mensaje": err.Error()})
 		return
 	} else {
@@ -259,11 +269,30 @@ func (o *Orquestador) run() {
 			// cancelar una salida. Además de plan-tramos, se emite un snapshot inmediato
 			// de tick+aeropuertos para que el mapa actualice almacenes sin esperar 1s.
 			t := int64(tiempo)
+			if o.ModoOperacion {
+				cancelaciones := o.cancelacionesSnapshot()
+				ajustes := sim.ajustesPorCancelaciones(cancelaciones, t)
+				o.mu.Lock()
+				for idx, ajuste := range ajustes {
+					o.ajustesReplan[idx] = ajuste
+				}
+				o.mu.Unlock()
+			}
 			nsim, err := o.planificarYcargar(finActual, t)
 			if errors.Is(err, errSinRutas) {
 				continue // nada que re-planificar todavía
 			}
 			if err != nil {
+				if o.ModoOperacion {
+					// Re-plan no destructivo: el plan vivo sigue avanzando y el
+					// siguiente alta/cancelación podrá volver a intentarlo.
+					o.Broadcast("aviso", map[string]interface{}{
+						"mensaje": "No se pudo actualizar el plan de Día a Día; se conserva el último estado válido: " + err.Error(),
+					})
+					o.emitirSnapshot(sim, float64(t))
+					continue
+				}
+				o.setEstado("fallo")
 				o.Broadcast("fallo", map[string]interface{}{"mensaje": err.Error()})
 				return
 			}
@@ -308,6 +337,15 @@ func (o *Orquestador) run() {
 					continue
 				}
 				if err != nil {
+					if o.ModoOperacion {
+						o.Broadcast("aviso", map[string]interface{}{
+							"mensaje": "Re-planificación programada pendiente; se conserva el último plan válido: " + err.Error(),
+						})
+						proximoH += o.Sc
+						finActual = nuevoFin
+						continue
+					}
+					o.setEstado("fallo")
 					o.Broadcast("fallo", map[string]interface{}{"mensaje": err.Error()})
 					return
 				}
@@ -379,6 +417,17 @@ func (o *Orquestador) planificarYcargar(fin, t int64) (*Simulacion, error) {
 	envios, err := o.consultar(iniConsulta, finConsulta)
 	if err != nil {
 		return nil, fmt.Errorf("consultas: %w", err)
+	}
+	if o.ModoOperacion {
+		o.mu.RLock()
+		for idx, ajuste := range o.ajustesReplan {
+			if idx < 0 || idx >= len(envios) {
+				continue
+			}
+			envios[idx].OrigenActual = ajuste.OrigenActual
+			envios[idx].DisponibleDesdeUTC = ajuste.DisponibleDesdeUTC
+		}
+		o.mu.RUnlock()
 	}
 	cancelados := o.cancelacionesParaVentana(finConsulta)
 	// En día a día las rutas viajan en el body (tabla vuelos_operacion); en
@@ -460,11 +509,13 @@ func (o *Orquestador) emitirSnapshot(sim *Simulacion, tiempo float64) {
 // ─── Llamadas a los servicios ────────────────────────────────────────────────
 
 type envioConsulta struct {
-	Origen      string `json:"origen"`
-	Destino     string `json:"destino"`
-	Maletas     int    `json:"maletas"`
-	RegistroUTC int64  `json:"registroUTC"`
-	DeadlineUTC int64  `json:"deadlineUTC"`
+	Origen             string `json:"origen"`
+	Destino            string `json:"destino"`
+	Maletas            int    `json:"maletas"`
+	RegistroUTC        int64  `json:"registroUTC"`
+	DeadlineUTC        int64  `json:"deadlineUTC"`
+	OrigenActual       string `json:"origenActual,omitempty"`
+	DisponibleDesdeUTC int64  `json:"disponibleDesdeUTC,omitempty"`
 }
 
 // errSinRutas señala que el catálogo del día a día está vacío. NO es un fallo:
@@ -487,6 +538,7 @@ func (o *Orquestador) simulacionVacia(fin int64) (*Simulacion, error) {
 // minutos son LOCALES (origen/destino); el planificador los pasa a UTC con el
 // gmt_offset de cada aeropuerto, igual que hacía al leer el archivo.
 type vueloConsulta struct {
+	ID        int64  `json:"id"`
 	Origen    string `json:"origen"`
 	Destino   string `json:"destino"`
 	Salida    int    `json:"salida"`
@@ -564,6 +616,14 @@ func (o *Orquestador) cancelacionesParaVentana(fin int64) []cancelacion {
 		return inter
 	}
 	return append(archivo, inter...)
+}
+
+func (o *Orquestador) cancelacionesSnapshot() []cancelacion {
+	o.mu.RLock()
+	defer o.mu.RUnlock()
+	out := make([]cancelacion, len(o.cancelaciones))
+	copy(out, o.cancelaciones)
+	return out
 }
 
 // limpiarCancelacionesArchivo vacía la tabla de cancelaciones (vía Consultas) al

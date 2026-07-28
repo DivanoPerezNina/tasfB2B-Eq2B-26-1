@@ -14,9 +14,14 @@ package pe.edu.pucp.tasf.gvns;
  * aeropuerto.
  */
 public record VueloDTO(
+        long id,
         String origen,
         String destino,
         int salida,
         int llegada,
         int capacidad) {
+
+    public VueloDTO(String origen, String destino, int salida, int llegada, int capacidad) {
+        this(0L, origen, destino, salida, llegada, capacidad);
+    }
 }

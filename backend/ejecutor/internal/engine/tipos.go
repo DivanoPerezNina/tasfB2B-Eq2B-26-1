@@ -41,6 +41,7 @@ type EnvioPlan struct {
 
 type TramoPlan struct {
 	VueloIdx   int    `json:"vueloIdx"`
+	VueloID    int64  `json:"vueloId"`
 	Desde      string `json:"desde"`
 	Hasta      string `json:"hasta"`
 	SalidaUTC  int64  `json:"salidaUTC"`
@@ -51,22 +52,23 @@ type TramoPlan struct {
 
 // EstadoEnvio representa un envío durante la simulación.
 type EstadoEnvio struct {
-	Indice      int
-	Origen      string
-	Destino     string
-	Maletas     int
-	RegistroUTC int64
-	DeadlineUTC int64
-	Tramos      []TramoSim
-	TramoActual    int    // índice del tramo actual (0, 1, 2)
-	Estado         string // pendiente|en_vuelo|en_escala|entregado|rechazado
-	MotivoRechazo  string // sla|planificador|sin_ruta
-	Registrado     bool   // true cuando el envío ya ingresó al almacén origen (t >= RegistroUTC)
+	Indice        int
+	Origen        string
+	Destino       string
+	Maletas       int
+	RegistroUTC   int64
+	DeadlineUTC   int64
+	Tramos        []TramoSim
+	TramoActual   int    // índice del tramo actual (0, 1, 2)
+	Estado        string // pendiente|en_vuelo|en_escala|entregado|rechazado
+	MotivoRechazo string // sla|planificador|sin_ruta
+	Registrado    bool   // true cuando el envío ya ingresó al almacén origen (t >= RegistroUTC)
 }
 
 // TramoSim es un tramo individual de la ruta de un envío.
 type TramoSim struct {
 	VueloIdx   int
+	VueloID    int64
 	Desde      string
 	Hasta      string
 	SalidaUTC  int64

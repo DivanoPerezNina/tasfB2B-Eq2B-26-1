@@ -331,6 +331,7 @@ func (h *SimulacionHandler) Colapso(w http.ResponseWriter, r *http.Request) {
 //	{ "vueloIdx": 123, "salidaUTC": 29742255 }   // salidaUTC = minuto UTC absoluto
 func (h *SimulacionHandler) Cancelar(w http.ResponseWriter, r *http.Request) {
 	var req struct {
+		VueloID   int64  `json:"vueloId"`
 		Origen    string `json:"origen"`
 		Destino   string `json:"destino"`
 		SalidaUTC int64  `json:"salidaUTC"`
@@ -352,9 +353,10 @@ func (h *SimulacionHandler) Cancelar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	orq.AgregarCancelacion(req.Origen, req.Destino, req.SalidaUTC)
+	orq.AgregarCancelacion(req.VueloID, req.Origen, req.Destino, req.SalidaUTC)
 	respond(w, 202, map[string]interface{}{
 		"estado":    "cancelacion_aplicada",
+		"vueloId":   req.VueloID,
 		"origen":    req.Origen,
 		"destino":   req.Destino,
 		"salidaUTC": req.SalidaUTC,
@@ -473,7 +475,7 @@ func (h *SimulacionHandler) Estado(w http.ResponseWriter, r *http.Request) {
 	h.mu.Unlock()
 	if orq != nil {
 		est := orq.GetEstado()
-		if est != "detenido" && est != "completado" {
+		if est != "detenido" && est != "completado" && est != "fallo" {
 			respond(w, 200, map[string]interface{}{
 				"tipo":           "orquestador",
 				"estado":         est,

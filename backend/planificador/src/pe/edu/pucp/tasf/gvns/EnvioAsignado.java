@@ -52,6 +52,8 @@ public final class EnvioAsignado {
     public static final class Tramo {
         /** Índice del vuelo en el GestorDatos (permite lookup de capacidad, etc.). */
         public final int    vueloIdx;
+        /** ID de vuelos_operacion; 0 para rutas del archivo histórico. */
+        public final long   vueloId;
         /** Código IATA del aeropuerto de salida del tramo. */
         public final String desde;
         /** Código IATA del aeropuerto de llegada del tramo. */
@@ -63,7 +65,13 @@ public final class EnvioAsignado {
 
         public Tramo(int vueloIdx, String desde, String hasta,
                      long salidaUTC, long llegadaUTC) {
+            this(vueloIdx, 0L, desde, hasta, salidaUTC, llegadaUTC);
+        }
+
+        public Tramo(int vueloIdx, long vueloId, String desde, String hasta,
+                     long salidaUTC, long llegadaUTC) {
             this.vueloIdx  = vueloIdx;
+            this.vueloId   = vueloId;
             this.desde     = desde;
             this.hasta     = hasta;
             this.salidaUTC = salidaUTC;
@@ -92,6 +100,7 @@ public final class EnvioAsignado {
             if (i > 0) out.append(',');
             Tramo t = tramos.get(i);
             out.append("{\"vueloIdx\":").append(Integer.toString(t.vueloIdx));
+            out.append(",\"vueloId\":").append(Long.toString(t.vueloId));
             out.append(",\"desde\":\"").append(t.desde).append("\",\"hasta\":\"").append(t.hasta);
             out.append("\",\"salidaUTC\":").append(Long.toString(t.salidaUTC));
             out.append(",\"llegadaUTC\":").append(Long.toString(t.llegadaUTC));
