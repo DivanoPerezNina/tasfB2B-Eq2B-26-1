@@ -26,6 +26,8 @@ import { Map as SimulationMap } from '../components/Map';
 import { useSimulation } from '../context/SimulationContext';
 import { useDomain } from '../context/DomainContext';
 import { OperarioRutas } from './OperarioRutas';
+import { ShipmentMetadata } from '../types';
+import { formatUtcMinute, loadShipmentMetadataByIndices, planWindow, shipmentLabel, shipmentRoutes } from '../lib/operations';
 
 const BFF = import.meta.env.VITE_BFF_URL ?? '';
 
@@ -99,7 +101,7 @@ const ETIQUETAS_ORDEN: Record<CampoOrden, string> = {
 const CAMPOS_ORDEN: CampoOrden[] = ['id_envio', 'destino_iata', 'cantidad_maletas', 'registro_utc'];
 
 export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogout: () => void }) {
-  const { conectarEspectador, fase, planVisualCargado } = useSimulation();
+  const { conectarEspectador, fase, planVisualCargado, planTramos, planResumen, tiempoSimUTC } = useSimulation();
   const { aeropuertosBFF } = useDomain();
   const gmtOffset = aeropuertosBFF.find(a => a.iata === perfil.aeropuertoIata)?.gmt_offset ?? 0;
 
@@ -128,6 +130,58 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
   const [editCantidad, setEditCantidad] = useState(1);
   const [editCliente, setEditCliente] = useState(7729);
   const [guardandoEdicion, setGuardandoEdicion] = useState(false);
+
+  // Reporte global compartido: todos los operarios ven los envíos que están
+  // actualmente en vuelo, sin limitarse al aeropuerto de su cuenta.
+  const [reporteEnCaminoAbierto, setReporteEnCaminoAbierto] = useState(false);
+  const [metadataPorIndice, setMetadataPorIndice] = useState<Map<number, ShipmentMetadata>>(new Map());
+
+  const rutasPorEnvio = useMemo(() => shipmentRoutes(planTramos), [planTramos]);
+  const ventanaPlan = useMemo(() => planWindow(planResumen, planTramos), [planResumen, planTramos]);
+
+  const enviosEnCamino = useMemo(() => {
+    const rows: Array<{
+      indice: number;
+      tramo: (typeof planTramos)[number];
+      destinoFinal: string;
+      metadata?: ShipmentMetadata;
+    }> = [];
+
+    for (const [indice, ruta] of rutasPorEnvio.entries()) {
+      const tramo = ruta.find(item => tiempoSimUTC >= item.salidaUTC && tiempoSimUTC < item.llegadaUTC);
+      if (!tramo) continue;
+      rows.push({
+        indice,
+        tramo,
+        destinoFinal: metadataPorIndice.get(indice)?.destino_iata ?? ruta[ruta.length - 1]?.hasta ?? tramo.hasta,
+        metadata: metadataPorIndice.get(indice),
+      });
+    }
+
+    return rows.sort((a, b) => a.tramo.llegadaUTC - b.tramo.llegadaUTC || a.indice - b.indice);
+  }, [metadataPorIndice, rutasPorEnvio, tiempoSimUTC]);
+
+  useEffect(() => {
+    if (!ventanaPlan) return;
+    const indices = Array.from(rutasPorEnvio.keys()).filter(indice => !metadataPorIndice.has(indice));
+    if (indices.length === 0) return;
+
+    const controller = new AbortController();
+    loadShipmentMetadataByIndices(indices, ventanaPlan, controller.signal)
+      .then(items => {
+        setMetadataPorIndice(previous => {
+          const next = new Map(previous);
+          items.forEach(item => next.set(item.indice_plan, item));
+          return next;
+        });
+      })
+      .catch((error: unknown) => {
+        const abortado = error instanceof DOMException && error.name === 'AbortError';
+        if (!abortado) console.warn('[Operario] No se pudieron resolver los IDs de envíos:', error);
+      });
+
+    return () => controller.abort();
+  }, [metadataPorIndice, rutasPorEnvio, ventanaPlan]);
 
   useEffect(() => {
     const id = setInterval(() => setAhora(new Date()), 1000);
@@ -419,7 +473,15 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
           {/* ── Pantalla 1: solo el mapa ── */}
           <TabPanel style={{ flex: 1, minHeight: 0, padding: '1rem 1.5rem 1.5rem' }}>
             <div style={{ maxWidth: '80rem', margin: '0 auto', height: '100%', display: 'flex', flexDirection: 'column', gap: '.75rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '.75rem', flexWrap: 'wrap' }}>
+                <Button
+                  kind="tertiary"
+                  size="sm"
+                  renderIcon={DocumentExport}
+                  onClick={() => setReporteEnCaminoAbierto(true)}
+                >
+                  Envíos en camino ({enviosEnCamino.length})
+                </Button>
                 {modoActivo === true ? (
                   fase === 'ejecutando' || fase === 'calentando' ? (
                     <Tag type="green" size="sm">
@@ -604,6 +666,54 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
           </TabPanel>
         </TabPanels>
       </Tabs>
+
+      <Modal
+        open={reporteEnCaminoAbierto}
+        modalHeading={`Envíos en camino (${enviosEnCamino.length})`}
+        primaryButtonText="Cerrar"
+        onRequestSubmit={() => setReporteEnCaminoAbierto(false)}
+        onRequestClose={() => setReporteEnCaminoAbierto(false)}
+        size="lg"
+      >
+        <p style={{ margin: '0 0 1rem', color: 'var(--cds-text-secondary)', fontSize: '.8125rem' }}>
+          Reporte global compartido. Solo aparecen envíos cuyo vuelo ya salió y todavía no llegó.
+        </p>
+        <div style={{ overflowX: 'auto', maxHeight: '55vh' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '.8125rem' }}>
+            <thead>
+              <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--cds-border-subtle)' }}>
+                <th style={{ padding: '.6rem' }}>ID envío</th>
+                <th style={{ padding: '.6rem' }}>Estado</th>
+                <th style={{ padding: '.6rem' }}>Tramo actual</th>
+                <th style={{ padding: '.6rem' }}>Destino final</th>
+                <th style={{ padding: '.6rem', textAlign: 'right' }}>Maletas</th>
+                <th style={{ padding: '.6rem' }}>Salida UTC</th>
+                <th style={{ padding: '.6rem' }}>Llegada UTC</th>
+              </tr>
+            </thead>
+            <tbody>
+              {enviosEnCamino.map(row => (
+                <tr key={`${row.indice}-${row.tramo.tramoIndex}-${row.tramo.salidaUTC}`} style={{ borderBottom: '1px solid var(--cds-border-subtle)' }}>
+                  <td style={{ padding: '.55rem .6rem', fontFamily: 'monospace', fontWeight: 600 }}>{shipmentLabel(row.metadata, row.indice)}</td>
+                  <td style={{ padding: '.55rem .6rem' }}><Tag size="sm" type="blue">En camino</Tag></td>
+                  <td style={{ padding: '.55rem .6rem', fontWeight: 600 }}>{row.tramo.desde} → {row.tramo.hasta}</td>
+                  <td style={{ padding: '.55rem .6rem' }}>{row.destinoFinal}</td>
+                  <td style={{ padding: '.55rem .6rem', textAlign: 'right' }}>{row.tramo.maletas}</td>
+                  <td style={{ padding: '.55rem .6rem', whiteSpace: 'nowrap' }}>{formatUtcMinute(row.tramo.salidaUTC)}</td>
+                  <td style={{ padding: '.55rem .6rem', whiteSpace: 'nowrap' }}>{formatUtcMinute(row.tramo.llegadaUTC)}</td>
+                </tr>
+              ))}
+              {enviosEnCamino.length === 0 && (
+                <tr>
+                  <td colSpan={7} style={{ padding: '2rem', textAlign: 'center', color: 'var(--cds-text-secondary)' }}>
+                    No hay envíos en camino en este instante.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Modal>
 
       {editando && (
         <Modal
