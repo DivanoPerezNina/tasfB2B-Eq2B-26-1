@@ -479,7 +479,7 @@ export const Map = memo(function Map({
     labelStroke: cssVar('--map-label-stroke'),
     airport: cssVar('--airport-marker') || '#2563eb',
     compactAirport: cssVar('--airport-marker-compact') || '#ec4899',
-    cancelledRoute: cssVar('--cancelled-route') || '#ffffff',
+    cancelledRoute: '#ef4444',
   };
 
   const getAirportStatus = useCallback((airport: Airport): 'verde' | 'ambar' | 'rojo' | 'vacio' => {
@@ -522,15 +522,29 @@ export const Map = memo(function Map({
     return filteredByContinent.filter((airport) => !regularIds.has(airport.id));
   }, [filteredByContinent, visibleAirports]);
 
+  const visualCancellationList = useMemo(() => {
+    const unique = new globalThis.Map<string, VisualCancellation>();
+    [...visualCancellations, ...canceledFlights].forEach((item) => unique.set(item.id, item));
+    return Array.from(unique.values());
+  }, [canceledFlights, visualCancellations]);
+
   const activeFlightResult = useMemo(() => {
     if (!showPlanes || !simHasStarted || !planVisualCargado || planTramos.length === 0) {
       return { flights: [], totalActive: 0 };
     }
-    // Para decidir si un vuelo ya salió usamos el tick confirmado del servidor.
-    // La extrapolación suave podía adelantar el reloj unos segundos y hacer que
-    // el avión aparezca antes de la hora exacta de salida.
-    return getActiveFlightsFromPlan(tiempoSimUTC, planTramos, airports, aeropuertosBackend, vuelosBackend, filter);
-  }, [tiempoSimUTC, showPlanes, simHasStarted, planVisualCargado, planTramos, airports, aeropuertosBackend, vuelosBackend, filter]);
+    const result = getActiveFlightsFromPlan(tiempoSimUTC, planTramos, airports, aeropuertosBackend, vuelosBackend, filter);
+    const flights = result.flights.filter((flight) => {
+      const origin = aeropuertosBackend.find((airport) => airport.id === flight.vuelo.idOrigen)?.iata;
+      const destination = aeropuertosBackend.find((airport) => airport.id === flight.vuelo.idDestino)?.iata;
+      if (!origin || !destination) return true;
+      return !visualCancellationList.some((item) =>
+        item.origen === origin
+        && item.destino === destination
+        && Math.abs(item.salidaUTC - flight.vuelo.salidaUTC) <= 1,
+      );
+    });
+    return { flights, totalActive: flights.length };
+  }, [tiempoSimUTC, showPlanes, simHasStarted, planVisualCargado, planTramos, airports, aeropuertosBackend, vuelosBackend, filter, visualCancellationList]);
 
   const allActiveFlights = activeFlightResult.flights;
   const activeFlights = useMemo(() => allActiveFlights.filter((flight) => {
@@ -565,18 +579,12 @@ export const Map = memo(function Map({
     setZoom(span > 100 ? 1.4 : span > 50 ? 1.9 : span > 20 ? 2.8 : 4.5);
   }, [selectedFlight, selectedFlightKey, allActiveFlights, aeropuertosBackend, airports]);
 
-  const allVisualCancellations = useMemo(() => {
-    const unique = new globalThis.Map<string, VisualCancellation>();
-    [...visualCancellations, ...canceledFlights].forEach((item) => {
-      unique.set(item.id, item);
-    });
-    return Array.from(unique.values());
-  }, [canceledFlights, visualCancellations]);
+  const allVisualCancellations = visualCancellationList;
 
   const activeCancellations = useMemo(() => {
     if (!simHasStarted) return [];
     return allVisualCancellations
-      .filter(c => smoothMinute >= c.salidaUTC && smoothMinute <= c.llegadaUTC)
+      .filter(c => smoothMinute >= c.createdAtUTC && smoothMinute <= c.llegadaUTC)
       .map(c => {
         const from = airports.find(a => a.code === c.origen);
         const to = airports.find(a => a.code === c.destino);
@@ -887,18 +895,25 @@ export const Map = memo(function Map({
             );
           })}
 
-          {/* Cancelaciones visibles: ruta blanca punteada durante la ventana del vuelo cancelado, sin avión. */}
+          {/* Cancelaciones visibles: línea roja punteada, etiqueta y ningún avión. */}
           {activeCancellations.map(c => (
-            <Line
-              key={`cancel-${c.id}`}
-              from={[c.from.lng, c.from.lat]}
-              to={[c.to.lng, c.to.lat]}
-              stroke={mc.cancelledRoute}
-              strokeWidth={1.05 * markerScale}
-              strokeOpacity={0.9}
-              strokeDasharray={`${2.4 * markerScale} ${2.4 * markerScale}`}
-              strokeLinecap="round"
-            />
+            <React.Fragment key={`cancel-${c.id}`}>
+              <Line
+                from={[c.from.lng, c.from.lat]}
+                to={[c.to.lng, c.to.lat]}
+                stroke={mc.cancelledRoute}
+                strokeWidth={2.15 * markerScale}
+                strokeOpacity={0.95}
+                strokeDasharray={`${4 * markerScale} ${2.5 * markerScale}`}
+                strokeLinecap="round"
+              />
+              <Marker coordinates={[(c.from.lng + c.to.lng) / 2, (c.from.lat + c.to.lat) / 2]}>
+                <rect x={-22 * markerScale} y={-8 * markerScale} width={44 * markerScale} height={13 * markerScale} rx={3 * markerScale} fill="#b91c1c" stroke="#ffffff" strokeWidth={0.8 * markerScale} opacity={0.96} />
+                <text textAnchor="middle" y={1.2 * markerScale} style={{ fontSize: 6.3 * markerScale, fontWeight: 800, fill: '#ffffff', pointerEvents: 'none', letterSpacing: 0.25 * markerScale }}>
+                  CANCELADO
+                </text>
+              </Marker>
+            </React.Fragment>
           ))}
 
           {/* Rutas activas. Línea sólida = origen → avión. Línea punteada = avión → destino. */}

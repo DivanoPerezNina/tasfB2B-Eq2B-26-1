@@ -103,7 +103,7 @@ interface SimulationContextType {
   /** Suscripción solo-lectura al SSE si hay una simulación en curso (vista operario).
    *  Devuelve true si quedó conectado (el broker reenvía snapshot al conectar). */
   conectarEspectador: () => Promise<boolean>;
-  cancelarVuelo: (origen: string, destino: string, salidaUTC: number, vueloId?: number) => Promise<boolean>;
+  cancelarVuelo: (origen: string, destino: string, salidaUTC: number, vueloId?: number, llegadaUTC?: number) => Promise<boolean>;
   registrarCancelacionVisual: (cancelacion: VisualCancellation) => void;
   resetear: () => void;
 
@@ -469,6 +469,30 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 
     es.addEventListener('aeropuertos', (e: MessageEvent) => {
       setAeropuertos(JSON.parse(e.data));
+    });
+
+    // Lista compartida de vuelos cancelados. El backend la publica como
+    // snapshot, por lo que todos los operarios ven las mismas líneas rojas.
+    es.addEventListener('cancelaciones', (e: MessageEvent) => {
+      try {
+        const parsed = JSON.parse(e.data);
+        const items: VisualCancellation[] = (Array.isArray(parsed) ? parsed : [])
+          .map((item: any) => ({
+            id: String(item.id ?? `cancel-${item.origen}-${item.destino}-${item.salidaUTC}`),
+            origen: String(item.origen ?? '').toUpperCase(),
+            destino: String(item.destino ?? '').toUpperCase(),
+            salidaUTC: Number(item.salidaUTC),
+            llegadaUTC: Number(item.llegadaUTC),
+            createdAtUTC: Number(item.createdAtUTC),
+          }))
+          .filter((item) => item.origen && item.destino
+            && Number.isFinite(item.salidaUTC)
+            && Number.isFinite(item.llegadaUTC)
+            && Number.isFinite(item.createdAtUTC));
+        setVisualCancellations(items);
+      } catch (error) {
+        console.warn('[Sim] evento cancelaciones ilegible:', error);
+      }
     });
 
     es.addEventListener('tick', (e: MessageEvent) => {
@@ -842,6 +866,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     destino: string,
     salidaUTC: number,
     vueloId?: number,
+    llegadaUTC?: number,
   ): Promise<boolean> => {
     const normalizedOrigin = origen.toUpperCase();
     const normalizedDestination = destino.toUpperCase();
@@ -890,6 +915,8 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           origen: normalizedOrigin,
           destino: normalizedDestination,
           salidaUTC,
+          llegadaUTC: Number.isFinite(llegadaUTC) ? llegadaUTC : undefined,
+          createdAtUTC: lastValidTickRef.current?.tiempo_sim_utc ?? tiempoSimUTC,
         }),
       });
       if (!res.ok) {
@@ -898,6 +925,19 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         setCancellationAudits(rollbackAudits);
         console.warn('[Sim] cancelar vuelo rechazado por el backend:', res.status);
         return false;
+      }
+      // Respuesta visual inmediata en el cliente que canceló; el evento SSE
+      // "cancelaciones" sincroniza después la lista con las demás cuentas.
+      if (Number.isFinite(llegadaUTC) && Number(llegadaUTC) > salidaUTC) {
+        const visual: VisualCancellation = {
+          id: `cancel-${normalizedOrigin}-${normalizedDestination}-${salidaUTC}`,
+          origen: normalizedOrigin,
+          destino: normalizedDestination,
+          salidaUTC,
+          llegadaUTC: Number(llegadaUTC),
+          createdAtUTC: lastValidTickRef.current?.tiempo_sim_utc ?? tiempoSimUTC,
+        };
+        setVisualCancellations((prev) => [visual, ...prev.filter((item) => item.id !== visual.id)].slice(0, 50));
       }
       return true;
     } catch (e) {

@@ -138,44 +138,36 @@ export function OperarioRutas({ modoActivo }: { modoActivo: boolean | null }) {
     else { setOrdenPor(campo); setOrdenAsc(true); }
   };
 
-  // Resuelve la ocurrencia REAL que está usando el plan. La tabla contiene un
-  // patrón diario, pero el planificador puede haber elegido la salida de mañana
-  // si la hora de hoy ya pasó. Antes se reconstruía siempre "la salida de hoy";
-  // al cancelar esa fecha, el envío seguía asignado a la ocurrencia de mañana y
-  // parecía que la cancelación no hacía nada.
-  const salidaUTCDeFila = (r: Ruta): number | null => {
+  // Resuelve la ocurrencia REAL de la fila, incluyendo salida y llegada.
+  // Se prioriza la ocurrencia usada por el plan; si todavía no tiene envíos,
+  // se calcula la próxima ocurrencia diaria con los husos horarios configurados.
+  const ocurrenciaUTCDeFila = (r: Ruta): { salidaUTC: number; llegadaUTC: number } | null => {
     if (!Number.isFinite(tiempoSimUTC)) return null;
 
-    // plan-tramos repite una ocurrencia por cada envío que la usa. Se deduplica
-    // por ID+salida y se prioriza: vuelo activo, luego la próxima salida futura.
     const candidatas = planTramos
       .filter((tramo) => {
-        const coincideId = Number.isFinite(tramo.vueloId)
-          && Number(tramo.vueloId) === Number(r.id);
+        const coincideId = Number.isFinite(tramo.vueloId) && Number(tramo.vueloId) === Number(r.id);
         if (coincideId) return true;
-
-        // Compatibilidad con planes antiguos que todavía no publican vueloId.
         return !Number.isFinite(tramo.vueloId)
           && tramo.desde === r.origen_iata
           && tramo.hasta === r.destino_iata;
       })
       .filter((tramo, index, arr) => arr.findIndex((otro) =>
         Number(otro.vueloId ?? -1) === Number(tramo.vueloId ?? -1)
-        && otro.salidaUTC === tramo.salidaUTC,
+        && otro.salidaUTC === tramo.salidaUTC
+        && otro.llegadaUTC === tramo.llegadaUTC,
       ) === index);
 
     const activa = candidatas
       .filter((tramo) => tramo.salidaUTC <= tiempoSimUTC && tramo.llegadaUTC > tiempoSimUTC)
       .sort((a, b) => b.salidaUTC - a.salidaUTC)[0];
-    if (activa) return activa.salidaUTC;
+    if (activa) return { salidaUTC: activa.salidaUTC, llegadaUTC: activa.llegadaUTC };
 
     const futura = candidatas
       .filter((tramo) => tramo.salidaUTC > tiempoSimUTC)
       .sort((a, b) => a.salidaUTC - b.salidaUTC)[0];
-    if (futura) return futura.salidaUTC;
+    if (futura) return { salidaUTC: futura.salidaUTC, llegadaUTC: futura.llegadaUTC };
 
-    // Fallback para una ruta sin envíos asignados todavía. Calcula la siguiente
-    // ocurrencia cancelable del patrón diario, no una salida pasada.
     const origen = aeropuertosBFF.find(a => a.iata === r.origen_iata);
     const destino = aeropuertosBFF.find(a => a.iata === r.destino_iata);
     if (!origen || !destino) return null;
@@ -184,18 +176,17 @@ export function OperarioRutas({ modoActivo }: { modoActivo: boolean | null }) {
     const gmtDestino = destino.gmt_offset;
     const minutoLocalOrigenActual = tiempoSimUTC + gmtOrigen * 60;
     let diaLocalOrigen = Math.floor(minutoLocalOrigenActual / 1440);
-
     let salidaUTC = diaLocalOrigen * 1440 + r.salida_minutos - gmtOrigen * 60;
     let llegadaUTC = diaLocalOrigen * 1440 + r.llegada_minutos - gmtDestino * 60;
     if (llegadaUTC <= salidaUTC) llegadaUTC += 1440;
 
-    // Si la ocurrencia de hoy ya terminó, apunta a la de mañana.
     if (llegadaUTC <= tiempoSimUTC) {
       diaLocalOrigen += 1;
       salidaUTC = diaLocalOrigen * 1440 + r.salida_minutos - gmtOrigen * 60;
+      llegadaUTC = diaLocalOrigen * 1440 + r.llegada_minutos - gmtDestino * 60;
+      if (llegadaUTC <= salidaUTC) llegadaUTC += 1440;
     }
-
-    return salidaUTC;
+    return { salidaUTC, llegadaUTC };
   };
 
   const abrirCrear = () => {
@@ -257,10 +248,10 @@ export function OperarioRutas({ modoActivo }: { modoActivo: boolean | null }) {
   };
 
   const cancelarSalida = async (r: Ruta) => {
-    const salidaUTC = salidaUTCDeFila(r);
-    if (salidaUTC == null) return;
+    const ocurrencia = ocurrenciaUTCDeFila(r);
+    if (!ocurrencia) return;
     if (!window.confirm(`¿Cancelar la salida ${r.origen_iata} → ${r.destino_iata}? Las maletas asignadas se re-planificarán por otra ruta.`)) return;
-    const okCancel = await cancelarVuelo(r.origen_iata, r.destino_iata, salidaUTC, r.id);
+    const okCancel = await cancelarVuelo(r.origen_iata, r.destino_iata, ocurrencia.salidaUTC, r.id, ocurrencia.llegadaUTC);
     if (okCancel) {
       toast.success(`Vuelo ${r.origen_iata} → ${r.destino_iata} cancelado — re-planificando`);
       // El backend ya dispara replanificación al cancelar, pero esta llamada es

@@ -679,7 +679,7 @@ export function Contingencies() {
     setPendingCancellationKey(confirmationRow.key);
     setFeedback(null);
 
-    const ok = await cancelarVuelo(confirmationRow.origenIata, confirmationRow.destinoIata, confirmationRow.salidaUTC);
+    const ok = await cancelarVuelo(confirmationRow.origenIata, confirmationRow.destinoIata, confirmationRow.salidaUTC, undefined, confirmationRow.llegadaUTC);
 
     if (ok) {
       setCancelledKeys((prev) => new Set(prev).add(confirmationRow.key));

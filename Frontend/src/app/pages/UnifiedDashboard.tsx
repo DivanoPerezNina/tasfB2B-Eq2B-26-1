@@ -215,6 +215,7 @@ export function UnifiedDashboard() {
   const [shipmentMetadataByIndex, setShipmentMetadataByIndex] = useState<Map<number, ShipmentMetadata>>(new Map());
   const [selectedShipmentIndex, setSelectedShipmentIndex] = useState<number | null>(null);
   const [showStableReport, setShowStableReport] = useState(false);
+  const [showInTransitReport, setShowInTransitReport] = useState(false);
   const [fleetQuery, setFleetQuery] = useState('');
   const [fleetPage, setFleetPage] = useState(1);
   const [realClockMs, setRealClockMs] = useState(() => Date.now());
@@ -294,6 +295,29 @@ export function UnifiedDashboard() {
       console.warn('[Operaciones] No se pudieron resolver IDs de envíos:', error);
     }
   }, [currentPlanWindow, shipmentMetadataByIndex]);
+
+  const inTransitShipmentRows = useMemo(() => {
+    const rows: Array<{ index: number; route: PlanTramoVisual[]; activeLeg: PlanTramoVisual; metadata?: ShipmentMetadata }> = [];
+    for (const [index, route] of routesByShipment.entries()) {
+      const activeLeg = route.find((leg) => tiempoSimUTC >= leg.salidaUTC && tiempoSimUTC < leg.llegadaUTC);
+      if (activeLeg) rows.push({ index, route, activeLeg, metadata: shipmentMetadataByIndex.get(index) });
+    }
+    return rows.sort((a, b) => a.activeLeg.llegadaUTC - b.activeLeg.llegadaUTC || a.index - b.index);
+  }, [routesByShipment, shipmentMetadataByIndex, tiempoSimUTC]);
+
+  useEffect(() => {
+    ensureShipmentMetadata(inTransitShipmentRows.map((row) => row.index));
+  }, [ensureShipmentMetadata, inTransitShipmentRows]);
+
+  const downloadInTransitReport = () => {
+    const header = ['ID_ENVIO', 'ESTADO', 'ORIGEN', 'DESTINO_TRAMO', 'DESTINO_FINAL', 'MALETAS', 'SALIDA_UTC', 'LLEGADA_UTC'];
+    const rows = inTransitShipmentRows.map((row) => [
+      shipmentLabel(row.metadata, row.index), 'EN CAMINO', row.activeLeg.desde, row.activeLeg.hasta,
+      row.metadata?.destino_iata ?? row.route[row.route.length - 1]?.hasta ?? '', row.activeLeg.maletas,
+      formatUtcMinute(row.activeLeg.salidaUTC), formatUtcMinute(row.activeLeg.llegadaUTC),
+    ]);
+    downloadTextFile(`envios_en_camino_${Date.now()}.csv`, [header, ...rows].map((row) => row.map(csvCell).join(',')).join('\n'), 'text/csv;charset=utf-8');
+  };
 
   const flightFromLeg = useCallback((leg: PlanTramoVisual): Vuelo | null => {
     const origin = aeropuertosBackend.find((airport) => airport.iata === leg.desde);
@@ -1840,7 +1864,12 @@ export function UnifiedDashboard() {
       </button>
 
       {/* Map */}
-      <div className="flex-1 min-w-0">
+      <div className="relative flex-1 min-w-0">
+        <button type="button" onClick={() => setShowInTransitReport(true)} className="absolute left-1/2 top-3 z-30 flex -translate-x-1/2 items-center gap-2 rounded-lg border border-blue-400/60 bg-panel-bg/95 px-3 py-2 text-[11px] font-semibold text-panel-text shadow-lg backdrop-blur transition hover:bg-panel-hover" title="Mostrar reporte de envíos que están actualmente en camino">
+          <FileText className="h-4 w-4 text-blue-500" />
+          Envíos en camino
+          <span className="rounded-full bg-blue-500 px-2 py-0.5 text-[10px] font-bold text-white">{inTransitShipmentRows.length}</span>
+        </button>
         <SimulationMap
           selectedAirportId={selectedAirportId}
           onAirportSelect={(id) => { setSelectedShipmentIndex(null); setSelectedAirportId(id); setSelectedVuelo(null); }}
@@ -1853,6 +1882,42 @@ export function UnifiedDashboard() {
           highlightedShipmentRoute={selectedShipmentRoute}
         />
       </div>
+
+      {showInTransitReport && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm" onClick={() => setShowInTransitReport(false)}>
+          <div className="flex max-h-[82vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-panel-border bg-panel-bg shadow-2xl" onClick={(event) => event.stopPropagation()}>
+            <div className="flex items-center justify-between gap-3 border-b border-panel-border px-5 py-4">
+              <div>
+                <div className="flex items-center gap-2"><FileText className="h-5 w-5 text-blue-500" /><h2 className="text-base font-semibold text-panel-text">Reporte de envíos en camino</h2><span className="rounded-full bg-blue-500 px-2 py-0.5 text-[11px] font-bold text-white">{inTransitShipmentRows.length}</span></div>
+                <p className="mt-1 text-[11px] text-panel-text-faint">Envíos cuyo tramo actual ya salió y todavía no llegó a destino.</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button type="button" onClick={downloadInTransitReport} disabled={inTransitShipmentRows.length === 0} className="flex items-center gap-1.5 rounded border border-panel-border bg-panel-section-bg px-3 py-2 text-[11px] font-medium text-panel-text hover:bg-panel-hover disabled:opacity-40"><Download className="h-3.5 w-3.5" />Descargar CSV</button>
+                <button type="button" onClick={() => setShowInTransitReport(false)} className="rounded p-2 text-panel-text-faint hover:bg-panel-hover hover:text-panel-text" aria-label="Cerrar reporte"><X className="h-5 w-5" /></button>
+              </div>
+            </div>
+            <div className="overflow-auto">
+              <table className="w-full border-collapse text-left">
+                <thead className="sticky top-0 z-10 bg-panel-section-bg text-[10px] uppercase tracking-wide text-panel-text-faint"><tr><th className="px-4 py-3">Envío</th><th className="px-4 py-3">Estado</th><th className="px-4 py-3">Tramo actual</th><th className="px-4 py-3">Destino final</th><th className="px-4 py-3 text-right">Maletas</th><th className="px-4 py-3">Salida UTC</th><th className="px-4 py-3">Llegada UTC</th></tr></thead>
+                <tbody>
+                  {inTransitShipmentRows.map((row) => (
+                    <tr key={`in-transit-${row.index}-${row.activeLeg.tramoIndex}`} className="cursor-pointer border-t border-panel-border text-[11px] hover:bg-panel-hover" onClick={() => { selectShipment(row.index, row.metadata); setShowInTransitReport(false); }}>
+                      <td className="px-4 py-3 font-mono font-semibold text-panel-text">{shipmentLabel(row.metadata, row.index)}</td>
+                      <td className="px-4 py-3"><span className="rounded-full bg-blue-500/15 px-2 py-1 text-[10px] font-semibold text-blue-500">En camino</span></td>
+                      <td className="px-4 py-3 font-semibold text-panel-text">{row.activeLeg.desde} → {row.activeLeg.hasta}</td>
+                      <td className="px-4 py-3 text-panel-text-muted">{row.metadata?.destino_iata ?? row.route[row.route.length - 1]?.hasta ?? '—'}</td>
+                      <td className="px-4 py-3 text-right font-semibold text-panel-text">{row.activeLeg.maletas}</td>
+                      <td className="px-4 py-3 text-panel-text-muted">{formatUtcMinute(row.activeLeg.salidaUTC)}</td>
+                      <td className="px-4 py-3 text-panel-text-muted">{formatUtcMinute(row.activeLeg.llegadaUTC)}</td>
+                    </tr>
+                  ))}
+                  {inTransitShipmentRows.length === 0 && <tr><td colSpan={7} className="px-4 py-12 text-center text-sm text-panel-text-faint">No hay envíos en vuelo en este instante.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
       </div>{/* end flex-1 overflow-hidden */}
     </div>
   );

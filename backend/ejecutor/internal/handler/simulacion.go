@@ -331,10 +331,12 @@ func (h *SimulacionHandler) Colapso(w http.ResponseWriter, r *http.Request) {
 //	{ "vueloIdx": 123, "salidaUTC": 29742255 }   // salidaUTC = minuto UTC absoluto
 func (h *SimulacionHandler) Cancelar(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		VueloID   int64  `json:"vueloId"`
-		Origen    string `json:"origen"`
-		Destino   string `json:"destino"`
-		SalidaUTC int64  `json:"salidaUTC"`
+		VueloID      int64  `json:"vueloId"`
+		Origen       string `json:"origen"`
+		Destino      string `json:"destino"`
+		SalidaUTC    int64  `json:"salidaUTC"`
+		LlegadaUTC   int64  `json:"llegadaUTC"`
+		CreatedAtUTC int64  `json:"createdAtUTC"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		errResp(w, 400, "BODY_INVALIDO", err.Error())
@@ -347,13 +349,25 @@ func (h *SimulacionHandler) Cancelar(w http.ResponseWriter, r *http.Request) {
 
 	h.mu.Lock()
 	orq := h.orq
+	broker := h.broker
 	h.mu.Unlock()
 	if orq == nil || orq.GetEstado() == "detenido" || orq.GetEstado() == "completado" {
 		errResp(w, 404, "SIN_SIMULACION", "No hay simulación de periodo en curso")
 		return
 	}
 
-	orq.AgregarCancelacion(req.VueloID, req.Origen, req.Destino, req.SalidaUTC)
+	if req.CreatedAtUTC <= 0 {
+		req.CreatedAtUTC = time.Now().UTC().Unix() / 60
+	}
+	if req.LlegadaUTC <= req.SalidaUTC {
+		req.LlegadaUTC = req.SalidaUTC + 360
+	}
+	orq.AgregarCancelacion(req.VueloID, req.Origen, req.Destino, req.SalidaUTC, req.LlegadaUTC, req.CreatedAtUTC)
+	// Evento compartido: todos los mapas conectados reciben la lista completa y
+	// el broker la conserva como snapshot para nuevas sesiones.
+	if broker != nil {
+		broker.Publicar("cancelaciones", orq.CancelacionesVisuales())
+	}
 	respond(w, 202, map[string]interface{}{
 		"estado":    "cancelacion_aplicada",
 		"vueloId":   req.VueloID,

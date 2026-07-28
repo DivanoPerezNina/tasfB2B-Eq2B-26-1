@@ -65,10 +65,23 @@ type Orquestador struct {
 // (origen→destino en IATA) y el minuto UTC absoluto de su salida. El planificador
 // resuelve la ruta a su vueloIdx interno (el índice no es estable entre servicios).
 type cancelacion struct {
-	VueloID   int64  `json:"vueloId,omitempty"`
-	Origen    string `json:"origen"`
-	Destino   string `json:"destino"`
-	SalidaUTC int64  `json:"salidaUTC"`
+	VueloID      int64  `json:"vueloId,omitempty"`
+	Origen       string `json:"origen"`
+	Destino      string `json:"destino"`
+	SalidaUTC    int64  `json:"salidaUTC"`
+	LlegadaUTC   int64  `json:"llegadaUTC,omitempty"`
+	CreatedAtUTC int64  `json:"createdAtUTC,omitempty"`
+}
+
+// CancelacionVisual es el estado compartido que se publica por SSE para que
+// todos los usuarios conectados vean la misma ruta cancelada en el mapa.
+type CancelacionVisual struct {
+	ID           string `json:"id"`
+	Origen       string `json:"origen"`
+	Destino      string `json:"destino"`
+	SalidaUTC    int64  `json:"salidaUTC"`
+	LlegadaUTC   int64  `json:"llegadaUTC"`
+	CreatedAtUTC int64  `json:"createdAtUTC"`
 }
 
 // NuevoOrquestador construye el orquestador a partir de los parámetros del
@@ -107,13 +120,48 @@ func NuevoOrquestador(id, consultasURL, planificadorURL string,
 // AgregarCancelacion registra una cancelación (vuelo, día) y dispara un re-plan
 // inmediato del bloque actual. Thread-safe: lo llama el handler HTTP mientras el
 // bucle Sa/Sc corre en su propia goroutine.
-func (o *Orquestador) AgregarCancelacion(vueloID int64, origen, destino string, salidaUTC int64) {
+func (o *Orquestador) AgregarCancelacion(vueloID int64, origen, destino string, salidaUTC, llegadaUTC, createdAtUTC int64) {
 	o.mu.Lock()
-	o.cancelaciones = append(o.cancelaciones, cancelacion{
+	// Reemplaza la misma ocurrencia si el usuario presiona dos veces o si dos
+	// clientes envían la misma cancelación casi simultáneamente.
+	filtradas := o.cancelaciones[:0]
+	for _, existente := range o.cancelaciones {
+		if existente.Origen == origen && existente.Destino == destino && existente.SalidaUTC == salidaUTC {
+			continue
+		}
+		filtradas = append(filtradas, existente)
+	}
+	o.cancelaciones = append(filtradas, cancelacion{
 		VueloID: vueloID, Origen: origen, Destino: destino, SalidaUTC: salidaUTC,
+		LlegadaUTC: llegadaUTC, CreatedAtUTC: createdAtUTC,
 	})
 	o.mu.Unlock()
 	o.SolicitarReplanificacion()
+}
+
+// CancelacionesVisuales devuelve una copia estable de todas las cancelaciones
+// interactivas de la ejecución. El broker guarda esta lista como snapshot, así
+// un usuario que abre el mapa después también ve las rutas canceladas.
+func (o *Orquestador) CancelacionesVisuales() []CancelacionVisual {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	out := make([]CancelacionVisual, 0, len(o.cancelaciones))
+	for _, c := range o.cancelaciones {
+		llegada := c.LlegadaUTC
+		if llegada <= c.SalidaUTC {
+			llegada = c.SalidaUTC + 360
+		}
+		created := c.CreatedAtUTC
+		if created <= 0 {
+			created = c.SalidaUTC
+		}
+		out = append(out, CancelacionVisual{
+			ID:     fmt.Sprintf("cancel-%s-%s-%d", c.Origen, c.Destino, c.SalidaUTC),
+			Origen: c.Origen, Destino: c.Destino, SalidaUTC: c.SalidaUTC,
+			LlegadaUTC: llegada, CreatedAtUTC: created,
+		})
+	}
+	return out
 }
 
 // SolicitarReplanificacion dispara un re-plan inmediato sin agregar
