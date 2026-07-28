@@ -240,7 +240,19 @@ export function UnifiedDashboard() {
     const isActive = activePhases.has(fase);
     let next = executionTiming;
 
-    if (isActive && (!wasActive || executionTiming.startedAtMs == null)) {
+    // Una ejecución nueva debe comenzar siempre en 00:00:00.
+    // Al detener, endedAtMs queda guardado para mostrar el tiempo final. Si el
+    // dashboard vuelve a montarse cuando la siguiente simulación ya está activa,
+    // previousPhaseRef también nace como activo; por eso además comprobamos
+    // endedAtMs para distinguir una ejecución anterior de la nueva.
+    if (
+      isActive
+      && (
+        !wasActive
+        || executionTiming.startedAtMs == null
+        || executionTiming.endedAtMs != null
+      )
+    ) {
       next = { startedAtMs: Date.now(), endedAtMs: null };
     } else if (!isActive && wasActive && executionTiming.startedAtMs != null && executionTiming.endedAtMs == null) {
       next = { ...executionTiming, endedAtMs: Date.now() };
