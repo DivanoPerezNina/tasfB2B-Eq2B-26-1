@@ -2,11 +2,15 @@ package handler
 
 import (
 	"bufio"
+	"bytes"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // RutasOperarioHandler es el mantenimiento de vuelos_operacion (las rutas del
@@ -323,4 +327,136 @@ func parseHHMMaMinutos(s string) (int, error) {
 		return 0, fmt.Errorf("hora fuera de rango: %q", s)
 	}
 	return h*60 + m, nil
+}
+
+// CancelarVuelo — POST /api/simulacion/cancelar
+//
+// Punto de entrada robusto para cancelaciones. En Día a Día valida que el ID
+// pertenezca a vuelos_operacion del aeropuerto del operario y garantiza que el
+// orquestador esté vivo antes de delegar al Ejecutor. Esto evita el estado en el
+// que el interruptor seguía mostrando "Día a Día activo" después de reiniciar
+// el Ejecutor, pero /cancelar devolvía SIN_SIMULACION.
+//
+// Para administradores conserva el comportamiento de los escenarios Periodo y
+// Colapso: reenvía la cancelación sin exigir que el vuelo exista en
+// vuelos_operacion.
+func (h *RutasOperarioHandler) CancelarVuelo(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		VueloID   int64  `json:"vueloId"`
+		Origen    string `json:"origen"`
+		Destino   string `json:"destino"`
+		SalidaUTC int64  `json:"salidaUTC"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		errResp(w, http.StatusBadRequest, "BODY_INVALIDO", "JSON inválido")
+		return
+	}
+
+	u, ok_ := UsuarioDeContexto(r)
+	if !ok_ {
+		errResp(w, http.StatusUnauthorized, "NO_AUTENTICADO", "Sesión inválida")
+		return
+	}
+
+	in.Origen = normalizeIATA(in.Origen)
+	in.Destino = normalizeIATA(in.Destino)
+	if in.Origen == "" || in.Destino == "" {
+		errResp(w, http.StatusBadRequest, "PARAM_FALTANTE", "Se requieren origen y destino")
+		return
+	}
+
+	esOperario := strings.EqualFold(u.Rol, "operario")
+	if esOperario {
+		if in.VueloID <= 0 {
+			errResp(w, http.StatusBadRequest, "VUELO_ID_REQUERIDO", "No se recibió el ID exacto del vuelo")
+			return
+		}
+		if u.AeropuertoIATA == nil {
+			errResp(w, http.StatusForbidden, "SIN_AEROPUERTO", "Tu cuenta no tiene un aeropuerto asignado")
+			return
+		}
+
+		// La base es la fuente de verdad. No confiamos en origen/destino enviados
+		// por el navegador y, de paso, confirmamos que el vuelo siga existiendo.
+		var origenDB, destinoDB string
+		err := h.DB.QueryRow(`SELECT origen_iata, destino_iata
+			FROM vuelos_operacion WHERE id = ?`, in.VueloID).Scan(&origenDB, &destinoDB)
+		if err == sql.ErrNoRows {
+			errResp(w, http.StatusNotFound, "VUELO_NO_ENCONTRADO", "La ruta ya no existe en vuelos_operacion")
+			return
+		}
+		if err != nil {
+			errResp(w, http.StatusInternalServerError, "DB_ERROR", err.Error())
+			return
+		}
+		origenDB = normalizeIATA(origenDB)
+		destinoDB = normalizeIATA(destinoDB)
+		if origenDB != normalizeIATA(*u.AeropuertoIATA) {
+			errResp(w, http.StatusForbidden, "VUELO_NO_PERMITIDO", "Solo puedes cancelar vuelos de tu aeropuerto")
+			return
+		}
+		in.Origen = origenDB
+		in.Destino = destinoDB
+
+		if !modoOperacionActivo(h.DB) {
+			errResp(w, http.StatusConflict, "MODO_INACTIVO", "Día a Día no está activo")
+			return
+		}
+
+		// El flag vive en MySQL, mientras el orquestador vive en RAM. Tras un
+		// restart del Ejecutor pueden desincronizarse; lo reponemos aquí.
+		modo := &ModoOperacionHandler{DB: h.DB, EjecutorURL: h.EjecutorURL}
+		if !modo.asegurarOperacionEnVivo() {
+			errResp(w, http.StatusBadGateway, "EJECUTOR_NO_DISPONIBLE", "No se pudo levantar la operación Día a Día")
+			return
+		}
+	}
+
+	payload, _ := json.Marshal(in)
+	enviar := func() (*http.Response, error) {
+		req, err := http.NewRequest(http.MethodPost,
+			strings.TrimRight(h.EjecutorURL, "/")+"/api/simulacion/cancelar",
+			bytes.NewReader(payload))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		return (&http.Client{Timeout: 8 * time.Second}).Do(req)
+	}
+
+	resp, err := enviar()
+	if err != nil {
+		errResp(w, http.StatusBadGateway, "EJECUTOR_NO_DISPONIBLE", err.Error())
+		return
+	}
+
+	// Una carrera puede reiniciar/detener el Ejecutor entre asegurar y enviar.
+	// En Día a Día reintentamos una vez levantando nuevamente el orquestador.
+	if esOperario && resp.StatusCode == http.StatusNotFound {
+		resp.Body.Close()
+		modo := &ModoOperacionHandler{DB: h.DB, EjecutorURL: h.EjecutorURL}
+		if modo.asegurarOperacionEnVivo() {
+			resp, err = enviar()
+			if err != nil {
+				errResp(w, http.StatusBadGateway, "EJECUTOR_NO_DISPONIBLE", err.Error())
+				return
+			}
+		}
+	}
+	defer resp.Body.Close()
+
+	body, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		errResp(w, http.StatusBadGateway, "RESPUESTA_INVALIDA", readErr.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = w.Write(body)
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		// El Ejecutor ya replanifica al agregar la cancelación. Esta señal extra es
+		// idempotente y cubre reinicios/reconexiones muy cercanos al clic.
+		solicitarReplanificacionOperacion(h.EjecutorURL)
+	}
 }

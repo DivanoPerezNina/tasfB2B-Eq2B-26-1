@@ -135,7 +135,7 @@ func main() {
 	// Cancelar un vuelo es parte del trabajo del operario en día a día (cancela
 	// la salida de hoy y dispara re-planificación). El motor ya lo soporta en
 	// todos los escenarios; lo único que faltaba era el permiso.
-	mux.HandleFunc("POST /api/simulacion/cancelar", auth_(ejProxy))
+	mux.HandleFunc("POST /api/simulacion/cancelar", auth_(rutasOp.CancelarVuelo))
 	// Re-planificar también puede ser solicitado por operarios después de cargar
 	// rutas/envíos en Día a Día. No inicia escenarios nuevos, solo refresca el
 	// plan actual del ejecutor.
