@@ -128,6 +128,8 @@ export interface AeropuertoEstado {
 export interface PlanTramoVisual {
   envioIndice: number;
   tramoIndex: number;
+  /** ID estable de vuelos_operacion. Permite cancelar la ocurrencia exacta. */
+  vueloId?: number;
   desde: string;
   hasta: string;
   salidaUTC: number;

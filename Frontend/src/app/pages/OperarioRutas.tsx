@@ -138,37 +138,61 @@ export function OperarioRutas({ modoActivo }: { modoActivo: boolean | null }) {
     else { setOrdenPor(campo); setOrdenAsc(true); }
   };
 
-  // Salida cancelable de esta ruta en el plan actual: primero intenta cancelar
-  // el vuelo que está en ejecución; si no hay uno activo, toma la próxima salida.
-  // Se busca en planTramos (lo mismo que dibuja el mapa), así cancelar desde la
-  // tabla y desde el mapa apuntan a la misma ocurrencia.
+  // Resuelve la ocurrencia REAL que está usando el plan. La tabla contiene un
+  // patrón diario, pero el planificador puede haber elegido la salida de mañana
+  // si la hora de hoy ya pasó. Antes se reconstruía siempre "la salida de hoy";
+  // al cancelar esa fecha, el envío seguía asignado a la ocurrencia de mañana y
+  // parecía que la cancelación no hacía nada.
   const salidaUTCDeFila = (r: Ruta): number | null => {
+    if (!Number.isFinite(tiempoSimUTC)) return null;
+
+    // plan-tramos repite una ocurrencia por cada envío que la usa. Se deduplica
+    // por ID+salida y se prioriza: vuelo activo, luego la próxima salida futura.
+    const candidatas = planTramos
+      .filter((tramo) => {
+        const coincideId = Number.isFinite(tramo.vueloId)
+          && Number(tramo.vueloId) === Number(r.id);
+        if (coincideId) return true;
+
+        // Compatibilidad con planes antiguos que todavía no publican vueloId.
+        return !Number.isFinite(tramo.vueloId)
+          && tramo.desde === r.origen_iata
+          && tramo.hasta === r.destino_iata;
+      })
+      .filter((tramo, index, arr) => arr.findIndex((otro) =>
+        Number(otro.vueloId ?? -1) === Number(tramo.vueloId ?? -1)
+        && otro.salidaUTC === tramo.salidaUTC,
+      ) === index);
+
+    const activa = candidatas
+      .filter((tramo) => tramo.salidaUTC <= tiempoSimUTC && tramo.llegadaUTC > tiempoSimUTC)
+      .sort((a, b) => b.salidaUTC - a.salidaUTC)[0];
+    if (activa) return activa.salidaUTC;
+
+    const futura = candidatas
+      .filter((tramo) => tramo.salidaUTC > tiempoSimUTC)
+      .sort((a, b) => a.salidaUTC - b.salidaUTC)[0];
+    if (futura) return futura.salidaUTC;
+
+    // Fallback para una ruta sin envíos asignados todavía. Calcula la siguiente
+    // ocurrencia cancelable del patrón diario, no una salida pasada.
     const origen = aeropuertosBFF.find(a => a.iata === r.origen_iata);
     const destino = aeropuertosBFF.find(a => a.iata === r.destino_iata);
-
-    if (!origen || !destino || !Number.isFinite(tiempoSimUTC)) {
-      return null;
-    }
+    if (!origen || !destino) return null;
 
     const gmtOrigen = origen.gmt_offset;
     const gmtDestino = destino.gmt_offset;
-
-    // Día local actual del aeropuerto de origen
     const minutoLocalOrigenActual = tiempoSimUTC + gmtOrigen * 60;
-    const diaLocalOrigen = Math.floor(minutoLocalOrigenActual / 1440);
+    let diaLocalOrigen = Math.floor(minutoLocalOrigenActual / 1440);
 
-    // Salida exacta de la fila, convertida a UTC absoluto
-    const salidaUTC = diaLocalOrigen * 1440 + r.salida_minutos - gmtOrigen * 60;
-
-    // Llegada estimada para saber si ya terminó
+    let salidaUTC = diaLocalOrigen * 1440 + r.salida_minutos - gmtOrigen * 60;
     let llegadaUTC = diaLocalOrigen * 1440 + r.llegada_minutos - gmtDestino * 60;
-    if (llegadaUTC <= salidaUTC) {
-      llegadaUTC += 1440;
-    }
+    if (llegadaUTC <= salidaUTC) llegadaUTC += 1440;
 
-    // Si ya terminó, no se puede cancelar
+    // Si la ocurrencia de hoy ya terminó, apunta a la de mañana.
     if (llegadaUTC <= tiempoSimUTC) {
-      return null;
+      diaLocalOrigen += 1;
+      salidaUTC = diaLocalOrigen * 1440 + r.salida_minutos - gmtOrigen * 60;
     }
 
     return salidaUTC;

@@ -249,6 +249,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
           tramos.push({
             envioIndice: Number(envio.indice ?? 0),
             tramoIndex: i,
+            vueloId: Number.isFinite(Number(tramo.vueloId)) ? Number(tramo.vueloId) : undefined,
             desde: String(tramo.desde ?? '').toUpperCase(),
             hasta: String(tramo.hasta ?? '').toUpperCase(),
             salidaUTC,
@@ -497,6 +498,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       }
       const tramos: PlanTramoVisual[] = (Array.isArray(arr) ? arr : []).map((v: any) => ({
         envioIndice: Number(v.envioIndice ?? 0), tramoIndex: Number(v.tramoIndex ?? 0),
+        vueloId: Number.isFinite(Number(v.vueloId)) ? Number(v.vueloId) : undefined,
         desde: String(v.desde ?? '').toUpperCase(),
         hasta: String(v.hasta ?? '').toUpperCase(),
         salidaUTC: Number(v.salidaUTC), llegadaUTC: Number(v.llegadaUTC),
@@ -846,11 +848,16 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     const currentPlan = planTramosRef.current.length > 0 ? planTramosRef.current : planTramos;
     const affectedIndices = Array.from(new Set(
       currentPlan
-        .filter((tramo) =>
-          tramo.desde === normalizedOrigin
-          && tramo.hasta === normalizedDestination
-          && Math.abs(tramo.salidaUTC - salidaUTC) <= 1,
-        )
+        .filter((tramo) => {
+          const tieneIdExacto = Number.isFinite(vueloId) && Number.isFinite(tramo.vueloId);
+          if (tieneIdExacto) {
+            return Number(tramo.vueloId) === Number(vueloId)
+              && Math.abs(tramo.salidaUTC - salidaUTC) <= 1;
+          }
+          return tramo.desde === normalizedOrigin
+            && tramo.hasta === normalizedDestination
+            && Math.abs(tramo.salidaUTC - salidaUTC) <= 1;
+        })
         .map((tramo) => tramo.envioIndice),
     ));
     const auditId = `${normalizedOrigin}-${normalizedDestination}-${salidaUTC}`;
