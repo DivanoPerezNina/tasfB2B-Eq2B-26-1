@@ -4,7 +4,7 @@ import { useSimulation } from '../context/SimulationContext';
 import {
   Button, Tabs, TabList, Tab, TabPanels, TabPanel,
   TileGroup, RadioTile, ContentSwitcher, Switch,
-  DatePicker, DatePickerInput, TextInput, Tag, InlineNotification, Stack,
+  TextInput, Tag, InlineNotification, Stack,
 } from '@carbon/react';
 import { SimulationScenario } from '../types';
 import {
@@ -168,9 +168,18 @@ function parseDatasetDate(value?: string, endOfDay = false): Date | null {
   return parsed;
 }
 
-function formatDatasetDateForPicker(value?: string) {
+function formatDatasetDateForDisplay(value?: string) {
   const parsed = parseDatasetDate(value);
-  return parsed ? format(parsed, 'dd/MM/yyyy') : undefined;
+  return parsed ? format(parsed, 'dd/MM/yyyy') : '—';
+}
+
+function formatDateForInput(value: Date) {
+  if (!(value instanceof Date) || Number.isNaN(value.getTime())) return '';
+
+  const yyyy = value.getFullYear();
+  const mm = String(value.getMonth() + 1).padStart(2, '0');
+  const dd = String(value.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
 }
 
 // ─── Componente principal ─────────────────────────────────────────────────────
@@ -279,9 +288,10 @@ export function SimulationConfig() {
     fechaFinSim > fechaMaxDataset
   );
   const puedeIniciar = !esConFecha || (!fechaFueraDeRango && !duracionFueraDeRango);
-  const datasetRangeKey = `${datasetInfo?.fecha_min ?? 'sin-min'}-${datasetInfo?.fecha_max ?? 'sin-max'}`;
-  const fechaMinPicker = formatDatasetDateForPicker(datasetInfo?.fecha_min);
-  const fechaMaxPicker = formatDatasetDateForPicker(datasetInfo?.fecha_max);
+  const fechaInputValue = formatDateForInput(localConfig.startDate);
+  const rangoDatasetTexto = datasetInfo
+    ? `Rango disponible: ${formatDatasetDateForDisplay(datasetInfo.fecha_min)} – ${formatDatasetDateForDisplay(datasetInfo.fecha_max)}`
+    : 'Cargando rango disponible...';
 
   const timeValue = localConfig.startDate && !isNaN(localConfig.startDate.getTime())
     ? `${String(localConfig.startDate.getHours()).padStart(2, '0')}:${String(localConfig.startDate.getMinutes()).padStart(2, '0')}`
@@ -296,13 +306,13 @@ export function SimulationConfig() {
     toast.success('Configuración guardada');
   };
 
-  const handleFecha = (dates: Date[]) => {
-    const d = dates?.[0];
-    if (!d) return;
+  const handleFechaInput = (value: string) => {
+    const parsed = parseDatasetDate(value);
+    if (!parsed) return;
+
     const prev = localConfig.startDate;
-    const merged = new Date(d);
-    merged.setHours(prev.getHours(), prev.getMinutes(), 0, 0);
-    setLocalConfig({ ...localConfig, startDate: merged });
+    parsed.setHours(prev.getHours(), prev.getMinutes(), 0, 0);
+    setLocalConfig(current => ({ ...current, startDate: parsed }));
   };
 
   const handleHora = (t: string) => {
@@ -462,22 +472,17 @@ export function SimulationConfig() {
                   <Stack gap={3}>
                     <div style={{ display: 'flex', gap: '.75rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
                       <div style={{ flex: '1 1 160px' }}>
-                        <DatePicker
-                          key={datasetRangeKey}
-                          datePickerType="single"
-                          dateFormat="d/m/Y"
-                          value={localConfig.startDate}
-                          minDate={fechaMinPicker}
-                          maxDate={fechaMaxPicker}
-                          onChange={handleFecha}
-                        >
-                          <DatePickerInput
-                            id="cfg-fecha"
-                            labelText="Fecha de inicio"
-                            placeholder="dd/mm/aaaa"
-                            disabled={!esConFecha}
-                          />
-                        </DatePicker>
+                        <TextInput
+                          id="cfg-fecha"
+                          labelText="Fecha de inicio"
+                          type="date"
+                          value={fechaInputValue}
+                          min={datasetInfo?.fecha_min}
+                          max={datasetInfo?.fecha_max}
+                          helperText={rangoDatasetTexto}
+                          disabled={!esConFecha}
+                          onChange={(event) => handleFechaInput(event.target.value)}
+                        />
                       </div>
                       <div style={{ width: '8rem' }}>
                         <TextInput
