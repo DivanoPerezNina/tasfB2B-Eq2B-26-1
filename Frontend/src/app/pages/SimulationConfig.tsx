@@ -182,6 +182,24 @@ function formatDateForInput(value: Date) {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+function parseManualDate(value: string): Date | null {
+  const normalized = value.trim();
+
+  const iso = normalized.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) {
+    const [, yyyy, mm, dd] = iso;
+    return parseDatasetDate(`${yyyy}-${mm}-${dd}`);
+  }
+
+  const local = normalized.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (local) {
+    const [, dd, mm, yyyy] = local;
+    return parseDatasetDate(`${yyyy}-${mm}-${dd}`);
+  }
+
+  return null;
+}
+
 // ─── Componente principal ─────────────────────────────────────────────────────
 
 export function SimulationConfig() {
@@ -195,6 +213,7 @@ export function SimulationConfig() {
   } = useSimulation();
 
   const [localConfig, setLocalConfig] = useState(config);
+  const [fechaTexto, setFechaTexto] = useState(() => formatDateForInput(config.startDate));
   const [currentTime, setCurrentTime] = useState(new Date());
   const [history, setHistory] = useState<HistoryRecord[]>(loadHistory);
 
@@ -213,8 +232,16 @@ export function SimulationConfig() {
   }, []);
 
   useEffect(() => {
-    setLocalConfig(prev => ({ ...prev, startDate: config.startDate }));
+    const next = config.startDate instanceof Date && !Number.isNaN(config.startDate.getTime())
+      ? new Date(config.startDate)
+      : new Date();
+
+    setLocalConfig(prev => ({ ...prev, startDate: next }));
   }, [config.startDate]);
+
+  useEffect(() => {
+    setFechaTexto(formatDateForInput(localConfig.startDate));
+  }, [localConfig.startDate]);
 
   useEffect(() => {
     const min = parseDatasetDate(datasetInfo?.fecha_min);
@@ -223,15 +250,14 @@ export function SimulationConfig() {
 
     setLocalConfig(prev => {
       const actual = prev.startDate;
-      if (
+      const invalid = (
         !(actual instanceof Date) ||
         Number.isNaN(actual.getTime()) ||
         actual < min ||
         actual > max
-      ) {
-        return { ...prev, startDate: new Date(min) };
-      }
-      return prev;
+      );
+
+      return invalid ? { ...prev, startDate: new Date(min) } : prev;
     });
   }, [datasetInfo?.fecha_min, datasetInfo?.fecha_max]);
 
@@ -288,7 +314,7 @@ export function SimulationConfig() {
     fechaFinSim > fechaMaxDataset
   );
   const puedeIniciar = !esConFecha || (!fechaFueraDeRango && !duracionFueraDeRango);
-  const fechaInputValue = formatDateForInput(localConfig.startDate);
+  const fechaTextoValida = parseManualDate(fechaTexto) !== null;
   const rangoDatasetTexto = datasetInfo
     ? `Rango disponible: ${formatDatasetDateForDisplay(datasetInfo.fecha_min)} – ${formatDatasetDateForDisplay(datasetInfo.fecha_max)}`
     : 'Cargando rango disponible...';
@@ -307,12 +333,49 @@ export function SimulationConfig() {
   };
 
   const handleFechaInput = (value: string) => {
-    const parsed = parseDatasetDate(value);
+    setFechaTexto(value);
+
+    const parsed = parseManualDate(value);
     if (!parsed) return;
 
     const prev = localConfig.startDate;
-    parsed.setHours(prev.getHours(), prev.getMinutes(), 0, 0);
+    const hours = prev instanceof Date && !Number.isNaN(prev.getTime()) ? prev.getHours() : 0;
+    const minutes = prev instanceof Date && !Number.isNaN(prev.getTime()) ? prev.getMinutes() : 0;
+    parsed.setHours(hours, minutes, 0, 0);
     setLocalConfig(current => ({ ...current, startDate: parsed }));
+  };
+
+  const handleFechaBlur = () => {
+    const parsed = parseManualDate(fechaTexto);
+
+    if (!parsed) {
+      const fallback = fechaMinDataset ?? localConfig.startDate;
+      setFechaTexto(formatDateForInput(fallback));
+      toast.error('Fecha inválida', {
+        description: 'Escribe la fecha como AAAA-MM-DD o DD/MM/AAAA.',
+      });
+      return;
+    }
+
+    if (
+      (fechaMinDataset && parsed < fechaMinDataset) ||
+      (fechaMaxDataset && parsed > fechaMaxDataset)
+    ) {
+      const fallback = fechaMinDataset ?? localConfig.startDate;
+      setFechaTexto(formatDateForInput(fallback));
+      setLocalConfig(current => ({ ...current, startDate: new Date(fallback) }));
+      toast.error('Fecha fuera del dataset', {
+        description: rangoDatasetTexto,
+      });
+      return;
+    }
+
+    const prev = localConfig.startDate;
+    const hours = prev instanceof Date && !Number.isNaN(prev.getTime()) ? prev.getHours() : 0;
+    const minutes = prev instanceof Date && !Number.isNaN(prev.getTime()) ? prev.getMinutes() : 0;
+    parsed.setHours(hours, minutes, 0, 0);
+    setLocalConfig(current => ({ ...current, startDate: parsed }));
+    setFechaTexto(formatDateForInput(parsed));
   };
 
   const handleHora = (t: string) => {
@@ -475,13 +538,15 @@ export function SimulationConfig() {
                         <TextInput
                           id="cfg-fecha"
                           labelText="Fecha de inicio"
-                          type="date"
-                          value={fechaInputValue}
-                          min={datasetInfo?.fecha_min}
-                          max={datasetInfo?.fecha_max}
-                          helperText={rangoDatasetTexto}
+                          type="text"
+                          placeholder="AAAA-MM-DD"
+                          value={fechaTexto}
+                          helperText={`${rangoDatasetTexto}. También acepta DD/MM/AAAA.`}
+                          invalid={esConFecha && !fechaTextoValida}
+                          invalidText="Fecha inválida. Usa AAAA-MM-DD o DD/MM/AAAA."
                           disabled={!esConFecha}
                           onChange={(event) => handleFechaInput(event.target.value)}
+                          onBlur={handleFechaBlur}
                         />
                       </div>
                       <div style={{ width: '8rem' }}>
