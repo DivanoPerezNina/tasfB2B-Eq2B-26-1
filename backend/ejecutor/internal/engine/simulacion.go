@@ -511,17 +511,7 @@ func (s *Simulacion) warmUpLoop() bool {
 func (s *Simulacion) procesarEventos(t int64) {
 	for i := range s.Envios {
 		e := &s.Envios[i]
-		if e.Estado == "entregado" {
-			continue
-		}
-		if e.Estado == "rechazado" {
-			// El planificador puede dejar un envío sin ruta mientras el horizonte
-			// todavía es corto. Eso no es colapso antes de su deadline. Cuando el
-			// reloj ya superó el plazo y sigue rechazado, sí es el primer
-			// incumplimiento SLA que exige el escenario académico.
-			if e.MotivoRechazo != "sla" && e.DeadlineUTC > 0 && t > e.DeadlineUTC {
-				e.MotivoRechazo = "sla"
-			}
+		if e.Estado == "entregado" || e.Estado == "rechazado" {
 			continue
 		}
 

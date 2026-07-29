@@ -150,34 +150,6 @@ const SCENARIO_TAG: Record<SimulationScenario, 'green' | 'blue' | 'red'> = {
   realtime: 'green', period: 'blue', collapse: 'red',
 };
 
-function parseDatasetDate(value?: string, endOfDay = false): Date | null {
-  const match = value?.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (!match) return null;
-
-  const [, yyyy, mm, dd] = match;
-  const parsed = new Date(Number(yyyy), Number(mm) - 1, Number(dd));
-  if (
-    parsed.getFullYear() !== Number(yyyy) ||
-    parsed.getMonth() !== Number(mm) - 1 ||
-    parsed.getDate() !== Number(dd)
-  ) {
-    return null;
-  }
-
-  parsed.setHours(endOfDay ? 23 : 0, endOfDay ? 59 : 0, endOfDay ? 59 : 0, endOfDay ? 999 : 0);
-  return parsed;
-}
-
-function formatDatasetDateForDisplay(value?: string) {
-  const parsed = parseDatasetDate(value);
-  return parsed ? format(parsed, 'dd/MM/yyyy') : '—';
-}
-
-function formatDatasetDateForPicker(value?: string) {
-  const parsed = parseDatasetDate(value);
-  return parsed ? format(parsed, 'dd/MM/yyyy') : undefined;
-}
-
 // ─── Componente principal ─────────────────────────────────────────────────────
 
 export function SimulationConfig() {
@@ -209,30 +181,8 @@ export function SimulationConfig() {
   }, []);
 
   useEffect(() => {
-    const next = config.startDate instanceof Date && !Number.isNaN(config.startDate.getTime())
-      ? new Date(config.startDate)
-      : new Date();
-
-    setLocalConfig(prev => ({ ...prev, startDate: next }));
+    setLocalConfig(prev => ({ ...prev, startDate: config.startDate }));
   }, [config.startDate]);
-
-  useEffect(() => {
-    const min = parseDatasetDate(datasetInfo?.fecha_min);
-    const max = parseDatasetDate(datasetInfo?.fecha_max, true);
-    if (!min || !max) return;
-
-    setLocalConfig(prev => {
-      const actual = prev.startDate;
-      const invalid = (
-        !(actual instanceof Date) ||
-        Number.isNaN(actual.getTime()) ||
-        actual < min ||
-        actual > max
-      );
-
-      return invalid ? { ...prev, startDate: new Date(min) } : prev;
-    });
-  }, [datasetInfo?.fecha_min, datasetInfo?.fecha_max]);
 
   useEffect(() => {
     if (fase === 'completado' && contadores.total > 0) {
@@ -278,21 +228,10 @@ export function SimulationConfig() {
     : esRealtime
       ? (localConfig.duracionRealMin < 5 || localConfig.duracionRealMin > 90)
       : false;
-  const fechaMinDataset = parseDatasetDate(datasetInfo?.fecha_min);
-  const fechaMaxDataset = parseDatasetDate(datasetInfo?.fecha_max, true);
+  const fechaMaxDataset = datasetInfo ? new Date(datasetInfo.fecha_max + 'T23:59:59') : null;
   const fechaFinSim = new Date(localConfig.startDate.getTime() + diasEfectivos * 86_400_000);
-  const fechaFueraDeRango = esConFecha && !!fechaMinDataset && !!fechaMaxDataset && (
-    localConfig.startDate < fechaMinDataset ||
-    localConfig.startDate > fechaMaxDataset ||
-    fechaFinSim > fechaMaxDataset
-  );
+  const fechaFueraDeRango = esConFecha && !!fechaMaxDataset && fechaFinSim > fechaMaxDataset;
   const puedeIniciar = !esConFecha || (!fechaFueraDeRango && !duracionFueraDeRango);
-  const datasetRangeKey = `${datasetInfo?.fecha_min ?? 'sin-min'}-${datasetInfo?.fecha_max ?? 'sin-max'}`;
-  const fechaMinPicker = formatDatasetDateForPicker(datasetInfo?.fecha_min);
-  const fechaMaxPicker = formatDatasetDateForPicker(datasetInfo?.fecha_max);
-  const rangoDatasetTexto = datasetInfo
-    ? `${formatDatasetDateForDisplay(datasetInfo.fecha_min)} – ${formatDatasetDateForDisplay(datasetInfo.fecha_max)}`
-    : 'Cargando rango...';
 
   const timeValue = localConfig.startDate && !isNaN(localConfig.startDate.getTime())
     ? `${String(localConfig.startDate.getHours()).padStart(2, '0')}:${String(localConfig.startDate.getMinutes()).padStart(2, '0')}`
@@ -308,13 +247,12 @@ export function SimulationConfig() {
   };
 
   const handleFecha = (dates: Date[]) => {
-    const selected = dates?.[0];
-    if (!selected) return;
-
-    const previous = localConfig.startDate;
-    const merged = new Date(selected);
-    merged.setHours(previous.getHours(), previous.getMinutes(), 0, 0);
-    setLocalConfig(current => ({ ...current, startDate: merged }));
+    const d = dates?.[0];
+    if (!d) return;
+    const prev = localConfig.startDate;
+    const merged = new Date(d);
+    merged.setHours(prev.getHours(), prev.getMinutes(), 0, 0);
+    setLocalConfig({ ...localConfig, startDate: merged });
   };
 
   const handleHora = (t: string) => {
@@ -472,42 +410,39 @@ export function SimulationConfig() {
                 {/* Fecha + duración/velocidad */}
                 <Stack gap={5}>
                   <Stack gap={3}>
-                    <div style={{
-                      display: 'grid',
-                      gridTemplateColumns: 'minmax(0, 1fr) 8rem',
-                      gap: '.75rem',
-                      alignItems: 'end',
-                    }}>
-                      <DatePicker
-                        key={datasetRangeKey}
-                        datePickerType="single"
-                        dateFormat="d/m/Y"
-                        value={localConfig.startDate}
-                        minDate={fechaMinPicker}
-                        maxDate={fechaMaxPicker}
-                        onChange={handleFecha}
-                      >
-                        <DatePickerInput
-                          id="cfg-fecha"
-                          labelText="Fecha de inicio"
-                          placeholder="dd/mm/aaaa"
+                    <div style={{ display: 'flex', gap: '.75rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                      <div style={{ flex: '1 1 160px' }}>
+                        <DatePicker
+                          datePickerType="single"
+                          dateFormat="d/m/Y"
+                          value={localConfig.startDate}
+                          minDate={datasetInfo?.fecha_min}
+                          maxDate={datasetInfo?.fecha_max}
+                          onChange={handleFecha}
+                        >
+                          <DatePickerInput
+                            id="cfg-fecha"
+                            labelText="Fecha de inicio"
+                            placeholder="dd/mm/aaaa"
+                            disabled={!esConFecha}
+                          />
+                        </DatePicker>
+                      </div>
+                      <div style={{ width: '8rem' }}>
+                        <TextInput
+                          id="cfg-hora"
+                          labelText="Hora"
+                          type="time"
+                          value={timeValue}
                           disabled={!esConFecha}
+                          onChange={(e) => handleHora(e.target.value)}
                         />
-                      </DatePicker>
-
-                      <TextInput
-                        id="cfg-hora"
-                        labelText="Hora"
-                        type="time"
-                        value={timeValue}
-                        disabled={!esConFecha}
-                        onChange={(e) => handleHora(e.target.value)}
-                      />
+                      </div>
                     </div>
 
                     {datasetInfo ? (
                       <p style={{ fontSize: '.75rem', color: 'var(--cds-text-secondary)', margin: 0 }}>
-                        Datos: <strong>{rangoDatasetTexto}</strong>
+                        Rango disponible: <strong>{datasetInfo.fecha_min}</strong> → <strong>{datasetInfo.fecha_max}</strong>
                       </p>
                     ) : (
                       <InlineNotification kind="warning" lowContrast hideCloseButton
@@ -551,6 +486,9 @@ export function SimulationConfig() {
                           duracionRealMin: Number(e.target.value) || (esRealtime ? 24 : 60),
                         })}
                       />
+                      <p style={{ fontSize: '.75rem', color: 'var(--cds-text-secondary)', margin: '.35rem 0 0' }}>
+                        Ajusta la velocidad de la simulación sin cambiar la ventana de datos.
+                      </p>
                     </div>
                   )}
 
@@ -559,8 +497,8 @@ export function SimulationConfig() {
                       kind="info"
                       lowContrast
                       hideCloseButton
-                      title={`Simulación ${localConfig.dias}D`}
-                      subtitle={`${localConfig.duracionRealMin} min reales · 30 bloques · ${Math.max(20, Math.round((localConfig.duracionRealMin * 60) / 30))} s por bloque.`}
+                      title={`Simulación ${localConfig.dias}D calibrada`}
+                      subtitle={`Tiempo estimado: ${localConfig.duracionRealMin} minutos reales. Se usan 30 bloques: cada ${Math.round(localConfig.dias * 48)} minutos de datos futuros se consumen cada ${Math.max(20, Math.round((localConfig.duracionRealMin * 60) / 30))} segundos reales. Tiempo = 0 en la fecha/hora elegida; no se procesa data anterior.`}
                     />
                   )}
 

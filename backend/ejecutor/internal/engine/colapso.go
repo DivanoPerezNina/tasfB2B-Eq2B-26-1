@@ -19,8 +19,7 @@ func (o *Orquestador) detectarColapso(sim *Simulacion, taSeg, saSeg float64, tie
 	sim.mu.RUnlock()
 
 	// 1) Colapso técnico: la planificación tarda tanto o más que el intervalo Sa.
-	// Sim5D por aproximaciones usa exclusivamente el criterio académico de SLA.
-	if !o.Colapso.SoloSLA && taSeg >= saSeg {
+	if taSeg >= saSeg {
 		return o.nuevoResultadoColapso(
 			"tecnico",
 			fmt.Sprintf("Ta >= Sa (%.2fs >= %.2fs)", taSeg, saSeg),
@@ -40,7 +39,7 @@ func (o *Orquestador) detectarColapso(sim *Simulacion, taSeg, saSeg float64, tie
 			if detalleSLA != "" {
 				motivo = fmt.Sprintf("%s | detalle: %s", motivo, detalleSLA)
 			}
-			resultado := o.nuevoResultadoColapso(
+			return o.nuevoResultadoColapso(
 				"rechazos",
 				motivo,
 				"",
@@ -49,16 +48,8 @@ func (o *Orquestador) detectarColapso(sim *Simulacion, taSeg, saSeg float64, tie
 				saSeg,
 				tiempoSimUTC,
 				cont,
-			)
-			resultado.RechazosSLA = rechazosSLA
-			return resultado, true
+			), true
 		}
-	}
-
-	// Sim5D por aproximaciones no debe detenerse por almacenes rojos: el
-	// enunciado define colapso como la primera maleta que incumple su entrega.
-	if o.Colapso.SoloSLA {
-		return nil, false
 	}
 
 	// 3) Colapso logístico: ocupación crítica persistente en un aeropuerto.

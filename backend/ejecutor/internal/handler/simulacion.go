@@ -206,15 +206,6 @@ func (h *SimulacionHandler) PeriodoProgramado(w http.ResponseWriter, r *http.Req
 	// si otro escenario futuro también lo hace, separar esta señal.
 	orq.UsarCancelacionesArchivo = req.UsarCancelaciones == nil || *req.UsarCancelaciones
 	orq.ModoOperacion = !orq.UsarCancelacionesArchivo
-	// La alternativa académica Sim5D debe detenerse al primer incumplimiento
-	// de entrega, no por la ocupación visual de almacenes.
-	if req.Dias == 5 && orq.UsarCancelacionesArchivo {
-		orq.Colapso = &engine.ConfigColapso{
-			Habilitado: true,
-			SoloSLA:    true,
-			MaxDias:    req.Dias,
-		}
-	}
 	orq.Broadcast = broker.Publicar
 	orq.Iniciar()
 

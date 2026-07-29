@@ -812,7 +812,6 @@ export function UnifiedDashboard() {
   const finSimMin = lastValidTick?.tiempo_sim_utc ?? Math.floor(simulationTime.getTime() / 60000);
   const fechaFinSim = new Date(finSimMin * 60 * 1000);
   const diasSimulados = Math.max(0, Math.ceil((finSimMin - inicioSimMin) / 1440));
-  const slaCollapseDetected = collapseFailure?.type === 'sla';
   const esPeriodoSimulado = config.scenario === 'period';
   const fechaInicioSim = esPeriodoSimulado
     ? formatFechaInicioTexto(config.startDate)
@@ -1119,18 +1118,12 @@ export function UnifiedDashboard() {
               </div>
               <div>
                 <h2 className="text-lg font-bold text-panel-text">
-                  {slaCollapseDetected
-                    ? 'Colapso logístico detectado'
-                    : collapseFailure
-                      ? 'No se llegó al colapso SLA'
-                      : 'Simulación completada'}
+                  {collapseFailure ? 'No se llegó al colapso SLA' : 'Simulación completada'}
                 </h2>
                 <p className="mt-1 text-sm text-panel-text-muted">
-                  {slaCollapseDetected
-                    ? 'Se registró la primera maleta que ya no puede cumplir su plazo de entrega.'
-                    : collapseFailure
-                      ? 'La simulación se detuvo por un límite técnico del planificador antes de registrar rechazos SLA.'
-                      : 'Resultados finales del período'}
+                  {collapseFailure
+                    ? 'La simulación se detuvo por un límite técnico del planificador antes de registrar rechazos SLA.'
+                    : 'Resultados finales del período'}
                 </p>
               </div>
               {collapseFailure && (
@@ -1141,7 +1134,7 @@ export function UnifiedDashboard() {
               <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
                 {[
                   { label: 'Fecha de inicio', value: format(config.startDate, 'dd/MM/yyyy HH:mm') },
-                  { label: slaCollapseDetected ? 'Fecha del colapso' : 'Fecha de fin / límite técnico', value: format(fechaFinSim, 'dd/MM/yyyy HH:mm') },
+                  { label: 'Fecha de fin / límite técnico', value: format(fechaFinSim, 'dd/MM/yyyy HH:mm') },
                   { label: 'Días simulados', value: diasSimulados },
                   { label: 'Total envíos', value: lastValidTick?.contadores.total ?? contadores.total },
                   { label: 'Entregados', value: lastValidTick?.contadores.entregado ?? contadores.entregado },
@@ -1158,7 +1151,7 @@ export function UnifiedDashboard() {
               </div>
               {collapseFailure && (
                 <details className="w-full rounded-2xl border border-panel-border bg-background p-3 text-left text-sm text-panel-text-muted">
-                  <summary className="cursor-pointer text-sm font-medium text-panel-text">{slaCollapseDetected ? 'Ver motivo del colapso' : 'Ver detalle técnico'}</summary>
+                  <summary className="cursor-pointer text-sm font-medium text-panel-text">Ver detalle técnico</summary>
                   <p className="mt-2 whitespace-pre-wrap">{collapseFailure.technicalMessage}</p>
                 </details>
               )}
