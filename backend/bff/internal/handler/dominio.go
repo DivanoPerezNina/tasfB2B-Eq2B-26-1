@@ -107,29 +107,36 @@ func (h *DominioHandler) Vuelos(w http.ResponseWriter, r *http.Request) {
 	ok(w, lista, msg)
 }
 
-// GET /api/dataset — rango de fechas del dataset
+// GET /api/dataset — rango real de la tabla envios_colapso.
+// No usa dataset_meta para evitar mostrar el rango antiguo de la tabla envios.
 func (h *DominioHandler) Dataset(w http.ResponseWriter, r *http.Request) {
-	rows, err := h.DB.Query(
-		`SELECT clave, valor FROM dataset_meta
-		 WHERE clave IN ('fecha_min','fecha_max','total_envios')`)
+	var fechaMin, fechaMax sql.NullString
+	var total int64
+
+	err := h.DB.QueryRow(
+		`SELECT DATE_FORMAT(MIN(fecha_registro), '%Y-%m-%d'),
+		        DATE_FORMAT(MAX(fecha_registro), '%Y-%m-%d'),
+		        COUNT(*)
+		 FROM envios_colapso`,
+	).Scan(&fechaMin, &fechaMax, &total)
 	if err != nil {
 		errResp(w, 500, "DB_ERROR", err.Error())
 		return
 	}
-	defer rows.Close()
 
-	m := make(map[string]string)
-	for rows.Next() {
-		var k, v string
-		if err := rows.Scan(&k, &v); err != nil {
-			continue
-		}
-		m[k] = v
+	min := ""
+	max := ""
+	if fechaMin.Valid {
+		min = fechaMin.String
+	}
+	if fechaMax.Valid {
+		max = fechaMax.String
 	}
 
 	ok(w, map[string]interface{}{
-		"fecha_min":    m["fecha_min"],
-		"fecha_max":    m["fecha_max"],
-		"total_envios": m["total_envios"],
-	}, "rango del dataset")
+		"fecha_min":    min,
+		"fecha_max":    max,
+		"total_envios": total,
+		"tabla":         "envios_colapso",
+	}, "rango real de envios_colapso")
 }

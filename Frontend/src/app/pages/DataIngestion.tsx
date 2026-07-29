@@ -48,12 +48,14 @@ export function DataIngestion() {
       .then(r => r.json())
       .then(json => {
         const d = json.data ?? json;
-        if (d?.fecha_min) {
+        if (d && d.total_envios !== undefined && d.total_envios !== null) {
           setDataset({
-            fecha_min: d.fecha_min.slice(0, 10),
-            fecha_max: d.fecha_max.slice(0, 10),
-            total_envios: d.total_envios,
+            fecha_min: d.fecha_min ? String(d.fecha_min).slice(0, 10) : '',
+            fecha_max: d.fecha_max ? String(d.fecha_max).slice(0, 10) : '',
+            total_envios: String(d.total_envios),
           });
+        } else {
+          setDataset(null);
         }
       })
       .catch(() => { /* backend puede no estar arriba */ });
@@ -162,9 +164,14 @@ export function DataIngestion() {
           {/* Estado del dataset */}
           {dataset ? (
             <InlineNotification
-              kind="success" lowContrast hideCloseButton
-              title="Datos disponibles"
-              subtitle={`${Number(dataset.total_envios).toLocaleString()} envíos · ${dataset.fecha_min} → ${dataset.fecha_max}`}
+              kind={Number(dataset.total_envios) > 0 ? 'success' : 'warning'}
+              lowContrast hideCloseButton
+              title={Number(dataset.total_envios) > 0 ? 'Datos disponibles' : 'Tabla envios_colapso vacía'}
+              subtitle={
+                Number(dataset.total_envios) > 0
+                  ? `${Number(dataset.total_envios).toLocaleString()} envíos · ${dataset.fecha_min} → ${dataset.fecha_max}`
+                  : '0 envíos · carga los archivos _envios_XXXX_.txt'
+              }
             />
           ) : (
             <InlineNotification
