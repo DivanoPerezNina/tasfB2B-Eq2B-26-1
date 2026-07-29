@@ -62,7 +62,50 @@ export function DataIngestion() {
   };
   useEffect(cargarDataset, []);
 
-  const subirArchivo = async (kind: UploadKind, file: File): Promise<boolean> => {
+  interface EstadoCarga {
+    token: string;
+    estado: 'recibido' | 'procesando' | 'ok' | 'error';
+    registros_total: number;
+    registros_ok: number;
+    detalle_error?: string;
+  }
+
+  const esperarProcesamiento = async (
+    token: string,
+    kind: UploadKind,
+    fileName: string,
+  ): Promise<EstadoCarga> => {
+    const limiteMs = 4 * 60 * 60 * 1000;
+    const inicio = Date.now();
+
+    while (Date.now() - inicio < limiteMs) {
+      const res = await fetch(`${BFF}/api/carga/upload/sesion/${token}`, {
+        headers: authHeader(),
+        cache: 'no-store',
+      });
+      const estado: EstadoCarga = await res.json();
+      if (!res.ok) {
+        throw new Error(estado.detalle_error ?? `No se pudo consultar la carga: HTTP ${res.status}`);
+      }
+
+      if (estado.estado === 'error') {
+        throw new Error(estado.detalle_error || `Falló el procesamiento de ${fileName}`);
+      }
+      if (estado.estado === 'ok') {
+        return estado;
+      }
+
+      setMensaje(prev => ({
+        ...prev,
+        [kind]: `${fileName}: procesando ${Number(estado.registros_total || 0).toLocaleString()} registros · ${Number(estado.registros_ok || 0).toLocaleString()} insertados`,
+      }));
+      await new Promise(resolve => window.setTimeout(resolve, 2000));
+    }
+
+    throw new Error(`La carga de ${fileName} continúa demasiado tiempo. Revisa carga_sesiones y logs/carga-masiva.log.`);
+  };
+
+  const subirArchivo = async (kind: UploadKind, file: File): Promise<EstadoCarga> => {
     const fd = new FormData();
     fd.append('archivo', file);
     const url = `${BFF}/api/carga/upload/${kind}${forzar ? '?forzar=true' : ''}`;
@@ -71,7 +114,10 @@ export function DataIngestion() {
     if (!res.ok) {
       throw new Error(json.mensaje ?? json.error ?? `HTTP ${res.status}`);
     }
-    return true;
+    if (!json.token) {
+      throw new Error('El backend recibió el archivo, pero no devolvió el token de procesamiento.');
+    }
+    return esperarProcesamiento(json.token, kind, file.name);
   };
 
   const filesFor = (kind: UploadKind): File[] => {
@@ -88,14 +134,24 @@ export function DataIngestion() {
     setMensaje(prev => ({ ...prev, [kind]: '' }));
     try {
       let n = 0;
+      let totalInsertados = 0;
       for (const f of files) {
-        await subirArchivo(kind, f);
+        setMensaje(prev => ({ ...prev, [kind]: `${f.name}: archivo recibido; esperando inserción en la BD…` }));
+        const resultado = await subirArchivo(kind, f);
         n++;
-        setMensaje(prev => ({ ...prev, [kind]: `${n}/${files.length} archivos subidos…` }));
+        totalInsertados += Number(resultado.registros_ok || 0);
+        setMensaje(prev => ({
+          ...prev,
+          [kind]: `${n}/${files.length} completados · ${totalInsertados.toLocaleString()} registros nuevos insertados`,
+        }));
+        cargarDataset();
       }
       setEstado(prev => ({ ...prev, [kind]: 'ok' }));
-      setMensaje(prev => ({ ...prev, [kind]: `${n} archivo(s) cargado(s) correctamente` }));
-      toast.success(`${kind} cargado`, { description: `${n} archivo(s) procesado(s)` });
+      setMensaje(prev => ({
+        ...prev,
+        [kind]: `${n} archivo(s) procesado(s) · ${totalInsertados.toLocaleString()} registros nuevos insertados`,
+      }));
+      toast.success(`${kind} cargado`, { description: `${totalInsertados.toLocaleString()} registros insertados` });
       cargarDataset();
     } catch (e: any) {
       setEstado(prev => ({ ...prev, [kind]: 'error' }));

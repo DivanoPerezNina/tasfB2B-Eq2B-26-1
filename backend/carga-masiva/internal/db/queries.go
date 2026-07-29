@@ -87,9 +87,9 @@ func InsertarVuelosBatch(db *sql.DB, rows []parser.Vuelo) error {
 
 // InsertarEnviosBatch inserta un lote de envíos de Periodo/Colapso ignorando duplicados en envios_colapso.
 // Se llama repetidamente desde el handler de streaming.
-func InsertarEnviosBatch(tx *sql.Tx, rows []parser.Envio) error {
+func InsertarEnviosBatch(tx *sql.Tx, rows []parser.Envio) (int64, error) {
 	if len(rows) == 0 {
-		return nil
+		return 0, nil
 	}
 	placeholders := make([]string, len(rows))
 	args := make([]interface{}, 0, len(rows)*10)
@@ -105,8 +105,12 @@ func InsertarEnviosBatch(tx *sql.Tx, rows []parser.Envio) error {
 	q := `INSERT IGNORE INTO envios_colapso
 		(id_envio, origen_iata, fecha_registro, hora, minuto, destino_iata, cantidad_maletas, id_cliente, registro_utc, deadline_utc)
 		VALUES ` + strings.Join(placeholders, ",")
-	_, err := tx.Exec(q, args...)
-	return err
+	res, err := tx.Exec(q, args...)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
 }
 
 // InsertarCancelacionesBatch reemplaza las cancelaciones (DELETE + INSERT). Un

@@ -262,6 +262,11 @@ func (h *UploadHandler) Envios(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// La respuesta HTTP solo confirma que el archivo fue recibido. El estado real
+	// se consulta con /upload/sesion/{token}. Marcamos procesando antes del trabajo
+	// en segundo plano para que la interfaz no lo confunda con una carga terminada.
+	db.ActualizarSesion(h.DB, token, "procesando", 0, 0, nil)
+
 	go func() {
 		input, openErr := os.Open(diskPath)
 		if openErr != nil {
@@ -271,18 +276,13 @@ func (h *UploadHandler) Envios(w http.ResponseWriter, r *http.Request) {
 		}
 		defer input.Close()
 
-		tx, txErr := h.DB.Begin()
-		if txErr != nil {
-			msg := txErr.Error()
-			db.ActualizarSesion(h.DB, token, "error", 0, 0, &msg)
-			return
-		}
+		procesados := 0
+		insertados := 0
+		ultimoReporte := 0
 
-		totalOK := 0
 		parseTotal, parseErr := parser.ParseEnvios(input, iata, h.BatchSize,
 			func(batch []parser.Envio) error {
-				// Precalcular registro_utc y deadline_utc por envío (réplica de
-				// la conversión horaria que hacía el Planificador).
+				// Precalcular registro_utc y deadline_utc por envío.
 				for i := range batch {
 					e := &batch[i]
 					anio, mes, dia := parsearFechaISO(e.FechaRegistro)
@@ -290,25 +290,45 @@ func (h *UploadHandler) Envios(w http.ResponseWriter, r *http.Request) {
 					contDest := contMap[e.DestinoIATA]
 					e.DeadlineUTC = parser.DeadlineUTC(e.RegistroUTC, contOrigen, contDest)
 				}
-				if err := db.InsertarEnviosBatch(tx, batch); err != nil {
-					return err
+
+				// Confirmar cada lote por separado. Así los registros aparecen de forma
+				// progresiva en MySQL y una falla posterior no revierte todo el archivo.
+				tx, txErr := h.DB.Begin()
+				if txErr != nil {
+					return txErr
 				}
-				totalOK += len(batch)
+				afectados, insertErr := db.InsertarEnviosBatch(tx, batch)
+				if insertErr != nil {
+					tx.Rollback()
+					return insertErr
+				}
+				if commitErr := tx.Commit(); commitErr != nil {
+					return commitErr
+				}
+
+				procesados += len(batch)
+				insertados += int(afectados)
+				if procesados-ultimoReporte >= 10000 {
+					db.ActualizarSesion(h.DB, token, "procesando", procesados, insertados, nil)
+					ultimoReporte = procesados
+				}
 				return nil
 			})
 
 		if parseErr != nil {
-			tx.Rollback()
 			msg := parseErr.Error()
-			db.ActualizarSesion(h.DB, token, "error", parseTotal, totalOK, &msg)
+			db.ActualizarSesion(h.DB, token, "error", parseTotal, insertados, &msg)
 			return
 		}
-		if commitErr := tx.Commit(); commitErr != nil {
-			msg := commitErr.Error()
-			db.ActualizarSesion(h.DB, token, "error", parseTotal, totalOK, &msg)
+		if parseTotal == 0 {
+			msg := "el archivo no contiene ningún registro válido con el formato id-YYYYMMDD-HH-MM-DEST-MALETAS-CLIENTE"
+			db.ActualizarSesion(h.DB, token, "error", 0, 0, &msg)
 			return
 		}
-		db.ActualizarSesion(h.DB, token, "ok", parseTotal, parseTotal, nil)
+
+		db.ActualizarSesion(h.DB, token, "ok", parseTotal, insertados, nil)
+		// Refrescar el rango publicado en la pantalla de Ingreso de datos.
+		_, _ = db.RecalcularDatasetInfo(h.DB)
 	}()
 
 	respond(w, 202, map[string]string{
