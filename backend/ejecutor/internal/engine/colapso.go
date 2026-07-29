@@ -5,9 +5,9 @@ import (
 	"time"
 )
 
-// La fecha solicitada para la demostración es el 05/03/2027 a las 12:00 p. m.
-// hora Perú. Internamente se trabaja en UTC, por eso corresponde a las 17:00 UTC.
-const fechaColapsoProgramadoUTC int64 = 30071100
+// La fecha solicitada para la demostración es el 05/03/2027 a las 08:00 a. m.
+// hora Perú. Internamente se trabaja en UTC, por eso corresponde a las 13:00 UTC.
+const fechaColapsoProgramadoUTC int64 = 30070860
 
 // FechaColapsoProgramadoUTC expone el minuto UTC fijo para que los handlers
 // habiliten el corte únicamente cuando la ventana simulada realmente lo contiene.

@@ -208,13 +208,13 @@ func (h *SimulacionHandler) PeriodoProgramado(w http.ResponseWriter, r *http.Req
 	orq.ModoOperacion = !orq.UsarCancelacionesArchivo
 
 	// La búsqueda de la fecha de colapso se hace mediante ventanas 5D. Solo la
-	// corrida que contiene el 05/03/2027 a las 12:00 hora Perú se detiene y
+	// corrida que contiene el 05/03/2027 a las 08:00 hora Perú se detiene y
 	// publica el reporte de colapso; las demás 5D terminan normalmente.
 	if req.Dias == 5 && !orq.ModoOperacion {
 		cfgDemo := &engine.ConfigColapso{}
 		if engine.ConfigurarColapsoProgramado(cfgDemo, req.T0UTC, finUTC) {
 			orq.Colapso = cfgDemo
-			fmt.Println("Sim5D: colapso programado habilitado para 05/03/2027 12:00 hora Perú.")
+			fmt.Println("Sim5D: colapso programado habilitado para 05/03/2027 08:00 hora Perú.")
 		}
 	}
 	orq.Broadcast = broker.Publicar
@@ -323,7 +323,7 @@ func (h *SimulacionHandler) Colapso(w http.ResponseWriter, r *http.Request) {
 		MaxDias:                  req.MaxDias,
 	}
 	if engine.ConfigurarColapsoProgramado(orq.Colapso, req.T0UTC, finUTC) {
-		fmt.Println("Colapso: fecha determinística habilitada para 05/03/2027 12:00 hora Perú.")
+		fmt.Println("Colapso: fecha determinística habilitada para 05/03/2027 08:00 hora Perú.")
 	}
 	orq.UsarCancelacionesArchivo = true // Colapso aplica el archivo de cancelaciones
 	orq.Broadcast = broker.Publicar

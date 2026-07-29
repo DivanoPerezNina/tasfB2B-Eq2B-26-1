@@ -958,7 +958,7 @@ export function UnifiedDashboard() {
       reporte_salida: lastStablePlan,
     };
     downloadTextFile(
-      'reporte-colapso-05-03-2027.json',
+      'reporte-colapso-05-03-2027-08-00.json',
       JSON.stringify(report, null, 2),
       'application/json;charset=utf-8',
     );
@@ -1164,7 +1164,7 @@ export function UnifiedDashboard() {
               )}
               {collapseDetected && (
                 <span className="rounded-full bg-red-100 px-3 py-1 text-xs font-semibold text-red-700 dark:bg-red-900/30 dark:text-red-300">
-                  COLAPSO · 05/03/2027
+                  COLAPSO · {fechaColapsoTexto || '05/03/2027 08:00'}
                 </span>
               )}
               <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
