@@ -55,7 +55,7 @@ func ContarRegistros(db *sql.DB) (aeropuertos, vuelos, envios int, err error) {
 	}{
 		{"aeropuertos", &aeropuertos},
 		{"vuelos", &vuelos},
-		{"envios", &envios},
+		{"envios_colapso", &envios},
 	} {
 		if e := db.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM %s", q.tabla)).Scan(q.dest); e != nil {
 			err = e
@@ -65,7 +65,7 @@ func ContarRegistros(db *sql.DB) (aeropuertos, vuelos, envios int, err error) {
 	return
 }
 
-// LimpiarDatos borra todos los registros de las tablas de dominio.
+// LimpiarDatos borra todos los registros de las tablas de dominio. Para Periodo/Colapso, los envíos se cuentan en envios_colapso.
 func LimpiarDatos(db *sql.DB) (int64, int64, int64, error) {
 	var na, nv, ne int64
 	// Orden respeta FK implícitas (envíos primero, luego vuelos, luego aeropuertos)
@@ -73,7 +73,7 @@ func LimpiarDatos(db *sql.DB) (int64, int64, int64, error) {
 		sql  string
 		dest *int64
 	}{
-		{"DELETE FROM envios", &ne},
+		{"DELETE FROM envios_colapso", &ne},
 		{"DELETE FROM vuelos", &nv},
 		{"DELETE FROM aeropuertos", &na},
 	} {

@@ -135,7 +135,7 @@ export function DataIngestion() {
       selected: vuelosFile ? [vuelosFile] : [], onPick: (f) => setVuelosFile(f[0] ?? null), onClear: () => setVuelosFile(null),
     },
     {
-      kind: 'envios', label: 'Envíos', hint: '_envios_XXXX_.txt (uno por aeropuerto)',
+      kind: 'envios', label: 'Envíos Periodo/Colapso', hint: '_envios_XXXX_.txt → tabla envios_colapso',
       icon: <Box size={20} />, multiple: true, accept: '.txt',
       selected: enviosFiles, onPick: (f) => setEnviosFiles(f), onClear: () => setEnviosFiles([]),
     },
@@ -155,7 +155,7 @@ export function DataIngestion() {
           <div>
             <h1 style={{ fontSize: '1.75rem', fontWeight: 400, margin: 0 }}>Ingreso de datos</h1>
             <p style={{ color: 'var(--cds-text-secondary)', margin: '.25rem 0 0' }}>
-              Carga de aeropuertos, vuelos, envíos y cancelaciones (independiente de los escenarios)
+              Carga de aeropuertos, vuelos, envíos para Periodo/Colapso y cancelaciones
             </p>
           </div>
 
@@ -257,7 +257,7 @@ export function DataIngestion() {
 
           <p style={{ fontSize: '.75rem', color: 'var(--cds-text-secondary)', margin: 0 }}>
             Orden recomendado: <strong>aeropuertos</strong> → <strong>vuelos</strong> → <strong>envíos</strong>.
-            Las cancelaciones aplican a Periodo/Colapso y son efímeras por escenario.
+            Los envíos se guardan en envios_colapso. Día a Día continúa usando envios_operacion.
           </p>
         </Stack>
       </div>

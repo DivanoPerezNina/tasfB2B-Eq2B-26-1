@@ -8,14 +8,14 @@ import (
 
 // DatasetInfo contiene el rango de fechas y totales del dataset cargado.
 type DatasetInfo struct {
-	FechaMin    string `json:"fecha_min"`    // "YYYY-MM-DD"
-	FechaMax    string `json:"fecha_max"`    // "YYYY-MM-DD"
+	FechaMin    string `json:"fecha_min"` // "YYYY-MM-DD"
+	FechaMax    string `json:"fecha_max"` // "YYYY-MM-DD"
 	TotalEnvios int64  `json:"total_envios"`
 	Calculado   string `json:"calculado_en"` // RFC3339
 }
 
 // ObtenerDatasetInfo devuelve el rango de fechas desde dataset_meta (caché).
-// Si la caché está vacía o forzar=true, recalcula desde la tabla envios y guarda.
+// Si la caché está vacía o forzar=true, recalcula desde la tabla envios_colapso y guarda.
 func ObtenerDatasetInfo(db *sql.DB, forzar bool) (*DatasetInfo, error) {
 	if !forzar {
 		info, err := leerCache(db)
@@ -76,12 +76,12 @@ func calcularYGuardar(db *sql.DB) (*DatasetInfo, error) {
 		`SELECT DATE_FORMAT(MIN(fecha_registro), '%Y-%m-%d'),
 		        DATE_FORMAT(MAX(fecha_registro), '%Y-%m-%d'),
 		        COUNT(*)
-		 FROM envios`).Scan(&minFecha, &maxFecha, &total)
+		 FROM envios_colapso`).Scan(&minFecha, &maxFecha, &total)
 	if err != nil {
 		return nil, fmt.Errorf("calcular rango: %w", err)
 	}
 	if !minFecha.Valid {
-		return nil, fmt.Errorf("tabla envios vacía")
+		return nil, fmt.Errorf("tabla envios_colapso vacía")
 	}
 
 	ahora := time.Now().Format(time.RFC3339)

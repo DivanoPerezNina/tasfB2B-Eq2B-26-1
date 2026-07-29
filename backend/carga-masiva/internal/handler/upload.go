@@ -244,20 +244,33 @@ func (h *UploadHandler) Envios(w http.ResponseWriter, r *http.Request) {
 	os.MkdirAll(h.TempDir, 0755)
 	diskPath := filepath.Join(h.TempDir, header.Filename)
 
-	// Crear archivo temporal en disco mientras también pasamos los bytes al parser
+	// Guardar el archivo por streaming. Para datasets grandes NO se mantiene una
+	// copia completa en RAM; el parser lo volverá a abrir desde disco en segundo
+	// plano. Esto permite cargar archivos mayores que la memoria disponible.
 	diskFile, diskErr := os.Create(diskPath)
 	if diskErr != nil {
 		errResp(w, 500, "DISCO_ERROR", diskErr.Error())
 		return
 	}
-
-	// Tee: escribe en disco y en buffer para MySQL al mismo tiempo
-	var buf bytes.Buffer
-	teeReader := io.TeeReader(file, diskFile)
-	io.Copy(&buf, teeReader)
-	diskFile.Close()
+	if _, copyErr := io.Copy(diskFile, file); copyErr != nil {
+		diskFile.Close()
+		errResp(w, 500, "LECTURA_ERROR", copyErr.Error())
+		return
+	}
+	if closeErr := diskFile.Close(); closeErr != nil {
+		errResp(w, 500, "DISCO_ERROR", closeErr.Error())
+		return
+	}
 
 	go func() {
+		input, openErr := os.Open(diskPath)
+		if openErr != nil {
+			msg := openErr.Error()
+			db.ActualizarSesion(h.DB, token, "error", 0, 0, &msg)
+			return
+		}
+		defer input.Close()
+
 		tx, txErr := h.DB.Begin()
 		if txErr != nil {
 			msg := txErr.Error()
@@ -266,7 +279,7 @@ func (h *UploadHandler) Envios(w http.ResponseWriter, r *http.Request) {
 		}
 
 		totalOK := 0
-		parseTotal, parseErr := parser.ParseEnvios(bytes.NewReader(buf.Bytes()), iata, h.BatchSize,
+		parseTotal, parseErr := parser.ParseEnvios(input, iata, h.BatchSize,
 			func(batch []parser.Envio) error {
 				// Precalcular registro_utc y deadline_utc por envío (réplica de
 				// la conversión horaria que hacía el Planificador).

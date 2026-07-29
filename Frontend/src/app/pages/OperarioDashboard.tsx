@@ -167,7 +167,7 @@ export function OperarioDashboard({ perfil, onLogout }: { perfil: Perfil; onLogo
     if (indices.length === 0) return;
 
     const controller = new AbortController();
-    loadShipmentMetadataByIndices(indices, ventanaPlan, controller.signal)
+    loadShipmentMetadataByIndices(indices, ventanaPlan, controller.signal, 'operacion')
       .then(items => {
         setMetadataPorIndice(previous => {
           const next = new Map(previous);

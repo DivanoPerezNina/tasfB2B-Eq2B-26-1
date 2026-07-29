@@ -85,7 +85,7 @@ func InsertarVuelosBatch(db *sql.DB, rows []parser.Vuelo) error {
 	return tx.Commit()
 }
 
-// InsertarEnviosBatch inserta un lote de envíos ignorando duplicados.
+// InsertarEnviosBatch inserta un lote de envíos de Periodo/Colapso ignorando duplicados en envios_colapso.
 // Se llama repetidamente desde el handler de streaming.
 func InsertarEnviosBatch(tx *sql.Tx, rows []parser.Envio) error {
 	if len(rows) == 0 {
@@ -102,7 +102,7 @@ func InsertarEnviosBatch(tx *sql.Tx, rows []parser.Envio) error {
 			e.RegistroUTC, e.DeadlineUTC,
 		)
 	}
-	q := `INSERT IGNORE INTO envios
+	q := `INSERT IGNORE INTO envios_colapso
 		(id_envio, origen_iata, fecha_registro, hora, minuto, destino_iata, cantidad_maletas, id_cliente, registro_utc, deadline_utc)
 		VALUES ` + strings.Join(placeholders, ",")
 	_, err := tx.Exec(q, args...)

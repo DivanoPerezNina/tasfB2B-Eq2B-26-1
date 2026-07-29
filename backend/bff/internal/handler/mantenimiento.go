@@ -188,8 +188,9 @@ func (h *MantenimientoHandler) EliminarAeropuerto(w http.ResponseWriter, r *http
 	var refs int
 	if err := h.DB.QueryRow(`SELECT
 		(SELECT COUNT(*) FROM vuelos WHERE origen_iata=? OR destino_iata=?) +
-		(SELECT COUNT(*) FROM envios WHERE origen_iata=? OR destino_iata=?)`,
-		iata, iata, iata, iata).Scan(&refs); err != nil {
+		(SELECT COUNT(*) FROM envios WHERE origen_iata=? OR destino_iata=?) +
+		(SELECT COUNT(*) FROM envios_colapso WHERE origen_iata=? OR destino_iata=?)`,
+		iata, iata, iata, iata, iata, iata).Scan(&refs); err != nil {
 		errResp(w, 500, "DB_ERROR", err.Error())
 		return
 	}

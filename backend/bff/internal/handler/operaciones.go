@@ -32,6 +32,16 @@ type envioOperacion struct {
 
 var bagSuffix = regexp.MustCompile(`(?i)(?:[-#:]?M(?:ALETA)?[-#:]?\d+)$`)
 
+// tablaEnviosOperaciones mantiene separados los datasets: Día a Día usa
+// envios_operacion; Periodo/Colapso usa envios_colapso. El nombre nunca se
+// toma directamente del usuario.
+func tablaEnviosOperaciones(r *http.Request) string {
+	if r.URL.Query().Get("modo") == "operacion" {
+		return "envios_operacion"
+	}
+	return "envios_colapso"
+}
+
 func parseWindow(r *http.Request) (int64, int64, error) {
 	ini, errIni := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("ini")), 10, 64)
 	fin, errFin := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("fin")), 10, 64)
@@ -89,7 +99,8 @@ func (h *OperacionesHandler) BuscarEnvios(w http.ResponseWriter, r *http.Request
 		limit = parsed
 	}
 
-	rows, err := h.DB.Query(`
+	tabla := tablaEnviosOperaciones(r)
+	query := fmt.Sprintf(`
 		SELECT id_envio, origen_iata, destino_iata, cantidad_maletas,
 		       registro_utc, deadline_utc, indice_plan
 		FROM (
@@ -98,12 +109,13 @@ func (h *OperacionesHandler) BuscarEnvios(w http.ResponseWriter, r *http.Request
 			       ROW_NUMBER() OVER (
 				ORDER BY registro_utc, origen_iata, id_envio
 			       ) - 1 AS indice_plan
-			FROM envios
+			FROM %s
 			WHERE registro_utc >= ? AND registro_utc < ?
 		) ranked
 		WHERE UPPER(id_envio) LIKE ?
 		ORDER BY registro_utc, origen_iata, id_envio
-		LIMIT ?`, ini, fin, "%"+q+"%", limit)
+		LIMIT ?`, tabla)
+	rows, err := h.DB.Query(query, ini, fin, "%"+q+"%", limit)
 	if err != nil {
 		errResp(w, http.StatusInternalServerError, "DB_ERROR", err.Error())
 		return
@@ -157,6 +169,7 @@ func (h *OperacionesHandler) EnviosPorIndices(w http.ResponseWriter, r *http.Req
 		args = append(args, idx)
 	}
 
+	tabla := tablaEnviosOperaciones(r)
 	query := fmt.Sprintf(`
 		SELECT id_envio, origen_iata, destino_iata, cantidad_maletas,
 		       registro_utc, deadline_utc, indice_plan
@@ -166,11 +179,11 @@ func (h *OperacionesHandler) EnviosPorIndices(w http.ResponseWriter, r *http.Req
 			       ROW_NUMBER() OVER (
 				ORDER BY registro_utc, origen_iata, id_envio
 			       ) - 1 AS indice_plan
-			FROM envios
+			FROM %s
 			WHERE registro_utc >= ? AND registro_utc < ?
 		) ranked
 		WHERE indice_plan IN (%s)
-		ORDER BY indice_plan`, strings.Join(placeholders, ","))
+		ORDER BY indice_plan`, tabla, strings.Join(placeholders, ","))
 
 	rows, err := h.DB.Query(query, args...)
 	if err != nil {

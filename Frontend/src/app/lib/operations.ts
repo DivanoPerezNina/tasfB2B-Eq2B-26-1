@@ -24,12 +24,14 @@ export async function searchShipmentMetadata(
   query: string,
   window: { ini: number; fin: number },
   signal?: AbortSignal,
+  mode: 'periodo' | 'operacion' = 'periodo',
 ): Promise<ShipmentMetadata[]> {
   const params = new URLSearchParams({
     q: query,
     ini: String(window.ini),
     fin: String(window.fin),
     limit: '20',
+    modo: mode,
   });
   const response = await fetch(`${BFF}/api/operaciones/envios/buscar?${params}`, { signal });
   return unwrap<ShipmentMetadata[]>(response);
@@ -39,6 +41,7 @@ export async function loadShipmentMetadataByIndices(
   indices: number[],
   window: { ini: number; fin: number },
   signal?: AbortSignal,
+  mode: 'periodo' | 'operacion' = 'periodo',
 ): Promise<ShipmentMetadata[]> {
   const unique = Array.from(new Set(indices.filter((value) => Number.isInteger(value) && value >= 0))).slice(0, 250);
   if (unique.length === 0) return [];
@@ -46,6 +49,7 @@ export async function loadShipmentMetadataByIndices(
     indices: unique.join(','),
     ini: String(window.ini),
     fin: String(window.fin),
+    modo: mode,
   });
   const response = await fetch(`${BFF}/api/operaciones/envios/por-indices?${params}`, { signal });
   return unwrap<ShipmentMetadata[]>(response);
