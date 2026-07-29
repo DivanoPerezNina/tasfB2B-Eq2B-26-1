@@ -150,6 +150,29 @@ const SCENARIO_TAG: Record<SimulationScenario, 'green' | 'blue' | 'red'> = {
   realtime: 'green', period: 'blue', collapse: 'red',
 };
 
+function parseDatasetDate(value?: string, endOfDay = false): Date | null {
+  const match = value?.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+
+  const [, yyyy, mm, dd] = match;
+  const parsed = new Date(Number(yyyy), Number(mm) - 1, Number(dd));
+  if (
+    parsed.getFullYear() !== Number(yyyy) ||
+    parsed.getMonth() !== Number(mm) - 1 ||
+    parsed.getDate() !== Number(dd)
+  ) {
+    return null;
+  }
+
+  parsed.setHours(endOfDay ? 23 : 0, endOfDay ? 59 : 0, endOfDay ? 59 : 0, endOfDay ? 999 : 0);
+  return parsed;
+}
+
+function formatDatasetDateForPicker(value?: string) {
+  const parsed = parseDatasetDate(value);
+  return parsed ? format(parsed, 'dd/MM/yyyy') : undefined;
+}
+
 // ─── Componente principal ─────────────────────────────────────────────────────
 
 export function SimulationConfig() {
@@ -183,6 +206,25 @@ export function SimulationConfig() {
   useEffect(() => {
     setLocalConfig(prev => ({ ...prev, startDate: config.startDate }));
   }, [config.startDate]);
+
+  useEffect(() => {
+    const min = parseDatasetDate(datasetInfo?.fecha_min);
+    const max = parseDatasetDate(datasetInfo?.fecha_max, true);
+    if (!min || !max) return;
+
+    setLocalConfig(prev => {
+      const actual = prev.startDate;
+      if (
+        !(actual instanceof Date) ||
+        Number.isNaN(actual.getTime()) ||
+        actual < min ||
+        actual > max
+      ) {
+        return { ...prev, startDate: new Date(min) };
+      }
+      return prev;
+    });
+  }, [datasetInfo?.fecha_min, datasetInfo?.fecha_max]);
 
   useEffect(() => {
     if (fase === 'completado' && contadores.total > 0) {
@@ -228,10 +270,18 @@ export function SimulationConfig() {
     : esRealtime
       ? (localConfig.duracionRealMin < 5 || localConfig.duracionRealMin > 90)
       : false;
-  const fechaMaxDataset = datasetInfo ? new Date(datasetInfo.fecha_max + 'T23:59:59') : null;
+  const fechaMinDataset = parseDatasetDate(datasetInfo?.fecha_min);
+  const fechaMaxDataset = parseDatasetDate(datasetInfo?.fecha_max, true);
   const fechaFinSim = new Date(localConfig.startDate.getTime() + diasEfectivos * 86_400_000);
-  const fechaFueraDeRango = esConFecha && !!fechaMaxDataset && fechaFinSim > fechaMaxDataset;
+  const fechaFueraDeRango = esConFecha && !!fechaMinDataset && !!fechaMaxDataset && (
+    localConfig.startDate < fechaMinDataset ||
+    localConfig.startDate > fechaMaxDataset ||
+    fechaFinSim > fechaMaxDataset
+  );
   const puedeIniciar = !esConFecha || (!fechaFueraDeRango && !duracionFueraDeRango);
+  const datasetRangeKey = `${datasetInfo?.fecha_min ?? 'sin-min'}-${datasetInfo?.fecha_max ?? 'sin-max'}`;
+  const fechaMinPicker = formatDatasetDateForPicker(datasetInfo?.fecha_min);
+  const fechaMaxPicker = formatDatasetDateForPicker(datasetInfo?.fecha_max);
 
   const timeValue = localConfig.startDate && !isNaN(localConfig.startDate.getTime())
     ? `${String(localConfig.startDate.getHours()).padStart(2, '0')}:${String(localConfig.startDate.getMinutes()).padStart(2, '0')}`
@@ -413,11 +463,12 @@ export function SimulationConfig() {
                     <div style={{ display: 'flex', gap: '.75rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
                       <div style={{ flex: '1 1 160px' }}>
                         <DatePicker
+                          key={datasetRangeKey}
                           datePickerType="single"
                           dateFormat="d/m/Y"
                           value={localConfig.startDate}
-                          minDate={datasetInfo?.fecha_min}
-                          maxDate={datasetInfo?.fecha_max}
+                          minDate={fechaMinPicker}
+                          maxDate={fechaMaxPicker}
                           onChange={handleFecha}
                         >
                           <DatePickerInput
