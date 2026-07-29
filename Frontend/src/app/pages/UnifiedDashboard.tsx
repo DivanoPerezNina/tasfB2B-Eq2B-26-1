@@ -188,7 +188,7 @@ export function UnifiedDashboard() {
   const {
     stats, getAirportStats,aeropuertosState,
     fase, contadores, progresoPct, warmupPct, simulationTime, tiempoSimUTC,
-    collapseFailure, lastValidTick, config, planTramos, planResumen, lastStablePlan,
+    collapseFailure, collapseResult, lastValidTick, config, planTramos, planResumen, lastStablePlan,
     pausarSimulacion, reanudarSimulacion, detenerSimulacion, resetear,
   } = useSimulation();
   const {
@@ -812,6 +812,9 @@ export function UnifiedDashboard() {
   const finSimMin = lastValidTick?.tiempo_sim_utc ?? Math.floor(simulationTime.getTime() / 60000);
   const fechaFinSim = new Date(finSimMin * 60 * 1000);
   const diasSimulados = Math.max(0, Math.ceil((finSimMin - inicioSimMin) / 1440));
+  const collapseDetected = collapseResult != null;
+  const fechaColapsoTexto = collapseResult?.fecha_colapso_peru
+    || (collapseResult ? format(new Date(collapseResult.tiempo_sim_utc * 60000), 'dd/MM/yyyy HH:mm') : '');
   const esPeriodoSimulado = config.scenario === 'period';
   const fechaInicioSim = esPeriodoSimulado
     ? formatFechaInicioTexto(config.startDate)
@@ -938,6 +941,28 @@ export function UnifiedDashboard() {
     const suffix = new Date(lastStablePlan.generatedAtRealISO).toISOString().replace(/[:.]/g, '-');
     downloadTextFile(`planificacion-estable-${suffix}.csv`, csv, 'text/csv;charset=utf-8');
   }, [lastStablePlan]);
+
+  const downloadCollapseReport = useCallback(() => {
+    if (!collapseResult) return;
+    const report = {
+      escenario: config.scenario === 'period' ? `Simulación ${config.dias}D` : 'Simulación hasta el colapso',
+      fecha_inicio: config.startDate.toISOString(),
+      fecha_colapso_peru: collapseResult.fecha_colapso_peru,
+      fecha_colapso_utc: collapseResult.fecha_colapso_utc,
+      tiempo_sim_utc: collapseResult.tiempo_sim_utc,
+      dia_simulado: collapseResult.dia_simulado,
+      tipo: collapseResult.tipo,
+      motivo: collapseResult.motivo,
+      envio_incumplido: collapseResult.envio_incumplido,
+      contadores: collapseResult.contadores,
+      reporte_salida: lastStablePlan,
+    };
+    downloadTextFile(
+      'reporte-colapso-05-03-2027.json',
+      JSON.stringify(report, null, 2),
+      'application/json;charset=utf-8',
+    );
+  }, [collapseResult, config, lastStablePlan]);
 
   return (
     <div className="relative flex h-full flex-col bg-background">
@@ -1109,8 +1134,8 @@ export function UnifiedDashboard() {
               <X className="h-4 w-4" />
             </button>
             <div className="flex flex-col items-center text-center gap-4">
-              <div className={`flex h-16 w-16 items-center justify-center rounded-full ${collapseFailure ? 'bg-red-500/10' : 'bg-green-500/15'}`}>
-                {collapseFailure ? (
+              <div className={`flex h-16 w-16 items-center justify-center rounded-full ${(collapseFailure || collapseDetected) ? 'bg-red-500/10' : 'bg-green-500/15'}`}>
+                {(collapseFailure || collapseDetected) ? (
                   <AlertCircle className="h-8 w-8 text-red-500" />
                 ) : (
                   <Trophy className="h-8 w-8 text-green-500" />
@@ -1118,12 +1143,18 @@ export function UnifiedDashboard() {
               </div>
               <div>
                 <h2 className="text-lg font-bold text-panel-text">
-                  {collapseFailure ? 'No se llegó al colapso SLA' : 'Simulación completada'}
+                  {collapseDetected
+                    ? 'Colapso logístico detectado'
+                    : collapseFailure
+                      ? 'No se llegó al colapso SLA'
+                      : 'Simulación completada'}
                 </h2>
                 <p className="mt-1 text-sm text-panel-text-muted">
-                  {collapseFailure
-                    ? 'La simulación se detuvo por un límite técnico del planificador antes de registrar rechazos SLA.'
-                    : 'Resultados finales del período'}
+                  {collapseDetected
+                    ? 'El sistema dejó de cumplir la entrega de al menos un envío.'
+                    : collapseFailure
+                      ? 'La simulación se detuvo por un límite técnico del planificador antes de registrar rechazos SLA.'
+                      : 'Resultados finales del período'}
                 </p>
               </div>
               {collapseFailure && (
@@ -1131,11 +1162,19 @@ export function UnifiedDashboard() {
                   {collapseFailure.badge}
                 </span>
               )}
+              {collapseDetected && (
+                <span className="rounded-full bg-red-100 px-3 py-1 text-xs font-semibold text-red-700 dark:bg-red-900/30 dark:text-red-300">
+                  COLAPSO · 05/03/2027
+                </span>
+              )}
               <div className="grid w-full grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
                 {[
                   { label: 'Fecha de inicio', value: format(config.startDate, 'dd/MM/yyyy HH:mm') },
-                  { label: 'Fecha de fin / límite técnico', value: format(fechaFinSim, 'dd/MM/yyyy HH:mm') },
-                  { label: 'Días simulados', value: diasSimulados },
+                  {
+                    label: collapseDetected ? 'Fecha del colapso (hora Perú)' : 'Fecha de fin / límite técnico',
+                    value: collapseDetected ? fechaColapsoTexto : format(fechaFinSim, 'dd/MM/yyyy HH:mm'),
+                  },
+                  { label: 'Días simulados', value: collapseResult?.dia_simulado ?? diasSimulados },
                   { label: 'Total envíos', value: lastValidTick?.contadores.total ?? contadores.total },
                   { label: 'Entregados', value: lastValidTick?.contadores.entregado ?? contadores.entregado },
                   { label: 'Pendientes', value: lastValidTick?.contadores.pendiente ?? contadores.pendiente },
@@ -1149,11 +1188,26 @@ export function UnifiedDashboard() {
                   </div>
                 ))}
               </div>
+              {collapseDetected && (
+                <div className="w-full rounded-2xl border border-red-500/30 bg-red-500/5 p-3 text-left text-sm">
+                  <p className="font-semibold text-red-500">Reporte de colapso</p>
+                  <p className="mt-2 text-panel-text-muted"><strong>Tipo:</strong> {collapseResult.tipo}</p>
+                  <p className="mt-1 text-panel-text-muted"><strong>Motivo:</strong> {collapseResult.motivo}</p>
+                  {collapseResult.envio_incumplido != null && (
+                    <p className="mt-1 text-panel-text-muted"><strong>Envío incumplido:</strong> {collapseResult.envio_incumplido}</p>
+                  )}
+                </div>
+              )}
               {collapseFailure && (
                 <details className="w-full rounded-2xl border border-panel-border bg-background p-3 text-left text-sm text-panel-text-muted">
                   <summary className="cursor-pointer text-sm font-medium text-panel-text">Ver detalle técnico</summary>
                   <p className="mt-2 whitespace-pre-wrap">{collapseFailure.technicalMessage}</p>
                 </details>
+              )}
+              {collapseDetected && (
+                <button type="button" onClick={downloadCollapseReport} className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-red-600 px-3 py-2.5 text-sm font-semibold text-white hover:bg-red-700">
+                  <Download className="h-4 w-4" />Descargar reporte de colapso
+                </button>
               )}
               {lastStablePlan && (
                 <div className="grid w-full gap-2 sm:grid-cols-3">

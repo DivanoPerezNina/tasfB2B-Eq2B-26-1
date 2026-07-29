@@ -27,12 +27,11 @@ func IATADeNombreArchivo(nombre string) (string, error) {
 // Formato de línea: 00000001-20250102-01-38-EBCI-006-0007729
 //
 //	↑id_envio ↑aaaammdd ↑hh ↑mm ↑dest ↑maletas ↑id_cliente
-func ParseEnvios(r io.Reader, origenIATA string, batchSize int,
-	callback func([]Envio) error) (int, error) {
+func ParseEnvios(r io.Reader, origenIATA string, batchSize int, fechaMaxInclusive string,
+	callback func([]Envio) error) (total int, cortePorFecha bool, err error) {
 
 	scanner := bufio.NewReaderSize(r, 65536)
 	var batch []Envio
-	total := 0
 
 	for {
 		line, err := scanner.ReadString('\n')
@@ -41,11 +40,25 @@ func ParseEnvios(r io.Reader, origenIATA string, batchSize int,
 		if line != "" && strings.Contains(line, "-") {
 			envio, parseErr := parseLineaEnvio(line, origenIATA)
 			if parseErr == nil {
+				// Los archivos del dataset vienen ordenados cronológicamente. En
+				// Colapso solo se necesita información hasta el 31/03/2027; al
+				// encontrar la primera fila posterior, se confirma el lote pendiente
+				// y se deja de leer el resto del archivo. Esto evita procesar gigabytes
+				// de datos que nunca serán usados por la simulación.
+				if fechaMaxInclusive != "" && envio.FechaRegistro > fechaMaxInclusive {
+					if len(batch) > 0 {
+						if cbErr := callback(batch); cbErr != nil {
+							return total, true, cbErr
+						}
+					}
+					return total, true, nil
+				}
+
 				batch = append(batch, envio)
 				total++
 				if len(batch) >= batchSize {
 					if cbErr := callback(batch); cbErr != nil {
-						return total, cbErr
+						return total, false, cbErr
 					}
 					batch = batch[:0]
 				}
@@ -56,17 +69,17 @@ func ParseEnvios(r io.Reader, origenIATA string, batchSize int,
 			break
 		}
 		if err != nil {
-			return total, fmt.Errorf("lectura: %w", err)
+			return total, false, fmt.Errorf("lectura: %w", err)
 		}
 	}
 
 	// Último lote parcial
 	if len(batch) > 0 {
 		if cbErr := callback(batch); cbErr != nil {
-			return total, cbErr
+			return total, false, cbErr
 		}
 	}
-	return total, nil
+	return total, false, nil
 }
 
 // parseLineaEnvio parsea una línea individual del archivo de envíos.

@@ -48,6 +48,22 @@ const CONFIG_DEFAULT: SimulationConfig = {
 
 // ─── Tipos del contexto ───────────────────────────────────────────────────────
 
+export interface CollapseResult {
+  tipo: string;
+  motivo: string;
+  aeropuerto?: string;
+  ocupacion?: number;
+  ta_seg?: number;
+  sa_seg?: number;
+  tiempo_sim_utc: number;
+  fecha_colapso_utc: string;
+  fecha_colapso_peru: string;
+  dia_simulado: number;
+  envio_incumplido?: number;
+  programado_demo?: boolean;
+  contadores: Contadores;
+}
+
 interface SimulationContextType {
   // ── Estado de la máquina ──
   fase: FaseSimulacion;
@@ -71,6 +87,8 @@ interface SimulationContextType {
     badge: string;
     type: 'limite_tecnico' | 'tecnico_memoria' | 'unknown';
   } | null;
+  /** Resultado terminal cuando se detecta el primer incumplimiento logístico. */
+  collapseResult: CollapseResult | null;
   aeropuertosState: AeropuertoEstado[];
   /** Tramos reales del plan generado por el planificador. Se usan solo para la visualización del mapa. */
   planTramos: PlanTramoVisual[];
@@ -153,6 +171,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     badge: string;
     type: 'limite_tecnico' | 'tecnico_memoria' | 'unknown';
   } | null>(null);
+  const [collapseResult, setCollapseResult] = useState<CollapseResult | null>(null);
   const [aeropuertosState, setAeropuertos]  = useState<AeropuertoEstado[]>([]);
   const [planTramos, setPlanTramos]          = useState<PlanTramoVisual[]>([]);
   const [planResumen, setPlanResumen]        = useState<PlanResumenVisual | null>(null);
@@ -630,31 +649,54 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       if (esRef.current === es) esRef.current = null;
     });
 
-    if (scenario === 'collapse') {
-      es.addEventListener('colapso', (e: MessageEvent) => {
-        const d = JSON.parse(e.data);
-        if (d.contadores) setContadores(d.contadores);
-        setFase('completado');
-        setProgresoPct(100);
-        setPlanResumen(prev => prev ?? ({
-          totalEnvios: d.total_envios,
-          exitosos: d.exitosos,
-          rechazados: d.rechazados ?? d.contadores?.rechazado,
-          ventanaIniUTC: d.t0_utc,
-          ventanaFinUTC: d.fin_utc,
-        }));
-        console.log('[Sim:collapse] colapso detectado:', {
-          tipo: d.tipo ?? d.type,
-          motivo: d.motivo ?? d.reason,
-          aeropuerto: d.aeropuerto ?? d.airport,
-          ocupacion: d.ocupacion ?? d.occupancy,
-          ta_seg: d.ta_seg,
-          sa_seg: d.sa_seg,
-        });
-        es.close();
-        if (esRef.current === es) esRef.current = null;
+    // El evento también puede llegar durante una corrida 5D: se usa precisamente
+    // para tantear ventanas hasta encontrar la que contiene el 05/03/2027.
+    es.addEventListener('colapso', (e: MessageEvent) => {
+      const raw = JSON.parse(e.data);
+      const result: CollapseResult = {
+        tipo: String(raw.tipo ?? raw.type ?? 'logistico'),
+        motivo: String(raw.motivo ?? raw.reason ?? 'Primer incumplimiento de entrega'),
+        aeropuerto: raw.aeropuerto ?? raw.airport,
+        ocupacion: Number(raw.ocupacion ?? raw.occupancy ?? 0),
+        ta_seg: Number(raw.ta_seg ?? 0),
+        sa_seg: Number(raw.sa_seg ?? 0),
+        tiempo_sim_utc: Number(raw.tiempo_sim_utc),
+        fecha_colapso_utc: String(raw.fecha_colapso_utc ?? ''),
+        fecha_colapso_peru: String(raw.fecha_colapso_peru ?? ''),
+        dia_simulado: Number(raw.dia_simulado ?? 0),
+        envio_incumplido: raw.envio_incumplido != null ? Number(raw.envio_incumplido) : undefined,
+        programado_demo: Boolean(raw.programado_demo),
+        contadores: raw.contadores ?? { total: 0, pendiente: 0, en_vuelo: 0, en_escala: 0, entregado: 0, rechazado: 1 },
+      };
+
+      setCollapseResult(result);
+      setCollapseFailure(null);
+      setTiempoSimUTC(result.tiempo_sim_utc);
+      setContadores(result.contadores);
+      setValidTick({
+        tiempo_sim_utc: result.tiempo_sim_utc,
+        contadores: result.contadores,
+        progreso_pct: '100.0',
       });
-    }
+      setLastStablePlan((previous) => previous ? ({
+        ...previous,
+        simulationTimeUTC: result.tiempo_sim_utc,
+        fase: 'completado',
+        contadores: result.contadores,
+      }) : previous);
+      setFase('completado');
+      setProgresoPct(100);
+      setPlanResumen(prev => prev ?? ({
+        totalEnvios: result.contadores.total,
+        exitosos: result.contadores.entregado,
+        rechazados: result.contadores.rechazado,
+        ventanaIniUTC: Math.floor(config.startDate.getTime() / 60000),
+        ventanaFinUTC: result.tiempo_sim_utc,
+      }));
+      console.log(`[Sim:${scenario}] colapso detectado`, result);
+      es.close();
+      if (esRef.current === es) esRef.current = null;
+    });
 
     es.onerror = () => {
       sseErroresRef.current += 1;
@@ -712,6 +754,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setProgresoPct(0);
     setValidTick(null);
     setCollapseFailure(null);
+    setCollapseResult(null);
 
     const d = efectivo.startDate;
     const t0utc = Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes()) / 60000);
@@ -769,6 +812,8 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setVisualCancellations([]);
     setCancellationAudits([]);
     setProgresoPct(0);
+    setCollapseFailure(null);
+    setCollapseResult(null);
 
     // Fecha elegida → minuto epoch UTC (GMT=0, igual que el planificador).
     const d = efectivo.startDate;
@@ -970,6 +1015,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const clearCollapseState = useCallback(() => {
     setValidTick(null);
     setCollapseFailure(null);
+    setCollapseResult(null);
   }, [setValidTick]);
 
   // ─── Reanudar ─────────────────────────────────────────────────────────────
@@ -1130,6 +1176,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       getAirportStats,
       lastValidTick,
       collapseFailure,
+      collapseResult,
       updateConfig,
       iniciarPlanificacion,
       iniciarPeriodoProgramado,

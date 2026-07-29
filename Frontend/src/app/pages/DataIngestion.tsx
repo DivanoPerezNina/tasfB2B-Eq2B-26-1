@@ -193,7 +193,7 @@ export function DataIngestion() {
       selected: vuelosFile ? [vuelosFile] : [], onPick: (f) => setVuelosFile(f[0] ?? null), onClear: () => setVuelosFile(null),
     },
     {
-      kind: 'envios', label: 'Envíos Periodo/Colapso', hint: '_envios_XXXX_.txt → tabla envios_colapso',
+      kind: 'envios', label: 'Envíos Periodo/Colapso', hint: '_envios_XXXX_.txt → envios_colapso · hasta 31/03/2027',
       icon: <Box size={20} />, multiple: true, accept: '.txt',
       selected: enviosFiles, onPick: (f) => setEnviosFiles(f), onClear: () => setEnviosFiles([]),
     },

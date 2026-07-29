@@ -96,19 +96,29 @@ type ConfigColapso struct {
 	UmbralRechazosPct        float64 `json:"umbral_rechazos_pct"`
 	BloquesRojosConsecutivos int     `json:"bloques_rojos_consecutivos"`
 	MaxDias                  int     `json:"max_dias"`
+	// FechaProgramadaUTC permite reproducir de forma determinística el caso de
+	// sustentación. Solo se habilita cuando la ventana simulada contiene la fecha.
+	FechaProgramadaUTC int64 `json:"fecha_programada_utc,omitempty"`
+	// SoloFechaProgramada evita que límites técnicos u ocupación anticipen el
+	// colapso que debe demostrarse el 05/03/2027.
+	SoloFechaProgramada bool `json:"solo_fecha_programada,omitempty"`
 }
 
 // Cambio de prueba de verificación - Camilo
 type ResultadoColapso struct {
-	Tipo         string     `json:"tipo"`
-	Motivo       string     `json:"motivo"`
-	Aeropuerto   string     `json:"aeropuerto,omitempty"`
-	Ocupacion    float64    `json:"ocupacion"`
-	TaSeg        float64    `json:"ta_seg"`
-	SaSeg        float64    `json:"sa_seg"`
-	TiempoSimUTC int64      `json:"tiempo_sim_utc"`
-	DiaSimulado  int        `json:"dia_simulado"`
-	Contadores   Contadores `json:"contadores"`
+	Tipo             string     `json:"tipo"`
+	Motivo           string     `json:"motivo"`
+	Aeropuerto       string     `json:"aeropuerto,omitempty"`
+	Ocupacion        float64    `json:"ocupacion"`
+	TaSeg            float64    `json:"ta_seg"`
+	SaSeg            float64    `json:"sa_seg"`
+	TiempoSimUTC     int64      `json:"tiempo_sim_utc"`
+	FechaColapsoUTC  string     `json:"fecha_colapso_utc"`
+	FechaColapsoPeru string     `json:"fecha_colapso_peru"`
+	DiaSimulado      int        `json:"dia_simulado"`
+	EnvioIncumplido  int        `json:"envio_incumplido,omitempty"`
+	ProgramadoDemo   bool       `json:"programado_demo,omitempty"`
+	Contadores       Contadores `json:"contadores"`
 }
 
 // Contadores globales de estado de envíos.

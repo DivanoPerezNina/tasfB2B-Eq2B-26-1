@@ -288,12 +288,13 @@ func (o *Orquestador) run() {
 		o.Broadcast("fallo", map[string]interface{}{"mensaje": err.Error()})
 		return
 	} else {
+		// Publicar primero el plan que servirá como reporte de salida asociado.
+		o.emitirTramos(sim)
 		if res, ok := o.detectarColapso(sim, taSeg, o.Sa.Seconds(), o.T0UTC); ok {
 			o.setEstado("completado")
 			o.Broadcast("colapso", res)
 			return
 		}
-		o.emitirTramos(sim)
 	}
 
 	tiempo := float64(tiempoInicial)
@@ -348,6 +349,8 @@ func (o *Orquestador) run() {
 			o.emitirTramos(sim)
 			o.emitirSnapshot(sim, float64(t))
 		case <-ticker.C:
+			tiempoAnterior := tiempo
+			colapsoProgramadoPendiente := false
 			if o.ModoOperacion {
 				tiempo = float64(time.Now().UTC().Unix()) / 60.0
 
@@ -361,6 +364,18 @@ func (o *Orquestador) run() {
 				tiempo += avance
 				if tiempo > float64(o.FinUTC) {
 					tiempo = float64(o.FinUTC)
+				}
+			}
+
+			// El avance comprimido puede saltar varios minutos en un segundo real.
+			// Si la corrida cruza la fecha de demostración, fijamos el reloj en el
+			// minuto exacto. La detección se ejecuta después de cargar todos los
+			// bloques necesarios hasta ese instante.
+			if o.colapsoHabilitado() && o.Colapso.FechaProgramadaUTC > 0 {
+				objetivo := o.Colapso.FechaProgramadaUTC
+				if int64(tiempoAnterior) < objetivo && int64(tiempo) >= objetivo {
+					tiempo = float64(objetivo)
+					colapsoProgramadoPendiente = true
 				}
 			}
 
@@ -398,14 +413,38 @@ func (o *Orquestador) run() {
 					return
 				}
 				sim = nsim
+				// El frontend conserva este plan como reporte de salida antes de recibir
+				// el evento terminal de colapso.
+				o.emitirTramos(sim)
 				if res, ok := o.detectarColapso(sim, taSeg, o.Sa.Seconds(), t); ok {
 					o.setEstado("completado")
 					o.Broadcast("colapso", res)
 					return
 				}
-				o.emitirTramos(sim)
 				proximoH += o.Sc
 				finActual = nuevoFin
+			}
+
+			if colapsoProgramadoPendiente {
+				if res, ok := o.detectarColapsoProgramado(sim, t); ok {
+					sim.mu.RLock()
+					aeropuertos := sim.snapshotAeropuertos()
+					sim.mu.RUnlock()
+
+					progreso := (tiempo - float64(o.T0UTC)) / float64(o.FinUTC-o.T0UTC) * 100.0
+					if progreso > 100 {
+						progreso = 100
+					}
+					o.Broadcast("tick", map[string]interface{}{
+						"tiempo_sim_utc": t,
+						"progreso_pct":   fmt.Sprintf("%.1f", progreso),
+						"contadores":     res.Contadores,
+					})
+					o.Broadcast("aeropuertos", aeropuertos)
+					o.setEstado("completado")
+					o.Broadcast("colapso", res)
+					return
+				}
 			}
 
 			// Avanzar el estado al instante actual y emitir (cada segundo).

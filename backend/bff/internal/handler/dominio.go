@@ -107,8 +107,8 @@ func (h *DominioHandler) Vuelos(w http.ResponseWriter, r *http.Request) {
 	ok(w, lista, msg)
 }
 
-// GET /api/dataset — rango real de la tabla envios_colapso.
-// No usa dataset_meta para evitar mostrar el rango antiguo de la tabla envios.
+// GET /api/dataset — rango real de la tabla envios.
+// Consulta directamente la tabla para devolver el rango actualmente cargado.
 func (h *DominioHandler) Dataset(w http.ResponseWriter, r *http.Request) {
 	var fechaMin, fechaMax sql.NullString
 	var total int64
@@ -117,7 +117,7 @@ func (h *DominioHandler) Dataset(w http.ResponseWriter, r *http.Request) {
 		`SELECT DATE_FORMAT(MIN(fecha_registro), '%Y-%m-%d'),
 		        DATE_FORMAT(MAX(fecha_registro), '%Y-%m-%d'),
 		        COUNT(*)
-		 FROM envios_colapso`,
+		 FROM envios`,
 	).Scan(&fechaMin, &fechaMax, &total)
 	if err != nil {
 		errResp(w, 500, "DB_ERROR", err.Error())
@@ -137,6 +137,6 @@ func (h *DominioHandler) Dataset(w http.ResponseWriter, r *http.Request) {
 		"fecha_min":    min,
 		"fecha_max":    max,
 		"total_envios": total,
-		"tabla":         "envios_colapso",
-	}, "rango real de envios_colapso")
+		"tabla":        "envios",
+	}, "rango real de envios")
 }

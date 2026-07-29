@@ -51,7 +51,7 @@ func (h *EstadoHandler) Estado(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// POST /dataset/recalcular — fuerza recálculo del rango de fechas desde envios_colapso
+// POST /dataset/recalcular — fuerza recálculo del rango de fechas desde envios
 func (h *EstadoHandler) RecalcularDataset(w http.ResponseWriter, r *http.Request) {
 	info, err := dbpkg.RecalcularDatasetInfo(h.DB)
 	if err != nil {
@@ -97,7 +97,7 @@ func (h *EstadoHandler) Plantilla(w http.ResponseWriter, r *http.Request) {
 
 func (h *EstadoHandler) enviosPorAeropuerto() (map[string]int, error) {
 	rows, err := h.DB.Query(
-		`SELECT origen_iata, COUNT(*) FROM envios_colapso GROUP BY origen_iata ORDER BY origen_iata`)
+		`SELECT origen_iata, COUNT(*) FROM envios GROUP BY origen_iata ORDER BY origen_iata`)
 	if err != nil {
 		return nil, err
 	}

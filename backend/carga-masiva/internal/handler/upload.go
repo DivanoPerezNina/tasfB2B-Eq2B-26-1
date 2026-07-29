@@ -23,6 +23,11 @@ type UploadHandler struct {
 	MaxBytes  int64
 }
 
+// fechaMaxEnviosColapso limita el dataset que se guarda desde los TXT. Los
+// registros posteriores no se insertan y, como los archivos están ordenados por
+// fecha, el parser deja de leer en cuanto alcanza abril de 2027.
+const fechaMaxEnviosColapso = "2027-03-31"
+
 // respond escribe la respuesta JSON estándar.
 func respond(w http.ResponseWriter, code int, body interface{}) {
 	w.Header().Set("Content-Type", "application/json")
@@ -280,7 +285,8 @@ func (h *UploadHandler) Envios(w http.ResponseWriter, r *http.Request) {
 		insertados := 0
 		ultimoReporte := 0
 
-		parseTotal, parseErr := parser.ParseEnvios(input, iata, h.BatchSize,
+		parseTotal, cortePorFecha, parseErr := parser.ParseEnvios(
+			input, iata, h.BatchSize, fechaMaxEnviosColapso,
 			func(batch []parser.Envio) error {
 				// Precalcular registro_utc y deadline_utc por envío.
 				for i := range batch {
@@ -320,12 +326,16 @@ func (h *UploadHandler) Envios(w http.ResponseWriter, r *http.Request) {
 			db.ActualizarSesion(h.DB, token, "error", parseTotal, insertados, &msg)
 			return
 		}
-		if parseTotal == 0 {
+		if parseTotal == 0 && !cortePorFecha {
 			msg := "el archivo no contiene ningún registro válido con el formato id-YYYYMMDD-HH-MM-DEST-MALETAS-CLIENTE"
 			db.ActualizarSesion(h.DB, token, "error", 0, 0, &msg)
 			return
 		}
 
+		if cortePorFecha {
+			fmt.Printf("Carga %s: corte aplicado en %s; no se procesan filas posteriores. válidos=%d insertados=%d\n",
+				header.Filename, fechaMaxEnviosColapso, parseTotal, insertados)
+		}
 		db.ActualizarSesion(h.DB, token, "ok", parseTotal, insertados, nil)
 		// Refrescar el rango publicado en la pantalla de Ingreso de datos.
 		_, _ = db.RecalcularDatasetInfo(h.DB)

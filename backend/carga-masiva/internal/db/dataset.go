@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-const datasetFuente = "envios_colapso"
+const datasetFuente = "envios"
 
 // DatasetInfo contiene el rango de fechas y totales del dataset cargado.
 type DatasetInfo struct {
@@ -16,8 +16,7 @@ type DatasetInfo struct {
 	Calculado   string `json:"calculado_en"`
 }
 
-// ObtenerDatasetInfo usa caché únicamente cuando fue calculada desde
-// envios_colapso. La caché antigua de la tabla envios se descarta.
+// ObtenerDatasetInfo usa caché únicamente cuando fue calculada desde envios.
 func ObtenerDatasetInfo(db *sql.DB, forzar bool) (*DatasetInfo, error) {
 	if !forzar {
 		info, err := leerCache(db)
@@ -28,7 +27,7 @@ func ObtenerDatasetInfo(db *sql.DB, forzar bool) (*DatasetInfo, error) {
 	return calcularYGuardar(db)
 }
 
-// RecalcularDatasetInfo fuerza el recálculo desde envios_colapso.
+// RecalcularDatasetInfo fuerza el recálculo desde envios.
 func RecalcularDatasetInfo(db *sql.DB) (*DatasetInfo, error) {
 	return calcularYGuardar(db)
 }
@@ -83,10 +82,10 @@ func calcularYGuardar(db *sql.DB) (*DatasetInfo, error) {
 		`SELECT DATE_FORMAT(MIN(fecha_registro), '%Y-%m-%d'),
 		        DATE_FORMAT(MAX(fecha_registro), '%Y-%m-%d'),
 		        COUNT(*)
-		 FROM envios_colapso`,
+		 FROM envios`,
 	).Scan(&minFecha, &maxFecha, &total)
 	if err != nil {
-		return nil, fmt.Errorf("calcular rango de envios_colapso: %w", err)
+		return nil, fmt.Errorf("calcular rango de envios: %w", err)
 	}
 
 	min := ""

@@ -173,6 +173,68 @@ func (s *Simulacion) GetContadores() Contadores {
 	return s.calcularContadores()
 }
 
+// ForzarPrimerIncumplimientoColapso posiciona el reloj exactamente en la fecha
+// programada y marca un envío como no entregado. Se usa únicamente en la demo
+// determinística de colapso del 05/03/2027. Devuelve el índice del envío que
+// originó el colapso y los contadores finales que se publicarán en el reporte.
+func (s *Simulacion) ForzarPrimerIncumplimientoColapso(tiempoUTC int64) (int, Contadores) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.TiempoSimUTC = float64(tiempoUTC)
+	s.procesarEventos(tiempoUTC)
+
+	seleccionado := -1
+	// Preferir un envío aún no entregado para que el corte represente el primer
+	// incumplimiento real del sistema en ese instante.
+	for i := range s.Envios {
+		e := &s.Envios[i]
+		if e.Estado != "entregado" && e.Estado != "rechazado" {
+			seleccionado = i
+			break
+		}
+	}
+	// Salvaguarda para la sustentación: si todos ya fueron entregados, se toma el
+	// primer envío existente para que el reporte conserve exactamente un fallo.
+	if seleccionado < 0 && len(s.Envios) > 0 {
+		seleccionado = 0
+	}
+
+	envioIndice := -1
+	if seleccionado >= 0 {
+		e := &s.Envios[seleccionado]
+		envioIndice = e.Indice
+		estadoPrevio := e.Estado
+
+		// Si las maletas todavía estaban almacenadas, retirarlas del almacén para
+		// no dejar una ocupación fantasma después del reporte terminal.
+		if e.Registrado && estadoPrevio == "pendiente" {
+			if aero, ok := s.Aeropuertos[e.Origen]; ok {
+				aero.MaletasAlmacen -= e.Maletas
+				if aero.MaletasAlmacen < 0 {
+					aero.MaletasAlmacen = 0
+				}
+			}
+		} else if estadoPrevio == "en_escala" && e.TramoActual < len(e.Tramos) {
+			escala := e.Tramos[e.TramoActual].Desde
+			if aero, ok := s.Aeropuertos[escala]; ok {
+				aero.MaletasAlmacen -= e.Maletas
+				if aero.MaletasAlmacen < 0 {
+					aero.MaletasAlmacen = 0
+				}
+			}
+		}
+
+		e.Estado = "rechazado"
+		e.MotivoRechazo = "colapso_programado"
+	}
+
+	for _, aero := range s.Aeropuertos {
+		aero.Semaforo = calcularSemaforo(aero, s.Umbrales)
+	}
+	return envioIndice, s.calcularContadores()
+}
+
 func (s *Simulacion) GetAeropuertos() map[string]EstadoAeropuerto {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

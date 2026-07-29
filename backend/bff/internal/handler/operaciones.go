@@ -33,13 +33,13 @@ type envioOperacion struct {
 var bagSuffix = regexp.MustCompile(`(?i)(?:[-#:]?M(?:ALETA)?[-#:]?\d+)$`)
 
 // tablaEnviosOperaciones mantiene separados los datasets: Día a Día usa
-// envios_operacion; Periodo/Colapso usa envios_colapso. El nombre nunca se
+// envios_operacion; Periodo/Colapso usa envios. El nombre nunca se
 // toma directamente del usuario.
 func tablaEnviosOperaciones(r *http.Request) string {
 	if r.URL.Query().Get("modo") == "operacion" {
 		return "envios_operacion"
 	}
-	return "envios_colapso"
+	return "envios"
 }
 
 func parseWindow(r *http.Request) (int64, int64, error) {

@@ -26,18 +26,18 @@ type Envio struct {
 // tablaEnvios resuelve el nombre de tabla a partir de ?modo=, validado contra
 // una lista fija (nunca se interpola el valor crudo del query param en el SQL).
 // "operacion" → envios_operacion (día a día, se limpia con TRUNCATE entre
-// ensayos sin tocar el dataset de simulación); cualquier otro valor → envios_colapso.
+// ensayos sin tocar el dataset de simulación); cualquier otro valor → envios.
 func tablaEnvios(r *http.Request) string {
 	if r.URL.Query().Get("modo") == "operacion" {
 		return "envios_operacion"
 	}
-	return "envios_colapso"
+	return "envios"
 }
 
 // Envios — GET /envios?ini=<utc>&fin=<utc>&modo=<periodo|operacion>
 // Devuelve los envíos registrados en [ini, fin) ordenados por registro_utc.
 // modo=operacion lee de envios_operacion (día a día).
-// Periodo 3D/5D/7D y Colapso leen de envios_colapso.
+// Periodo 3D/5D/7D y Colapso leen de envios.
 func (h *EnviosHandler) Envios(w http.ResponseWriter, r *http.Request) {
 	ini, err1 := strconv.ParseInt(r.URL.Query().Get("ini"), 10, 64)
 	fin, err2 := strconv.ParseInt(r.URL.Query().Get("fin"), 10, 64)
