@@ -4,7 +4,7 @@ import { useSimulation } from '../context/SimulationContext';
 import {
   Button, Tabs, TabList, Tab, TabPanels, TabPanel,
   TileGroup, RadioTile, ContentSwitcher, Switch,
-  TextInput, Tag, InlineNotification, Stack,
+  DatePicker, DatePickerInput, TextInput, Tag, InlineNotification, Stack,
 } from '@carbon/react';
 import { SimulationScenario } from '../types';
 import {
@@ -173,31 +173,9 @@ function formatDatasetDateForDisplay(value?: string) {
   return parsed ? format(parsed, 'dd/MM/yyyy') : '—';
 }
 
-function formatDateForInput(value: Date) {
-  if (!(value instanceof Date) || Number.isNaN(value.getTime())) return '';
-
-  const yyyy = value.getFullYear();
-  const mm = String(value.getMonth() + 1).padStart(2, '0');
-  const dd = String(value.getDate()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}`;
-}
-
-function parseManualDate(value: string): Date | null {
-  const normalized = value.trim();
-
-  const iso = normalized.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (iso) {
-    const [, yyyy, mm, dd] = iso;
-    return parseDatasetDate(`${yyyy}-${mm}-${dd}`);
-  }
-
-  const local = normalized.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-  if (local) {
-    const [, dd, mm, yyyy] = local;
-    return parseDatasetDate(`${yyyy}-${mm}-${dd}`);
-  }
-
-  return null;
+function formatDatasetDateForPicker(value?: string) {
+  const parsed = parseDatasetDate(value);
+  return parsed ? format(parsed, 'dd/MM/yyyy') : undefined;
 }
 
 // ─── Componente principal ─────────────────────────────────────────────────────
@@ -213,7 +191,6 @@ export function SimulationConfig() {
   } = useSimulation();
 
   const [localConfig, setLocalConfig] = useState(config);
-  const [fechaTexto, setFechaTexto] = useState(() => formatDateForInput(config.startDate));
   const [currentTime, setCurrentTime] = useState(new Date());
   const [history, setHistory] = useState<HistoryRecord[]>(loadHistory);
 
@@ -238,10 +215,6 @@ export function SimulationConfig() {
 
     setLocalConfig(prev => ({ ...prev, startDate: next }));
   }, [config.startDate]);
-
-  useEffect(() => {
-    setFechaTexto(formatDateForInput(localConfig.startDate));
-  }, [localConfig.startDate]);
 
   useEffect(() => {
     const min = parseDatasetDate(datasetInfo?.fecha_min);
@@ -314,10 +287,12 @@ export function SimulationConfig() {
     fechaFinSim > fechaMaxDataset
   );
   const puedeIniciar = !esConFecha || (!fechaFueraDeRango && !duracionFueraDeRango);
-  const fechaTextoValida = parseManualDate(fechaTexto) !== null;
+  const datasetRangeKey = `${datasetInfo?.fecha_min ?? 'sin-min'}-${datasetInfo?.fecha_max ?? 'sin-max'}`;
+  const fechaMinPicker = formatDatasetDateForPicker(datasetInfo?.fecha_min);
+  const fechaMaxPicker = formatDatasetDateForPicker(datasetInfo?.fecha_max);
   const rangoDatasetTexto = datasetInfo
-    ? `Rango disponible: ${formatDatasetDateForDisplay(datasetInfo.fecha_min)} – ${formatDatasetDateForDisplay(datasetInfo.fecha_max)}`
-    : 'Cargando rango disponible...';
+    ? `${formatDatasetDateForDisplay(datasetInfo.fecha_min)} – ${formatDatasetDateForDisplay(datasetInfo.fecha_max)}`
+    : 'Cargando rango...';
 
   const timeValue = localConfig.startDate && !isNaN(localConfig.startDate.getTime())
     ? `${String(localConfig.startDate.getHours()).padStart(2, '0')}:${String(localConfig.startDate.getMinutes()).padStart(2, '0')}`
@@ -332,50 +307,14 @@ export function SimulationConfig() {
     toast.success('Configuración guardada');
   };
 
-  const handleFechaInput = (value: string) => {
-    setFechaTexto(value);
+  const handleFecha = (dates: Date[]) => {
+    const selected = dates?.[0];
+    if (!selected) return;
 
-    const parsed = parseManualDate(value);
-    if (!parsed) return;
-
-    const prev = localConfig.startDate;
-    const hours = prev instanceof Date && !Number.isNaN(prev.getTime()) ? prev.getHours() : 0;
-    const minutes = prev instanceof Date && !Number.isNaN(prev.getTime()) ? prev.getMinutes() : 0;
-    parsed.setHours(hours, minutes, 0, 0);
-    setLocalConfig(current => ({ ...current, startDate: parsed }));
-  };
-
-  const handleFechaBlur = () => {
-    const parsed = parseManualDate(fechaTexto);
-
-    if (!parsed) {
-      const fallback = fechaMinDataset ?? localConfig.startDate;
-      setFechaTexto(formatDateForInput(fallback));
-      toast.error('Fecha inválida', {
-        description: 'Escribe la fecha como AAAA-MM-DD o DD/MM/AAAA.',
-      });
-      return;
-    }
-
-    if (
-      (fechaMinDataset && parsed < fechaMinDataset) ||
-      (fechaMaxDataset && parsed > fechaMaxDataset)
-    ) {
-      const fallback = fechaMinDataset ?? localConfig.startDate;
-      setFechaTexto(formatDateForInput(fallback));
-      setLocalConfig(current => ({ ...current, startDate: new Date(fallback) }));
-      toast.error('Fecha fuera del dataset', {
-        description: rangoDatasetTexto,
-      });
-      return;
-    }
-
-    const prev = localConfig.startDate;
-    const hours = prev instanceof Date && !Number.isNaN(prev.getTime()) ? prev.getHours() : 0;
-    const minutes = prev instanceof Date && !Number.isNaN(prev.getTime()) ? prev.getMinutes() : 0;
-    parsed.setHours(hours, minutes, 0, 0);
-    setLocalConfig(current => ({ ...current, startDate: parsed }));
-    setFechaTexto(formatDateForInput(parsed));
+    const previous = localConfig.startDate;
+    const merged = new Date(selected);
+    merged.setHours(previous.getHours(), previous.getMinutes(), 0, 0);
+    setLocalConfig(current => ({ ...current, startDate: merged }));
   };
 
   const handleHora = (t: string) => {
@@ -533,37 +472,42 @@ export function SimulationConfig() {
                 {/* Fecha + duración/velocidad */}
                 <Stack gap={5}>
                   <Stack gap={3}>
-                    <div style={{ display: 'flex', gap: '.75rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
-                      <div style={{ flex: '1 1 160px' }}>
-                        <TextInput
+                    <div style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'minmax(0, 1fr) 8rem',
+                      gap: '.75rem',
+                      alignItems: 'end',
+                    }}>
+                      <DatePicker
+                        key={datasetRangeKey}
+                        datePickerType="single"
+                        dateFormat="d/m/Y"
+                        value={localConfig.startDate}
+                        minDate={fechaMinPicker}
+                        maxDate={fechaMaxPicker}
+                        onChange={handleFecha}
+                      >
+                        <DatePickerInput
                           id="cfg-fecha"
                           labelText="Fecha de inicio"
-                          type="text"
-                          placeholder="AAAA-MM-DD"
-                          value={fechaTexto}
-                          helperText={`${rangoDatasetTexto}. También acepta DD/MM/AAAA.`}
-                          invalid={esConFecha && !fechaTextoValida}
-                          invalidText="Fecha inválida. Usa AAAA-MM-DD o DD/MM/AAAA."
+                          placeholder="dd/mm/aaaa"
                           disabled={!esConFecha}
-                          onChange={(event) => handleFechaInput(event.target.value)}
-                          onBlur={handleFechaBlur}
                         />
-                      </div>
-                      <div style={{ width: '8rem' }}>
-                        <TextInput
-                          id="cfg-hora"
-                          labelText="Hora"
-                          type="time"
-                          value={timeValue}
-                          disabled={!esConFecha}
-                          onChange={(e) => handleHora(e.target.value)}
-                        />
-                      </div>
+                      </DatePicker>
+
+                      <TextInput
+                        id="cfg-hora"
+                        labelText="Hora"
+                        type="time"
+                        value={timeValue}
+                        disabled={!esConFecha}
+                        onChange={(e) => handleHora(e.target.value)}
+                      />
                     </div>
 
                     {datasetInfo ? (
                       <p style={{ fontSize: '.75rem', color: 'var(--cds-text-secondary)', margin: 0 }}>
-                        Rango disponible: <strong>{datasetInfo.fecha_min}</strong> → <strong>{datasetInfo.fecha_max}</strong>
+                        Datos: <strong>{rangoDatasetTexto}</strong>
                       </p>
                     ) : (
                       <InlineNotification kind="warning" lowContrast hideCloseButton
@@ -607,9 +551,6 @@ export function SimulationConfig() {
                           duracionRealMin: Number(e.target.value) || (esRealtime ? 24 : 60),
                         })}
                       />
-                      <p style={{ fontSize: '.75rem', color: 'var(--cds-text-secondary)', margin: '.35rem 0 0' }}>
-                        Ajusta la velocidad de la simulación sin cambiar la ventana de datos.
-                      </p>
                     </div>
                   )}
 
@@ -618,8 +559,8 @@ export function SimulationConfig() {
                       kind="info"
                       lowContrast
                       hideCloseButton
-                      title={`Simulación ${localConfig.dias}D calibrada`}
-                      subtitle={`Tiempo estimado: ${localConfig.duracionRealMin} minutos reales. Se usan 30 bloques: cada ${Math.round(localConfig.dias * 48)} minutos de datos futuros se consumen cada ${Math.max(20, Math.round((localConfig.duracionRealMin * 60) / 30))} segundos reales. Tiempo = 0 en la fecha/hora elegida; no se procesa data anterior.`}
+                      title={`Simulación ${localConfig.dias}D`}
+                      subtitle={`${localConfig.duracionRealMin} min reales · 30 bloques · ${Math.max(20, Math.round((localConfig.duracionRealMin * 60) / 30))} s por bloque.`}
                     />
                   )}
 
