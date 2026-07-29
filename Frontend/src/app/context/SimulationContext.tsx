@@ -69,7 +69,7 @@ interface SimulationContextType {
   collapseFailure: {
     technicalMessage: string;
     badge: string;
-    type: 'limite_tecnico' | 'tecnico_memoria' | 'unknown';
+    type: 'sla' | 'limite_tecnico' | 'tecnico_memoria' | 'unknown';
   } | null;
   aeropuertosState: AeropuertoEstado[];
   /** Tramos reales del plan generado por el planificador. Se usan solo para la visualización del mapa. */
@@ -151,7 +151,7 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const [collapseFailure, setCollapseFailure] = useState<{
     technicalMessage: string;
     badge: string;
-    type: 'limite_tecnico' | 'tecnico_memoria' | 'unknown';
+    type: 'sla' | 'limite_tecnico' | 'tecnico_memoria' | 'unknown';
   } | null>(null);
   const [aeropuertosState, setAeropuertos]  = useState<AeropuertoEstado[]>([]);
   const [planTramos, setPlanTramos]          = useState<PlanTramoVisual[]>([]);
@@ -630,31 +630,48 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       if (esRef.current === es) esRef.current = null;
     });
 
-    if (scenario === 'collapse') {
-      es.addEventListener('colapso', (e: MessageEvent) => {
-        const d = JSON.parse(e.data);
-        if (d.contadores) setContadores(d.contadores);
-        setFase('completado');
-        setProgresoPct(100);
-        setPlanResumen(prev => prev ?? ({
-          totalEnvios: d.total_envios,
-          exitosos: d.exitosos,
-          rechazados: d.rechazados ?? d.contadores?.rechazado,
-          ventanaIniUTC: d.t0_utc,
-          ventanaFinUTC: d.fin_utc,
-        }));
-        console.log('[Sim:collapse] colapso detectado:', {
-          tipo: d.tipo ?? d.type,
-          motivo: d.motivo ?? d.reason,
-          aeropuerto: d.aeropuerto ?? d.airport,
-          ocupacion: d.ocupacion ?? d.occupancy,
-          ta_seg: d.ta_seg,
-          sa_seg: d.sa_seg,
-        });
-        es.close();
-        if (esRef.current === es) esRef.current = null;
+    es.addEventListener('colapso', (e: MessageEvent) => {
+      const d = JSON.parse(e.data);
+      const finalTime = Number(d.tiempo_sim_utc ?? tiempoSimUTC);
+      const rawCounters = d.contadores ?? contadores;
+      const finalCounters = d.rechazos_sla != null
+        ? { ...rawCounters, rechazado: Number(d.rechazos_sla) }
+        : rawCounters;
+      const reason = String(d.motivo ?? d.reason ?? 'Se detectó la primera maleta fuera de su plazo de entrega.');
+
+      if (d.contadores) setContadores(d.contadores);
+      if (Number.isFinite(finalTime)) setTiempoSimUTC(finalTime);
+      const finalTick = {
+        tiempo_sim_utc: Number.isFinite(finalTime) ? finalTime : tiempoSimUTC,
+        contadores: finalCounters,
+        progreso_pct: String(progresoPct),
+      };
+      lastValidTickRef.current = finalTick;
+      setLastValidTick(finalTick);
+      setCollapseFailure({
+        technicalMessage: reason,
+        badge: 'Colapso logístico detectado',
+        type: 'sla',
       });
-    }
+      setFase('completado');
+      setPlanResumen(prev => prev ?? ({
+        totalEnvios: d.total_envios ?? finalCounters.total,
+        exitosos: d.exitosos ?? finalCounters.entregado,
+        rechazados: d.rechazados ?? finalCounters.rechazado,
+        ventanaIniUTC: d.t0_utc ?? Math.floor(config.startDate.getTime() / 60000),
+        ventanaFinUTC: finalTime,
+      }));
+      console.log(`[Sim:${scenario}] colapso detectado:`, {
+        tipo: d.tipo ?? d.type,
+        motivo: reason,
+        aeropuerto: d.aeropuerto ?? d.airport,
+        ocupacion: d.ocupacion ?? d.occupancy,
+        tiempo_sim_utc: finalTime,
+        contadores: finalCounters,
+      });
+      es.close();
+      if (esRef.current === es) esRef.current = null;
+    });
 
     es.onerror = () => {
       sseErroresRef.current += 1;
@@ -769,6 +786,9 @@ export const SimulationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     setVisualCancellations([]);
     setCancellationAudits([]);
     setProgresoPct(0);
+    lastValidTickRef.current = null;
+    setLastValidTick(null);
+    setCollapseFailure(null);
 
     // Fecha elegida → minuto epoch UTC (GMT=0, igual que el planificador).
     const d = efectivo.startDate;

@@ -91,7 +91,11 @@ type Umbrales struct {
 }
 
 type ConfigColapso struct {
-	Habilitado               bool    `json:"habilitado"`
+	Habilitado bool `json:"habilitado"`
+	// SoloSLA se usa en Sim5D por aproximaciones: el escenario termina
+	// exclusivamente cuando aparece la primera maleta fuera de su deadline.
+	// La saturación visual de almacenes no se considera por sí sola colapso.
+	SoloSLA                  bool    `json:"solo_sla,omitempty"`
 	UmbralOcupacion          float64 `json:"umbral_ocupacion"`
 	UmbralRechazosPct        float64 `json:"umbral_rechazos_pct"`
 	BloquesRojosConsecutivos int     `json:"bloques_rojos_consecutivos"`
@@ -108,6 +112,7 @@ type ResultadoColapso struct {
 	SaSeg        float64    `json:"sa_seg"`
 	TiempoSimUTC int64      `json:"tiempo_sim_utc"`
 	DiaSimulado  int        `json:"dia_simulado"`
+	RechazosSLA  int        `json:"rechazos_sla"`
 	Contadores   Contadores `json:"contadores"`
 }
 

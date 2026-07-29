@@ -398,3 +398,32 @@ func TestAjusteCancelacionConexionRespetaEscala(t *testing.T) {
 		t.Fatalf("disponibleDesdeUTC=%d; quiero 190 (llegada 180 + 10)", got.DisponibleDesdeUTC)
 	}
 }
+
+func TestRechazoPlanificadorVencidoSeConvierteEnSLA(t *testing.T) {
+	s := &Simulacion{
+		Envios: []EstadoEnvio{{
+			Indice:        9,
+			Origen:        "SPIM",
+			Destino:       "SKBO",
+			Maletas:       2,
+			RegistroUTC:   100,
+			DeadlineUTC:   200,
+			Estado:        "rechazado",
+			MotivoRechazo: "planificador",
+		}},
+		Aeropuertos: map[string]*EstadoAeropuerto{},
+	}
+
+	s.procesarEventos(199)
+	if got := s.contarRechazosSLA(); got != 0 {
+		t.Fatalf("antes del deadline rechazos SLA=%d; quiero 0", got)
+	}
+
+	s.procesarEventos(201)
+	if got := s.contarRechazosSLA(); got != 1 {
+		t.Fatalf("después del deadline rechazos SLA=%d; quiero 1", got)
+	}
+	if s.Envios[0].MotivoRechazo != "sla" {
+		t.Fatalf("motivo=%q; quiero sla", s.Envios[0].MotivoRechazo)
+	}
+}

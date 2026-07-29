@@ -416,6 +416,13 @@ func (o *Orquestador) run() {
 			cont := sim.calcularContadores()
 			sim.mu.Unlock()
 
+			var colapsoSLA *ResultadoColapso
+			if o.Colapso != nil && o.Colapso.SoloSLA {
+				if res, ok := o.detectarColapso(sim, 0, o.Sa.Seconds(), t); ok {
+					colapsoSLA = res
+				}
+			}
+
 			progreso := (tiempo - float64(o.T0UTC)) / float64(o.FinUTC-o.T0UTC) * 100.0
 			if progreso > 100 {
 				progreso = 100
@@ -426,6 +433,12 @@ func (o *Orquestador) run() {
 				"contadores":     cont,
 			})
 			o.Broadcast("aeropuertos", aeropuertos)
+
+			if colapsoSLA != nil {
+				o.setEstado("completado")
+				o.Broadcast("colapso", colapsoSLA)
+				return
+			}
 
 			if t >= o.FinUTC {
 				o.setEstado("completado")
