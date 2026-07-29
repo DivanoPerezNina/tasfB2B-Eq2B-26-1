@@ -2,7 +2,6 @@ package db
 
 import (
 	"database/sql"
-	"fmt"
 )
 
 type Sesion struct {
@@ -48,20 +47,24 @@ func ObtenerSesion(db *sql.DB, token string) (*Sesion, error) {
 }
 
 // ContarRegistros devuelve el total de filas en cada tabla de dominio.
+// Para envios usa dataset_meta y evita ejecutar COUNT(*) sobre millones de
+// registros en cada consulta de estado o al comenzar una nueva carga.
 func ContarRegistros(db *sql.DB) (aeropuertos, vuelos, envios int, err error) {
-	for _, q := range []struct {
-		tabla string
-		dest  *int
-	}{
-		{"aeropuertos", &aeropuertos},
-		{"vuelos", &vuelos},
-		{"envios", &envios},
-	} {
-		if e := db.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM %s", q.tabla)).Scan(q.dest); e != nil {
-			err = e
-			return
-		}
+	if err = db.QueryRow("SELECT COUNT(*) FROM aeropuertos").Scan(&aeropuertos); err != nil {
+		return
 	}
+	if err = db.QueryRow("SELECT COUNT(*) FROM vuelos").Scan(&vuelos); err != nil {
+		return
+	}
+
+	info, infoErr := ObtenerDatasetInfo(db, false)
+	if infoErr == nil && info != nil {
+		envios = int(info.TotalEnvios)
+		return
+	}
+
+	// Compatibilidad para instalaciones antiguas que aún no tienen metadata.
+	err = db.QueryRow("SELECT COUNT(*) FROM envios").Scan(&envios)
 	return
 }
 
@@ -83,6 +86,11 @@ func LimpiarDatos(db *sql.DB) (int64, int64, int64, error) {
 		}
 		n, _ := r.RowsAffected()
 		*q.dest = n
+	}
+
+	// Mantener sincronizada la caché que consumen el BFF y la configuración.
+	if _, err := RecalcularDatasetInfo(db); err != nil {
+		return na, nv, ne, err
 	}
 	return na, nv, ne, nil
 }

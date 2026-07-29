@@ -324,6 +324,12 @@ func (h *UploadHandler) Envios(w http.ResponseWriter, r *http.Request) {
 		if parseErr != nil {
 			msg := parseErr.Error()
 			db.ActualizarSesion(h.DB, token, "error", parseTotal, insertados, &msg)
+			// Los lotes anteriores ya fueron confirmados. Si hubo una falla a
+			// mitad del archivo, refrescar la metadata para no dejar un total
+			// desactualizado en la pantalla de configuración.
+			if insertados > 0 {
+				_, _ = db.RecalcularDatasetInfo(h.DB)
+			}
 			return
 		}
 		if parseTotal == 0 && !cortePorFecha {

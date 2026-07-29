@@ -2,7 +2,10 @@ package handler
 
 import (
 	"database/sql"
+	"fmt"
 	"net/http"
+	"strconv"
+	"time"
 )
 
 // DominioHandler sirve aeropuertos, vuelos y dataset directo desde MySQL.
@@ -107,36 +110,118 @@ func (h *DominioHandler) Vuelos(w http.ResponseWriter, r *http.Request) {
 	ok(w, lista, msg)
 }
 
-// GET /api/dataset — rango real de la tabla envios.
-// Consulta directamente la tabla para devolver el rango actualmente cargado.
+// GET /api/dataset — rango de la tabla envios.
+// La lectura normal usa dataset_meta para no ejecutar COUNT(*) sobre millones
+// de filas cada vez que se abre la pantalla de configuración.
 func (h *DominioHandler) Dataset(w http.ResponseWriter, r *http.Request) {
-	var fechaMin, fechaMax sql.NullString
-	var total int64
-
-	err := h.DB.QueryRow(
-		`SELECT DATE_FORMAT(MIN(fecha_registro), '%Y-%m-%d'),
-		        DATE_FORMAT(MAX(fecha_registro), '%Y-%m-%d'),
-		        COUNT(*)
-		 FROM envios`,
-	).Scan(&fechaMin, &fechaMax, &total)
+	min, max, total, calculado, cached, err := leerDatasetMeta(h.DB)
 	if err != nil {
 		errResp(w, 500, "DB_ERROR", err.Error())
 		return
 	}
 
-	min := ""
-	max := ""
-	if fechaMin.Valid {
-		min = fechaMin.String
-	}
-	if fechaMax.Valid {
-		max = fechaMax.String
+	if !cached {
+		min, max, total, err = calcularDatasetEnvios(h.DB)
+		if err != nil {
+			errResp(w, 500, "DB_ERROR", err.Error())
+			return
+		}
+		calculado = time.Now().Format(time.RFC3339)
+		// El primer acceso sin metadata puede tardar, pero deja el resultado
+		// guardado para que las siguientes peticiones sean inmediatas.
+		_ = guardarDatasetMeta(h.DB, min, max, total, calculado)
 	}
 
 	ok(w, map[string]interface{}{
 		"fecha_min":    min,
 		"fecha_max":    max,
 		"total_envios": total,
+		"calculado_en": calculado,
 		"tabla":        "envios",
-	}, "rango real de envios")
+		"cache":        cached,
+	}, "rango de envios")
+}
+
+func leerDatasetMeta(db *sql.DB) (min, max string, total int64, calculado string, ok bool, err error) {
+	rows, err := db.Query(
+		`SELECT clave, valor
+		 FROM dataset_meta
+		 WHERE clave IN ('fecha_min','fecha_max','total_envios','calculado_en','dataset_fuente')`,
+	)
+	if err != nil {
+		return "", "", 0, "", false, err
+	}
+	defer rows.Close()
+
+	values := make(map[string]string, 5)
+	for rows.Next() {
+		var key, value string
+		if scanErr := rows.Scan(&key, &value); scanErr != nil {
+			return "", "", 0, "", false, scanErr
+		}
+		values[key] = value
+	}
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return "", "", 0, "", false, rowsErr
+	}
+
+	if values["dataset_fuente"] != "envios" {
+		return "", "", 0, "", false, nil
+	}
+
+	parsedTotal, parseErr := strconv.ParseInt(values["total_envios"], 10, 64)
+	if parseErr != nil || parsedTotal < 0 {
+		return "", "", 0, "", false, nil
+	}
+
+	min = values["fecha_min"]
+	max = values["fecha_max"]
+	if parsedTotal > 0 && (min == "" || max == "") {
+		return "", "", 0, "", false, nil
+	}
+
+	return min, max, parsedTotal, values["calculado_en"], true, nil
+}
+
+func calcularDatasetEnvios(db *sql.DB) (min, max string, total int64, err error) {
+	var fechaMin, fechaMax sql.NullString
+	err = db.QueryRow(
+		`SELECT DATE_FORMAT(MIN(fecha_registro), '%Y-%m-%d'),
+		        DATE_FORMAT(MAX(fecha_registro), '%Y-%m-%d'),
+		        COUNT(*)
+		 FROM envios`,
+	).Scan(&fechaMin, &fechaMax, &total)
+	if err != nil {
+		return "", "", 0, err
+	}
+	if fechaMin.Valid {
+		min = fechaMin.String
+	}
+	if fechaMax.Valid {
+		max = fechaMax.String
+	}
+	return min, max, total, nil
+}
+
+func guardarDatasetMeta(db *sql.DB, min, max string, total int64, calculado string) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	const upsert = `INSERT INTO dataset_meta (clave, valor) VALUES (?, ?)
+		ON DUPLICATE KEY UPDATE valor = VALUES(valor)`
+	for _, item := range [][2]string{
+		{"fecha_min", min},
+		{"fecha_max", max},
+		{"total_envios", strconv.FormatInt(total, 10)},
+		{"calculado_en", calculado},
+		{"dataset_fuente", "envios"},
+	} {
+		if _, execErr := tx.Exec(upsert, item[0], item[1]); execErr != nil {
+			return fmt.Errorf("guardar metadata %s: %w", item[0], execErr)
+		}
+	}
+	return tx.Commit()
 }

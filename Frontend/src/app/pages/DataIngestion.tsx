@@ -193,7 +193,7 @@ export function DataIngestion() {
       selected: vuelosFile ? [vuelosFile] : [], onPick: (f) => setVuelosFile(f[0] ?? null), onClear: () => setVuelosFile(null),
     },
     {
-      kind: 'envios', label: 'Envíos Periodo/Colapso', hint: '_envios_XXXX_.txt → envios_colapso · hasta 31/03/2027',
+      kind: 'envios', label: 'Envíos Periodo/Colapso', hint: '_envios_XXXX_.txt → envios · hasta 31/03/2027',
       icon: <Box size={20} />, multiple: true, accept: '.txt',
       selected: enviosFiles, onPick: (f) => setEnviosFiles(f), onClear: () => setEnviosFiles([]),
     },
@@ -222,7 +222,7 @@ export function DataIngestion() {
             <InlineNotification
               kind={Number(dataset.total_envios) > 0 ? 'success' : 'warning'}
               lowContrast hideCloseButton
-              title={Number(dataset.total_envios) > 0 ? 'Datos disponibles' : 'Tabla envios_colapso vacía'}
+              title={Number(dataset.total_envios) > 0 ? 'Datos disponibles' : 'Tabla envios vacía'}
               subtitle={
                 Number(dataset.total_envios) > 0
                   ? `${Number(dataset.total_envios).toLocaleString()} envíos · ${dataset.fecha_min} → ${dataset.fecha_max}`
@@ -320,7 +320,7 @@ export function DataIngestion() {
 
           <p style={{ fontSize: '.75rem', color: 'var(--cds-text-secondary)', margin: 0 }}>
             Orden recomendado: <strong>aeropuertos</strong> → <strong>vuelos</strong> → <strong>envíos</strong>.
-            Los envíos se guardan en envios_colapso. Día a Día continúa usando envios_operacion.
+            Los envíos de Periodo y Colapso se guardan en envios. Día a Día continúa usando envios_operacion.
           </p>
         </Stack>
       </div>

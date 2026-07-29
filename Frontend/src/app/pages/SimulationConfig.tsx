@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import * as SliderPrimitive from '@radix-ui/react-slider';
 import { useSimulation } from '../context/SimulationContext';
 import {
@@ -150,6 +150,36 @@ const SCENARIO_TAG: Record<SimulationScenario, 'green' | 'blue' | 'red'> = {
   realtime: 'green', period: 'blue', collapse: 'red',
 };
 
+function parseDatasetDate(value?: string, endOfDay = false): Date | null {
+  if (!value) return null;
+
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.slice(0, 10));
+  if (!match) return null;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const parsed = new Date(
+    year,
+    month - 1,
+    day,
+    endOfDay ? 23 : 0,
+    endOfDay ? 59 : 0,
+    endOfDay ? 59 : 0,
+    endOfDay ? 999 : 0,
+  );
+
+  if (
+    parsed.getFullYear() !== year ||
+    parsed.getMonth() !== month - 1 ||
+    parsed.getDate() !== day
+  ) {
+    return null;
+  }
+
+  return parsed;
+}
+
 // ─── Componente principal ─────────────────────────────────────────────────────
 
 export function SimulationConfig() {
@@ -181,8 +211,26 @@ export function SimulationConfig() {
   }, []);
 
   useEffect(() => {
-    setLocalConfig(prev => ({ ...prev, startDate: config.startDate }));
+    setLocalConfig(prev => ({ ...prev, startDate: new Date(config.startDate.getTime()) }));
   }, [config.startDate]);
+
+  useEffect(() => {
+    const min = parseDatasetDate(datasetInfo?.fecha_min);
+    const max = parseDatasetDate(datasetInfo?.fecha_max, true);
+    if (!min || !max) return;
+
+    setLocalConfig(prev => {
+      const current = prev.startDate instanceof Date && !Number.isNaN(prev.startDate.getTime())
+        ? prev.startDate
+        : min;
+
+      if (current >= min && current <= max) return prev;
+
+      const clamped = current < min ? new Date(min.getTime()) : new Date(max.getTime());
+      clamped.setHours(current.getHours(), current.getMinutes(), 0, 0);
+      return { ...prev, startDate: clamped };
+    });
+  }, [datasetInfo?.fecha_min, datasetInfo?.fecha_max]);
 
   useEffect(() => {
     if (fase === 'completado' && contadores.total > 0) {
@@ -228,10 +276,21 @@ export function SimulationConfig() {
     : esRealtime
       ? (localConfig.duracionRealMin < 5 || localConfig.duracionRealMin > 90)
       : false;
-  const fechaMaxDataset = datasetInfo ? new Date(datasetInfo.fecha_max + 'T23:59:59') : null;
+  const fechaMinDataset = useMemo(
+    () => parseDatasetDate(datasetInfo?.fecha_min),
+    [datasetInfo?.fecha_min],
+  );
+  const fechaMaxDataset = useMemo(
+    () => parseDatasetDate(datasetInfo?.fecha_max, true),
+    [datasetInfo?.fecha_max],
+  );
   const fechaFinSim = new Date(localConfig.startDate.getTime() + diasEfectivos * 86_400_000);
-  const fechaFueraDeRango = esConFecha && !!fechaMaxDataset && fechaFinSim > fechaMaxDataset;
+  const fechaFueraDeRango = esConFecha && (
+    (!!fechaMinDataset && localConfig.startDate < fechaMinDataset) ||
+    (!!fechaMaxDataset && fechaFinSim > fechaMaxDataset)
+  );
   const puedeIniciar = !esConFecha || (!fechaFueraDeRango && !duracionFueraDeRango);
+  const datasetRangeKey = `${datasetInfo?.fecha_min ?? 'sin-min'}-${datasetInfo?.fecha_max ?? 'sin-max'}`;
 
   const timeValue = localConfig.startDate && !isNaN(localConfig.startDate.getTime())
     ? `${String(localConfig.startDate.getHours()).padStart(2, '0')}:${String(localConfig.startDate.getMinutes()).padStart(2, '0')}`
@@ -250,7 +309,7 @@ export function SimulationConfig() {
     const d = dates?.[0];
     if (!d) return;
     const prev = localConfig.startDate;
-    const merged = new Date(d);
+    const merged = new Date(d.getTime());
     merged.setHours(prev.getHours(), prev.getMinutes(), 0, 0);
     setLocalConfig({ ...localConfig, startDate: merged });
   };
@@ -258,7 +317,7 @@ export function SimulationConfig() {
   const handleHora = (t: string) => {
     if (!/^\d{2}:\d{2}$/.test(t)) return;
     const [h, m] = t.split(':').map(Number);
-    const next = new Date(localConfig.startDate);
+    const next = new Date(localConfig.startDate.getTime());
     next.setHours(h, m, 0, 0);
     setLocalConfig({ ...localConfig, startDate: next });
   };
@@ -413,11 +472,13 @@ export function SimulationConfig() {
                     <div style={{ display: 'flex', gap: '.75rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
                       <div style={{ flex: '1 1 160px' }}>
                         <DatePicker
+                          key={datasetRangeKey}
                           datePickerType="single"
                           dateFormat="d/m/Y"
+                          locale="es"
                           value={localConfig.startDate}
-                          minDate={datasetInfo?.fecha_min}
-                          maxDate={datasetInfo?.fecha_max}
+                          minDate={fechaMinDataset ?? undefined}
+                          maxDate={fechaMaxDataset ?? undefined}
                           onChange={handleFecha}
                         >
                           <DatePickerInput
